@@ -8,6 +8,7 @@ import {
 } from '../packages/shared/src/schemas.ts';
 import {
   CLAUDE_CODE_REVIEW_ENDPOINT,
+  CODEX_FEASIBILITY_REVIEW_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_REVIEW_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
@@ -124,6 +125,17 @@ test('claude-code review endpoint uses clipboard review-only capabilities', () =
   assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canSummarize, false);
 });
 
+test('codex feasibility review endpoint uses clipboard review-only capabilities', () => {
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.id, 'codex-feasibility');
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.transport, 'clipboard');
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.risk, 'medium');
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canReview, true);
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canExecute, false);
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canAcceptPrompt, false);
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canReturnOutput, true);
+  assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canSummarize, false);
+});
+
 test('templates remain manual previews with autoSend false', () => {
   assert.equal(createTemplatePreview('review-cli-output', {
     content: 'review this',
@@ -133,7 +145,7 @@ test('templates remain manual previews with autoSend false', () => {
   }).autoSend, false);
 });
 
-test('v0.6 does not introduce unsupported agent, command transport, or shell route files', async () => {
+test('v0.7 does not introduce unsupported agent, command transport, or shell route files', async () => {
   const forbiddenPathPatterns = [
     /workbuddy/i,
     /opencode/i,

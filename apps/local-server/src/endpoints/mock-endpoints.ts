@@ -32,6 +32,21 @@ export const CLAUDE_CODE_REVIEW_ENDPOINT: AgentEndpoint = {
   adapterName: 'claude-code-review-clipboard',
 };
 
+export const CODEX_FEASIBILITY_REVIEW_ENDPOINT: AgentEndpoint = {
+  id: 'codex-feasibility',
+  label: 'Codex Feasibility Review',
+  transport: 'clipboard',
+  risk: 'medium',
+  capabilities: {
+    canAcceptPrompt: false,
+    canReturnOutput: true,
+    canReview: true,
+    canExecute: false,
+    canSummarize: false,
+  },
+  adapterName: 'codex-feasibility-review-clipboard',
+};
+
 export const DEFAULT_AGENT_ENDPOINTS: AgentEndpoint[] = [
   {
     id: 'mock-agent',

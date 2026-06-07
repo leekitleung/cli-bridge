@@ -27,6 +27,8 @@ const requiredPaths = [
   'apps/local-server/src/security/redaction.ts',
   'apps/local-server/src/review/claude-review-prompt.ts',
   'apps/local-server/src/review/claude-review-handoff.ts',
+  'apps/local-server/src/review/codex-feasibility-prompt.ts',
+  'apps/local-server/src/review/codex-feasibility-handoff.ts',
   'apps/local-server/src/review/review-result-parser.ts',
   'apps/local-server/src/storage/packet-store.ts',
   'apps/local-server/src/storage/audit-log.ts',
