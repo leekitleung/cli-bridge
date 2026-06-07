@@ -217,19 +217,23 @@ Purpose:
 
 text Plan reverse review from Claude Code output or plan into Codex feasibility review. v0.7 may enter planning only after v0.6 closeout; it must not directly implement Claude -> Codex. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v0.7-CLOSEOUT-REVIEW.md; implementation commit ead108c53fe61775f91d3cccb2e837233cd5436f 
+
 Scope:
 
 text Planning only. Define Claude Code output / plan input shape. Draft Codex feasibility-only prompt contract. Preserve second confirmation. Define how Codex can assess minimum patch scope and optional next prompt draft without executing. Keep output as pending follow-up. No auto-execution. 
 
 Gate:
 
-text Claude output / plan input contract, Codex feasibility-only prompt contract, result-capture contract, and implementation acceptance criteria are defined. Execution prompt requires separate confirmation. No command transport, managed PTY expansion, shell endpoint, or source-agent auto feedback is introduced. 
+text passed. Clipboard-only Claude Code output / plan -> Codex feasibility handoff works as a copy-ready feasibility-only payload. ReviewResult remains non-executing. Execution prompt requires separate confirmation. No command transport, managed PTY expansion, shell endpoint, or source-agent auto feedback was introduced. 
 
 ### v0.8 — WorkBuddy State Integration
 
 Purpose:
 
-text Connect WorkBuddy as a project/task context source and review/result sink. 
+text Plan WorkBuddy as a project/task context source and review/result sink. v0.8 may enter planning only after v0.7 closeout; it must not directly implement WorkBuddy integration. 
 
 WorkBuddy roles:
 
