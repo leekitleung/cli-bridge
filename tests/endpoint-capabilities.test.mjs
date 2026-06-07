@@ -145,9 +145,8 @@ test('templates remain manual previews with autoSend false', () => {
   }).autoSend, false);
 });
 
-test('v0.7 does not introduce unsupported agent, command transport, or shell route files', async () => {
+test('v0.8 does not introduce unsupported TUI agent, command transport, or shell route files', async () => {
   const forbiddenPathPatterns = [
-    /workbuddy/i,
     /opencode/i,
     /deepseek/i,
   ];

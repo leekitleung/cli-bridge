@@ -14,6 +14,11 @@ import {
   type AgentReviewResult,
   type AuditEvent,
   type BridgePacket,
+  type WorkBuddyExecutionLedgerEvent,
+  type WorkBuddyProjectSnapshot,
+  type WorkBuddyPromptDraftSink,
+  type WorkBuddyReviewResultSink,
+  type WorkBuddyTaskReference,
 } from './types.ts';
 
 export const SHARED_SCHEMA_VERSION = 0;
@@ -382,5 +387,167 @@ export function assertAgentReviewResult(value: unknown): asserts value is AgentR
   const result = validateAgentReviewResult(value);
   if (!result.ok) {
     throw new Error(`Invalid AgentReviewResult: ${result.errors.join(', ')}`);
+  }
+}
+
+const WORKBUDDY_FORBIDDEN_FIELDS = [
+  'autoExecute',
+  'autoSend',
+  'confirmed',
+  'sent',
+  'executable',
+  'command',
+] as const;
+
+function rejectForbiddenWorkBuddyFields(
+  value: Record<string, unknown>,
+  errors: string[],
+): void {
+  for (const key of WORKBUDDY_FORBIDDEN_FIELDS) {
+    if (key in value) {
+      errors.push(`${key} must not be present on WorkBuddy state`);
+    }
+  }
+}
+
+function requireNonEmptyString(record: Record<string, unknown>, key: string, errors: string[]): void {
+  if (typeof record[key] !== 'string' || record[key].trim().length === 0) {
+    errors.push(`${key} must be a non-empty string`);
+  }
+}
+
+export function validateWorkBuddyProjectSnapshot(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['WorkBuddy project snapshot must be an object'] };
+  }
+
+  rejectForbiddenWorkBuddyFields(value, errors);
+  for (const key of ['id', 'projectId', 'name', 'summary']) {
+    requireNonEmptyString(value, key, errors);
+  }
+  if (!isStringArray(value.taskIds)) {
+    errors.push('taskIds must be a string array');
+  }
+  requireNumber(value, 'createdAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWorkBuddyProjectSnapshot(value: unknown): asserts value is WorkBuddyProjectSnapshot {
+  const result = validateWorkBuddyProjectSnapshot(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WorkBuddyProjectSnapshot: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateWorkBuddyTaskReference(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['WorkBuddy task reference must be an object'] };
+  }
+
+  rejectForbiddenWorkBuddyFields(value, errors);
+  for (const key of ['id', 'projectId', 'title']) {
+    requireNonEmptyString(value, key, errors);
+  }
+  if (!isOneOf(value.status, ['open', 'in-progress', 'blocked', 'done'] as const)) {
+    errors.push('status is invalid');
+  }
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWorkBuddyTaskReference(value: unknown): asserts value is WorkBuddyTaskReference {
+  const result = validateWorkBuddyTaskReference(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WorkBuddyTaskReference: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateWorkBuddyReviewResultSink(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['WorkBuddy review result sink must be an object'] };
+  }
+
+  rejectForbiddenWorkBuddyFields(value, errors);
+  for (const key of ['id', 'projectId', 'reviewResultId', 'summary']) {
+    requireNonEmptyString(value, key, errors);
+  }
+  if (value.taskId !== undefined && typeof value.taskId !== 'string') {
+    errors.push('taskId must be a string');
+  }
+  if (!isStringArray(value.findings)) {
+    errors.push('findings must be a string array');
+  }
+  requireNumber(value, 'createdAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWorkBuddyReviewResultSink(value: unknown): asserts value is WorkBuddyReviewResultSink {
+  const result = validateWorkBuddyReviewResultSink(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WorkBuddyReviewResultSink: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateWorkBuddyPromptDraftSink(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['WorkBuddy prompt draft sink must be an object'] };
+  }
+
+  rejectForbiddenWorkBuddyFields(value, errors);
+  for (const key of ['id', 'projectId', 'promptDraft']) {
+    requireNonEmptyString(value, key, errors);
+  }
+  if (value.taskId !== undefined && typeof value.taskId !== 'string') {
+    errors.push('taskId must be a string');
+  }
+  if (value.status !== 'draft') {
+    errors.push('status must be draft');
+  }
+  requireNumber(value, 'createdAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWorkBuddyPromptDraftSink(value: unknown): asserts value is WorkBuddyPromptDraftSink {
+  const result = validateWorkBuddyPromptDraftSink(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WorkBuddyPromptDraftSink: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateWorkBuddyExecutionLedgerEvent(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['WorkBuddy execution ledger event must be an object'] };
+  }
+
+  rejectForbiddenWorkBuddyFields(value, errors);
+  for (const key of ['id', 'projectId', 'summary']) {
+    requireNonEmptyString(value, key, errors);
+  }
+  if (value.taskId !== undefined && typeof value.taskId !== 'string') {
+    errors.push('taskId must be a string');
+  }
+  if (!isOneOf(value.kind, [
+    'manual-delivery-recorded',
+    'manual-review-recorded',
+    'external-status-recorded',
+  ] as const)) {
+    errors.push('kind is invalid');
+  }
+  requireNumber(value, 'createdAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWorkBuddyExecutionLedgerEvent(
+  value: unknown,
+): asserts value is WorkBuddyExecutionLedgerEvent {
+  const result = validateWorkBuddyExecutionLedgerEvent(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WorkBuddyExecutionLedgerEvent: ${result.errors.join(', ')}`);
   }
 }

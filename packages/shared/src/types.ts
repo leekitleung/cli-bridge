@@ -215,6 +215,52 @@ export interface AgentReviewResult {
   createdAt: number;
 }
 
+export interface WorkBuddyProjectSnapshot {
+  id: string;
+  projectId: string;
+  name: string;
+  summary: string;
+  taskIds: string[];
+  createdAt: number;
+}
+
+export interface WorkBuddyTaskReference {
+  id: string;
+  projectId: string;
+  title: string;
+  status: 'open' | 'in-progress' | 'blocked' | 'done';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WorkBuddyReviewResultSink {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  reviewResultId: string;
+  summary: string;
+  findings: string[];
+  createdAt: number;
+}
+
+export interface WorkBuddyPromptDraftSink {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  promptDraft: string;
+  status: 'draft';
+  createdAt: number;
+}
+
+export interface WorkBuddyExecutionLedgerEvent {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  kind: 'manual-delivery-recorded' | 'manual-review-recorded' | 'external-status-recorded';
+  summary: string;
+  createdAt: number;
+}
+
 export interface AgentDeliveryResult {
   ok: boolean;
   transport: 'mock' | 'managed-pty' | 'clipboard';
