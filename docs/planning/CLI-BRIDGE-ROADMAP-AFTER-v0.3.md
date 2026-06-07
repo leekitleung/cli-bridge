@@ -129,11 +129,11 @@ text sourceEndpoint -> packet -> pending state -> user confirmation -> targetEnd
 
 Deliverables:
 
-text AgentEndpoint AgentEndpointCapabilities EndpointRegistry transport taxonomy capability-gated action exposure mock endpoint lifecycle tests 
+text AgentEndpoint AgentEndpointCapabilities EndpointRegistry transport taxonomy capability-gated action exposure MockPromptEndpoint / MockAgentEndpoint tests 
 
 Endpoint candidates:
 
-text chatgpt-web codex-cli claude-code opencode deepseek-tui workbuddy clipboard mock-agent mock-review-agent 
+text chatgpt-web codex-cli clipboard mock-prompt mock-agent 
 
 Capability fields:
 
@@ -145,7 +145,7 @@ text 1. mock 2. clipboard 3. command 4. managed-pty 5. file-protocol 6. web-dom
 
 Hard boundary:
 
-text v0.4 defines abstraction and mock capability gates. v0.4 must not connect real Claude Code, OpenCode, DeepSeek TUI, or WorkBuddy. 
+text v0.4 defines abstraction and mock capability gates. v0.4 must not connect real Claude Code, OpenCode, DeepSeek TUI, or WorkBuddy. v0.4 must not introduce MockReviewEndpoint or review lifecycle; review-related endpoints are deferred to v0.5. 
 
 Gate:
 
