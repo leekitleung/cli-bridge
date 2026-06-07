@@ -263,9 +263,11 @@ text EndpointRegistry is stable. Mock review lifecycle is stable. Codex -> Claud
 
 Preferred transport:
 
-text clipboard or managed-pty 
+text clipboard 
 
-Command transport is allowed only if the tool has a stable non-interactive CLI mode.
+Managed PTY is a separately approved fallback only. It must not be the default v0.9 path while the v0.3 Codex Managed PTY real delivery caveat remains active.
+
+Command transport is allowed only if the tool has a stable non-interactive review-only CLI mode and receives separate approval.
 
 ### v1.0 — Remote Review Gate Hardening
 
