@@ -205,7 +205,7 @@ text No direct Claude Code adapter implementation during planning. No Claude Cod
 
 Gate:
 
-text Codex -> Claude review works through one controlled transport. Review-only prompt contract is enforced. ReviewResult is stored and auditable. Follow-up prompt requires second confirmation. 
+text transport decision, review-only prompt contract, result-capture contract, and implementation acceptance criteria are defined. Follow-up prompt requires second confirmation. v0.3 caveats remain documented. 
 
 ### v0.7 — Claude Code -> Codex Review / Execution Feasibility
 

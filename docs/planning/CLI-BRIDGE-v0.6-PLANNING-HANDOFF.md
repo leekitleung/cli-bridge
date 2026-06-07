@@ -49,12 +49,19 @@ v0.6 planning may define:
 
 ## 5. Transport Comparison Scope
 
+Preferred transport:
+
+- clipboard handoff.
+- controlled file-protocol handoff.
+
 Transport options to compare in planning:
 
 - clipboard handoff.
 - controlled file-protocol handoff.
-- managed PTY handoff.
-- command transport only if Claude Code exposes a stable non-interactive review mode.
+- managed PTY handoff as an experimental fallback only.
+- command transport only if Claude Code exposes a stable non-interactive review-only mode.
+
+Managed PTY must not be the default v0.6 path because the v0.3 Codex Managed PTY real delivery caveat remains active.
 
 Planning must compare:
 
@@ -75,13 +82,25 @@ It must ask for:
 - findings.
 - optional next prompt draft.
 
+The output must be ReviewResult-shaped data:
+
+- `summary`
+- `findings[]`
+- `nextPromptDraft?`
+
 It must not ask Claude Code to:
 
 - execute changes.
+- call tools.
+- apply patches.
+- write files.
 - run shell commands.
 - modify files.
+- modify repository state.
 - send output back to Codex automatically.
 - continue an agent loop.
+
+`nextPromptDraft` must not be treated as confirmed or sent.
 
 ## 7. Second Confirmation Preservation
 
