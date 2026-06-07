@@ -235,6 +235,10 @@ Purpose:
 
 text Plan WorkBuddy as a project/task context source and review/result sink. v0.8 may enter planning only after v0.7 closeout; it must not directly implement WorkBuddy integration. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v0.8-CLOSEOUT-REVIEW.md; implementation commit d87ba84524b6d61e227580417a99e09953683088 
+
 WorkBuddy roles:
 
 text Project state source Task source Prompt draft source Review result sink Execution ledger sink Next prompt draft sink 
@@ -248,6 +252,10 @@ text WorkBuddy must not become an execution agent. WorkBuddy must not trigger Co
 Candidates:
 
 text OpenCode DeepSeek TUI other local TUI agents 
+
+Purpose:
+
+text Plan additional TUI agents only after v0.8 closeout. v0.9 must not directly implement OpenCode, DeepSeek, command transport, or managed PTY transport. 
 
 Entry condition:
 
