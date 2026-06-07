@@ -157,6 +157,10 @@ Purpose:
 
 text Support review requests between agents without executing follow-up actions automatically. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v0.5-CLOSEOUT-REVIEW.md; implementation commit 02ab7c522888faea527b6189b88e03b9068b315a 
+
 Initial path:
 
 text MockAgent -> MockReviewAgent 
@@ -175,13 +179,13 @@ text ReviewRequest defaults to review-only. ReviewResult is never auto-executed.
 
 Gate:
 
-text Mock review lifecycle passes. ReviewResult can produce a next-prompt draft. Next-prompt draft remains pending. No automatic execution. No shell endpoint. No source-agent auto-feedback loop. 
+text passed. Mock review lifecycle passes. ReviewResult can produce a next-prompt draft. Next-prompt draft remains pending. No automatic execution. No shell endpoint. No source-agent auto-feedback loop. 
 
 ### v0.6 — First Real Review Target: Codex -> Claude Code
 
 Purpose:
 
-text Add the first real agent-to-agent review path. 
+text Plan the first real agent-to-agent review path. v0.6 may enter planning only after v0.5 closeout; it must not directly implement a Claude Code adapter. 
 
 Recommended first path:
 
@@ -193,11 +197,11 @@ text Codex is the execution-oriented agent. Claude Code is the stronger review t
 
 Scope:
 
-text Read Codex output summary. Read changed file summary / diff stat if available. Create AgentReviewRequest. Preview request. Require user confirmation. Send to Claude Code through a controlled transport. Capture ReviewResult. Do not auto-send ReviewResult back to Codex. 
+text Planning only. Compare controlled transports. Draft review-only prompt contract. Preserve second confirmation. Define how Codex output summary and changed file summary / diff stat may become AgentReviewRequest input. Define how ReviewResult may be captured without auto-execution. Do not auto-send ReviewResult back to Codex. 
 
 Non-goals:
 
-text No Claude Code execution dispatch. No automatic Codex follow-up. No OpenCode. No DeepSeek TUI. No WorkBuddy real integration. No PR automation. 
+text No direct Claude Code adapter implementation during planning. No Claude Code execution dispatch. No automatic Codex follow-up. No OpenCode. No DeepSeek TUI. No WorkBuddy real integration. No PR automation. No shell endpoint. 
 
 Gate:
 
