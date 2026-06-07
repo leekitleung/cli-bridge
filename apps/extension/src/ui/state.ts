@@ -9,6 +9,15 @@ export type BridgePanelStatusKind =
   | 'blocked'
   | 'failed';
 
+export type BridgePanelLoopStage =
+  | 'codex-output-ready'
+  | 'chatgpt-awaiting-user-send'
+  | 'pending-prompt-ready'
+  | 'pending-prompt-confirmed'
+  | 'codex-delivered'
+  | 'cancelled'
+  | 'failed';
+
 export interface BridgePanelStatus {
   kind: BridgePanelStatusKind;
   label: string;
@@ -75,4 +84,51 @@ export function createCopyPanelStatus(result: ClipboardFallbackResult): BridgePa
     label: 'failed',
     detail: result.reason ?? 'copy-failed',
   };
+}
+
+export function createLoopPanelStatus(stage: BridgePanelLoopStage): BridgePanelStatus {
+  switch (stage) {
+    case 'codex-output-ready':
+      return {
+        kind: 'idle',
+        label: 'loop',
+        detail: 'ready-to-fill',
+      };
+    case 'chatgpt-awaiting-user-send':
+      return {
+        kind: 'blocked',
+        label: 'loop',
+        detail: 'awaiting-user-send',
+      };
+    case 'pending-prompt-ready':
+      return {
+        kind: 'success',
+        label: 'loop',
+        detail: 'pending-confirmation',
+      };
+    case 'pending-prompt-confirmed':
+      return {
+        kind: 'success',
+        label: 'loop',
+        detail: 'confirmed',
+      };
+    case 'codex-delivered':
+      return {
+        kind: 'success',
+        label: 'loop',
+        detail: 'delivered',
+      };
+    case 'cancelled':
+      return {
+        kind: 'blocked',
+        label: 'loop',
+        detail: 'cancelled',
+      };
+    case 'failed':
+      return {
+        kind: 'failed',
+        label: 'loop',
+        detail: 'failed',
+      };
+  }
 }

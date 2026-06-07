@@ -5,8 +5,10 @@ import {
   createCopyPanelStatus,
   createExtractPanelStatus,
   createFillPanelStatus,
+  createLoopPanelStatus,
   IDLE_PANEL_STATUS,
   type BridgePanelStatus,
+  type BridgePanelLoopStage,
 } from './state.ts';
 
 export const PANEL_ROOT_ID = 'cli-bridge-panel-root';
@@ -24,6 +26,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   let latestExtractStatus: ExtractPromptResult | null = null;
   let latestCopyStatus: ClipboardFallbackResult | null = null;
   let latestPanelStatus: BridgePanelStatus = IDLE_PANEL_STATUS;
+  let latestLoopStage: BridgePanelLoopStage = 'codex-output-ready';
 
   const panel = root.createElement('section');
   panel.id = PANEL_ROOT_ID;
@@ -95,6 +98,14 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     overflowWrap: 'anywhere',
   });
 
+  const loopStatus = root.createElement('output');
+  loopStatus.setAttribute('data-cli-bridge-loop-status', 'true');
+  Object.assign(loopStatus.style, {
+    minHeight: '18px',
+    color: '#4b5563',
+    overflowWrap: 'anywhere',
+  });
+
   const preview = root.createElement('pre');
   preview.textContent = '';
   Object.assign(preview.style, {
@@ -116,12 +127,23 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       : nextStatus.label;
   };
 
+  const renderLoopStatus = (nextStage: BridgePanelLoopStage) => {
+    latestLoopStage = nextStage;
+    const nextStatus = createLoopPanelStatus(nextStage);
+    loopStatus.textContent = `${nextStatus.label}: ${nextStatus.detail}`;
+  };
+
+  renderLoopStatus(latestLoopStage);
+
   fillButton.addEventListener('click', async () => {
     latestFillStatus = await fillComposerText(input.value, {
       root,
       clipboard: globalThis.navigator?.clipboard,
     });
     renderStatus(createFillPanelStatus(latestFillStatus));
+    if (latestFillStatus.ok) {
+      renderLoopStatus('chatgpt-awaiting-user-send');
+    }
   });
 
   extractButton.addEventListener('click', () => {
@@ -130,6 +152,9 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     });
     preview.textContent = latestExtractStatus.text;
     renderStatus(createExtractPanelStatus(latestExtractStatus));
+    if (latestExtractStatus.ok) {
+      renderLoopStatus('pending-prompt-ready');
+    }
   });
 
   copyButton.addEventListener('click', async () => {
@@ -138,7 +163,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     renderStatus(createCopyPanelStatus(latestCopyStatus));
   });
 
-  panel.append(input, fillButton, extractButton, copyButton, status, preview);
+  panel.append(input, fillButton, extractButton, copyButton, loopStatus, status, preview);
   root.body.append(panel);
 
   return {
