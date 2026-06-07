@@ -171,3 +171,14 @@ export interface AgentDeliveryResult {
   deliveredPrompt?: string;
   failureReason?: string;
 }
+
+export interface BridgeMetricsSummary {
+  packetCreatedCount: number;
+  packetSentCount: number;
+  packetCancelledCount: number;
+  packetFailedCount: number;
+  fallbackToClipboardCount: number;
+  redactionHitCount: number;
+  confirmRate: number;
+  cancelRate: number;
+}

@@ -166,6 +166,27 @@ v0.2 可以进入首个受限 slice。v0.1 remote review 已完成；真实 Code
 - arbitrary shell endpoint
 - automatic agent loop
 
+## v0.2-1 Implementation Status
+
+已完成最小 Metrics and Review Hardening：
+
+- 新增本地 `createMetricsSummary`。
+- 覆盖 `packetCreatedCount`、`packetSentCount`、`packetCancelledCount`、`packetFailedCount`。
+- 覆盖 `fallbackToClipboardCount`、`redactionHitCount`。
+- 覆盖 `confirmRate`、`cancelRate`。
+- 测试确认 metrics summary 不读取 `rawContent`。
+
+未新增：
+
+- UI dashboard
+- GitHub API client
+- MCP
+- WorkBuddy
+- Claude Code
+- app-prompt
+- shell endpoint
+- automatic agent loop
+
 ## Remote Review Requirement
 
 v0.2 开发开始前必须完成 remote review：
