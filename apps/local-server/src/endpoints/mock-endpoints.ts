@@ -2,6 +2,21 @@ import type {
   AgentEndpoint,
 } from '../../../../packages/shared/src/types.ts';
 
+export const MOCK_REVIEW_ENDPOINT: AgentEndpoint = {
+  id: 'mock-review-agent',
+  label: 'Mock Review Agent',
+  transport: 'mock',
+  risk: 'low',
+  capabilities: {
+    canAcceptPrompt: false,
+    canReturnOutput: true,
+    canReview: true,
+    canExecute: false,
+    canSummarize: false,
+  },
+  adapterName: 'mock-review-agent',
+};
+
 export const DEFAULT_AGENT_ENDPOINTS: AgentEndpoint[] = [
   {
     id: 'mock-agent',

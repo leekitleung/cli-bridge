@@ -50,6 +50,11 @@ export const AUDIT_EVENT_TYPES = [
   'confirm_prompt',
   'send_to_agent',
   'copy_to_clipboard',
+  'create_pending_review',
+  'preview_review',
+  'confirm_review',
+  'send_review',
+  'return_review_result',
   'operation_failed',
   'operation_cancelled',
 ] as const;
@@ -84,6 +89,18 @@ export type AuditEventType = typeof AUDIT_EVENT_TYPES[number];
 export type AuditRiskLevel = typeof AUDIT_RISK_LEVELS[number];
 
 export type PendingPromptStatus = typeof PENDING_PROMPT_STATUSES[number];
+
+export const AGENT_REVIEW_STATUSES = [
+  'draft',
+  'previewed',
+  'confirmed',
+  'sent',
+  'returned',
+  'cancelled',
+  'failed',
+] as const;
+
+export type AgentReviewStatus = typeof AGENT_REVIEW_STATUSES[number];
 
 export interface BridgePacket {
   id: string;
@@ -169,6 +186,33 @@ export interface PendingPrompt {
   cancelledAt?: number;
   failedAt?: number;
   failureReason?: string;
+}
+
+export interface AgentReviewRequest {
+  id: string;
+  sessionId: string;
+  sourceEndpointId: string;
+  targetEndpointId: string;
+  packetId: string;
+  status: AgentReviewStatus;
+  prompt: string;
+  createdAt: number;
+  updatedAt: number;
+  confirmedAt?: number;
+  sentAt?: number;
+  returnedAt?: number;
+  cancelledAt?: number;
+  failedAt?: number;
+  failureReason?: string;
+}
+
+export interface AgentReviewResult {
+  id: string;
+  reviewRequestId: string;
+  summary: string;
+  findings: string[];
+  nextPromptDraft?: string;
+  createdAt: number;
 }
 
 export interface AgentDeliveryResult {

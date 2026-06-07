@@ -3,12 +3,15 @@ import {
   AUDIT_RISK_LEVELS,
   AGENT_ENDPOINT_RISKS,
   AGENT_ENDPOINT_TRANSPORTS,
+  AGENT_REVIEW_STATUSES,
   BRIDGE_PACKET_KINDS,
   BRIDGE_PACKET_SOURCES,
   BRIDGE_PACKET_STATUSES,
   BRIDGE_PACKET_TARGETS,
   RAW_CONTENT_REF_STORAGE,
   type AgentEndpoint,
+  type AgentReviewRequest,
+  type AgentReviewResult,
   type AuditEvent,
   type BridgePacket,
 } from './types.ts';
@@ -282,5 +285,102 @@ export function assertAgentEndpoint(value: unknown): asserts value is AgentEndpo
   const result = validateAgentEndpoint(value);
   if (!result.ok) {
     throw new Error(`Invalid AgentEndpoint: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateAgentReviewRequest(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      errors: ['review request must be an object'],
+    };
+  }
+
+  for (const key of ['id', 'sessionId', 'sourceEndpointId', 'targetEndpointId', 'packetId', 'prompt']) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isOneOf(value.status, AGENT_REVIEW_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+
+  for (const key of ['confirmedAt', 'sentAt', 'returnedAt', 'cancelledAt', 'failedAt']) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+    ) {
+      errors.push(`${key} must be a finite number`);
+    }
+  }
+
+  if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
+    errors.push('failureReason must be a string');
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+export function assertAgentReviewRequest(value: unknown): asserts value is AgentReviewRequest {
+  const result = validateAgentReviewRequest(value);
+  if (!result.ok) {
+    throw new Error(`Invalid AgentReviewRequest: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateAgentReviewResult(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      errors: ['review result must be an object'],
+    };
+  }
+
+  for (const key of ['executable', 'autoSend', 'confirmed', 'sent']) {
+    if (key in value) {
+      errors.push(`${key} must not be present on AgentReviewResult`);
+    }
+  }
+
+  for (const key of ['id', 'reviewRequestId', 'summary']) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isStringArray(value.findings)) {
+    errors.push('findings must be a string array');
+  }
+
+  if (
+    value.nextPromptDraft !== undefined &&
+    typeof value.nextPromptDraft !== 'string'
+  ) {
+    errors.push('nextPromptDraft must be a string');
+  }
+
+  requireNumber(value, 'createdAt', errors);
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+export function assertAgentReviewResult(value: unknown): asserts value is AgentReviewResult {
+  const result = validateAgentReviewResult(value);
+  if (!result.ok) {
+    throw new Error(`Invalid AgentReviewResult: ${result.errors.join(', ')}`);
   }
 }

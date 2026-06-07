@@ -8,6 +8,7 @@ import {
 } from '../packages/shared/src/schemas.ts';
 import {
   DEFAULT_AGENT_ENDPOINTS,
+  MOCK_REVIEW_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
 import {
   createTemplatePreview,
@@ -73,7 +74,7 @@ test('invalid transport, risk, missing capability, and empty id are denied', () 
   }).ok, false);
 });
 
-test('default mock endpoints expose v0.4 capabilities only', () => {
+test('default mock endpoints preserve v0.4 boundaries', () => {
   const endpointIds = DEFAULT_AGENT_ENDPOINTS.map((endpoint) => endpoint.id);
 
   assert.deepEqual(endpointIds, [
@@ -82,7 +83,6 @@ test('default mock endpoints expose v0.4 capabilities only', () => {
     'chatgpt-web',
     'codex-cli',
   ]);
-  assert.equal(endpointIds.includes('mock-review-agent'), false);
 
   const mockAgent = DEFAULT_AGENT_ENDPOINTS.find((endpoint) => endpoint.id === 'mock-agent');
   assert.equal(mockAgent?.capabilities.canAcceptPrompt, true);
@@ -102,6 +102,16 @@ test('default mock endpoints expose v0.4 capabilities only', () => {
   assert.equal(chatgpt?.capabilities.canExecute, false);
 });
 
+test('mock review endpoint can review but cannot execute or accept prompts', () => {
+  assert.equal(MOCK_REVIEW_ENDPOINT.id, 'mock-review-agent');
+  assert.equal(MOCK_REVIEW_ENDPOINT.transport, 'mock');
+  assert.equal(MOCK_REVIEW_ENDPOINT.risk, 'low');
+  assert.equal(MOCK_REVIEW_ENDPOINT.capabilities.canReview, true);
+  assert.equal(MOCK_REVIEW_ENDPOINT.capabilities.canExecute, false);
+  assert.equal(MOCK_REVIEW_ENDPOINT.capabilities.canAcceptPrompt, false);
+  assert.equal(MOCK_REVIEW_ENDPOINT.capabilities.canReturnOutput, true);
+});
+
 test('templates remain manual previews with autoSend false', () => {
   assert.equal(createTemplatePreview('review-cli-output', {
     content: 'review this',
@@ -111,9 +121,8 @@ test('templates remain manual previews with autoSend false', () => {
   }).autoSend, false);
 });
 
-test('v0.4 does not introduce review, real-agent, or shell route files', async () => {
+test('v0.5 does not introduce real-agent or shell route files', async () => {
   const forbiddenPathPatterns = [
-    /mock-review/i,
     /claude/i,
     /workbuddy/i,
     /opencode/i,
