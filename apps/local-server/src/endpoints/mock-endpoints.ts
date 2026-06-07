@@ -17,6 +17,21 @@ export const MOCK_REVIEW_ENDPOINT: AgentEndpoint = {
   adapterName: 'mock-review-agent',
 };
 
+export const CLAUDE_CODE_REVIEW_ENDPOINT: AgentEndpoint = {
+  id: 'claude-code',
+  label: 'Claude Code Review',
+  transport: 'clipboard',
+  risk: 'medium',
+  capabilities: {
+    canAcceptPrompt: false,
+    canReturnOutput: true,
+    canReview: true,
+    canExecute: false,
+    canSummarize: false,
+  },
+  adapterName: 'claude-code-review-clipboard',
+};
+
 export const DEFAULT_AGENT_ENDPOINTS: AgentEndpoint[] = [
   {
     id: 'mock-agent',

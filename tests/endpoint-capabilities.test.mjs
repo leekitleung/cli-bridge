@@ -7,6 +7,7 @@ import {
   validateAgentEndpoint,
 } from '../packages/shared/src/schemas.ts';
 import {
+  CLAUDE_CODE_REVIEW_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_REVIEW_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
@@ -112,6 +113,17 @@ test('mock review endpoint can review but cannot execute or accept prompts', () 
   assert.equal(MOCK_REVIEW_ENDPOINT.capabilities.canReturnOutput, true);
 });
 
+test('claude-code review endpoint uses clipboard review-only capabilities', () => {
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.id, 'claude-code');
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.transport, 'clipboard');
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.risk, 'medium');
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canReview, true);
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canExecute, false);
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canAcceptPrompt, false);
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canReturnOutput, true);
+  assert.equal(CLAUDE_CODE_REVIEW_ENDPOINT.capabilities.canSummarize, false);
+});
+
 test('templates remain manual previews with autoSend false', () => {
   assert.equal(createTemplatePreview('review-cli-output', {
     content: 'review this',
@@ -121,9 +133,8 @@ test('templates remain manual previews with autoSend false', () => {
   }).autoSend, false);
 });
 
-test('v0.5 does not introduce real-agent or shell route files', async () => {
+test('v0.6 does not introduce unsupported agent, command transport, or shell route files', async () => {
   const forbiddenPathPatterns = [
-    /claude/i,
     /workbuddy/i,
     /opencode/i,
     /deepseek/i,
@@ -145,6 +156,14 @@ test('v0.5 does not introduce real-agent or shell route files', async () => {
       assert.equal(pattern.test(file), false, `forbidden file path: ${file}`);
     }
   }
+
+  const implementationFiles = files.filter((file) => (
+    file.includes('/apps/local-server/src/endpoints/') ||
+    file.includes('/apps/local-server/src/review/')
+  ));
+  const sourceText = await Promise.all(implementationFiles.map((file) => readFile(file, 'utf8')));
+  assert.equal(sourceText.join('\n').includes("transport: 'command'"), false);
+  assert.equal(sourceText.join('\n').includes("targetEndpointId: 'workbuddy'"), false);
 
   const routeFiles = await listProjectFiles([resolve(root, 'apps/local-server/src/routes')]);
   for (const file of routeFiles) {
