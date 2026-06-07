@@ -31,6 +31,21 @@ export interface PendingPromptSendResult {
   failureReason?: string;
 }
 
+export interface ClipboardHandoffResult {
+  ok: boolean;
+  prompt: PendingPrompt;
+  clipboardText?: string;
+  checklist: string[];
+  failureReason?: string;
+}
+
+const MANUAL_PASTE_CHECKLIST = [
+  'Copy the pending prompt text.',
+  'Paste it into the managed Codex session.',
+  'Submit manually after reviewing the prompt.',
+  'Record success or failure in the bridge audit trail.',
+];
+
 function clonePrompt(prompt: PendingPrompt): PendingPrompt {
   return structuredClone(prompt);
 }
@@ -184,6 +199,63 @@ export class InMemoryPendingPromptStore {
       ok: true,
       prompt: clonePrompt(prompt),
       delivery,
+    };
+  }
+
+  createClipboardHandoff(
+    promptId: string,
+    fallbackReason: string,
+    now: number = Date.now(),
+  ): ClipboardHandoffResult {
+    const prompt = this.prompts.get(promptId);
+    if (!prompt) {
+      return {
+        ok: false,
+        prompt: this.createMissingPrompt(promptId, now),
+        checklist: MANUAL_PASTE_CHECKLIST,
+        failureReason: 'pending-prompt-not-found',
+      };
+    }
+
+    if (prompt.status !== 'confirmed') {
+      return {
+        ok: false,
+        prompt: clonePrompt(prompt),
+        checklist: MANUAL_PASTE_CHECKLIST,
+        failureReason: 'pending-prompt-not-confirmed',
+      };
+    }
+
+    prompt.transport = 'clipboard';
+    prompt.clipboardHandoff = {
+      status: 'ready-to-copy',
+      fallbackReason,
+      checklist: MANUAL_PASTE_CHECKLIST,
+      createdAt: now,
+    };
+    prompt.updatedAt = now;
+    this.prompts.set(prompt.id, clonePrompt(prompt));
+    this.auditLog.createAndAppend({
+      sessionId: prompt.sessionId,
+      packetId: prompt.packetId,
+      type: 'copy_to_clipboard',
+      source: 'local-server',
+      target: 'clipboard',
+      snapshot: {
+        transport: 'clipboard',
+      },
+      result: {
+        ok: true,
+        failureReason: fallbackReason,
+      },
+      timestamp: now,
+    });
+
+    return {
+      ok: true,
+      prompt: clonePrompt(prompt),
+      clipboardText: prompt.prompt,
+      checklist: MANUAL_PASTE_CHECKLIST,
     };
   }
 

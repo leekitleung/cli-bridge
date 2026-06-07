@@ -187,6 +187,74 @@ v0.2 可以进入首个受限 slice。v0.1 remote review 已完成；真实 Code
 - shell endpoint
 - automatic agent loop
 
+## v0.2-2 Implementation Status
+
+已完成 Clipboard-first Codex Delivery Stabilization：
+
+- Pending Prompt 可创建 clipboard handoff。
+- Clipboard handoff 必须在 prompt 已确认后才能创建。
+- Clipboard handoff 保持 prompt 为 `confirmed`，不自动发送。
+- Clipboard handoff 将 transport 状态化为 `clipboard`。
+- 记录 fallback reason。
+- 写入 `copy_to_clipboard` audit event。
+- 提供 manual paste checklist。
+
+未新增：
+
+- attach existing terminal
+- keyboard simulation
+- stop session
+- shell endpoint
+- automatic agent loop
+
+## v0.2-3 Implementation Status
+
+已完成最小 Template Layer：
+
+- 新增 `review-cli-output` template。
+- 新增 `generate-codex-prompt` template。
+- 新增 template preview input validation。
+- Template preview 明确 `autoSend: false`。
+
+未新增：
+
+- app-prompt 读取
+- template registry
+- multi-agent selector
+- automatic send
+- external network dependency
+
+## v0.2 Closeout
+
+Status: completed with Managed PTY experimental caveat.
+
+已完成：
+
+- v0.2-1 Metrics and Review Hardening。
+- v0.2-2 Clipboard-first Codex Delivery Stabilization。
+- v0.2-3 Template Layer。
+- 本地 gate 必须在最终提交前通过：`npm run build-extension`、`npm run lint`、`npm run typecheck`、`npm run test`。
+- 最终执行报告必须核对 local `HEAD` 与 remote `refs/heads/main` 一致。
+
+仍为 experimental：
+
+- 真实 Codex Managed PTY 手动投递验证。
+
+禁止范围审计：
+
+- 未接 WorkBuddy。
+- 未接 MCP。
+- 未接 Claude Code。
+- 未读取 app-prompt。
+- 未接 GitHub API。
+- 未做 CI 自动读取。
+- 未做 multi-agent selector。
+- 未做 stop session。
+- 未做 attach existing terminal。
+- 未开放任意 shell endpoint。
+- 未做自动发送。
+- 未做 automatic agent loop。
+
 ## Remote Review Requirement
 
 v0.2 开发开始前必须完成 remote review：

@@ -156,6 +156,12 @@ export interface PendingPrompt {
   prompt: string;
   status: PendingPromptStatus;
   transport: 'managed-pty' | 'clipboard';
+  clipboardHandoff?: {
+    status: 'ready-to-copy';
+    fallbackReason: string;
+    checklist: string[];
+    createdAt: number;
+  };
   createdAt: number;
   updatedAt: number;
   confirmedAt?: number;
@@ -181,4 +187,20 @@ export interface BridgeMetricsSummary {
   redactionHitCount: number;
   confirmRate: number;
   cancelRate: number;
+}
+
+export type BridgeTemplateId = 'review-cli-output' | 'generate-codex-prompt';
+
+export interface TemplatePreviewInput {
+  content: string;
+  context?: {
+    cwd?: string;
+    branch?: string;
+  };
+}
+
+export interface TemplatePreview {
+  templateId: BridgeTemplateId;
+  preview: string;
+  autoSend: false;
 }
