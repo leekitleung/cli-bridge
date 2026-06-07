@@ -2,9 +2,9 @@
 
 ## Decision
 
-Status: conditional pass.
+Status: pass with Managed PTY experimental caveat.
 
-v0.1 已完成最小、安全、可追踪、人工确认的半自动中继闭环骨架。当前条件性通过的限制是：项目尚未配置 GitHub remote/upstream，因此 Repository Sync / Remote Review Gate 不能完成远程复核；Codex Managed PTY 已有 mockable adapter 和自动测试，但仍需要真实 Codex CLI managed session 手动验证。
+v0.1 已完成最小、安全、可追踪、人工确认的半自动中继闭环骨架。Repository Sync / Remote Review Gate 已完成远程复核；Codex Managed PTY 已有 mockable adapter 和自动测试，但真实 Codex CLI managed session 尚未完成手动验证，因此 Managed PTY 在 v0.1 中标记为 experimental。
 
 ## Verified Scope
 
@@ -78,13 +78,12 @@ Last verified local gate:
 - `提取` 可获取信息。
 - `复制` 可复制信息。
 
-仍需手动验证：
+仍需手动验证或保留为 experimental：
 
 - streaming 中点击 `提取` 必须返回 blocked。
 - 无选区、无 marker、生成完成后提取最后完整 assistant 回复。
 - 输入框不可用时 fallback 到剪贴板。
 - 真实 Codex CLI managed PTY 一轮投递。
-- v0.1 closeout remote review。
 
 ## Metrics Readiness
 
@@ -123,15 +122,16 @@ v0.1 已具备以下指标字段或可计算基础：
 
 ## Repository Sync Status
 
-- branch: `master`
-- latest local commit at review start: `646beba05dc1357bdbcc48102c52a9f785bfb75a`
-- remote: none configured
-- upstream: none configured
-- pushed: no
-- remote verified: no
+- branch: `main`
+- latest local commit at review start: `ac2a9e9d4d62f007dbd9129ccb17fbcb89fc6848`
+- remote: `origin https://github.com/leekitleung/cli-bridge.git`
+- upstream: `origin/main`
+- pushed: yes
+- remote verified: yes
+- remote commit verified: `ac2a9e9d4d62f007dbd9129ccb17fbcb89fc6848`
 
-Repository Sync Gate 未完整通过，原因是当前仓库未配置 remote/upstream。配置 remote 后必须执行 push，并在阶段评审时读取 GitHub 远程分支核对 commit。
+Repository Sync Gate 已通过。本地 `HEAD` 与远程 `refs/heads/main` 均为 `ac2a9e9d4d62f007dbd9129ccb17fbcb89fc6848`。
 
 ## Decision Detail
 
-允许进入 v0.2 planning handoff，但不允许把 v0.1 视为 remote-verified final release。进入任何 v0.2 开发前必须先完成 remote 配置、push 和 remote review。
+允许进入 v0.2-1 Metrics and Review Hardening。Managed PTY 在真实手动投递验证完成前保持 experimental，不作为 v0.2 首个 slice 的稳定依赖。

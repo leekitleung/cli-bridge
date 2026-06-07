@@ -2,16 +2,16 @@
 
 ## Handoff Status
 
-v0.2 可以进入规划，但不应立即进入功能开发。v0.1 当前是 conditional pass，原因是 remote review 和真实 Codex Managed PTY 手动验证尚未完成。
+v0.2 可以进入首个受限 slice。v0.1 remote review 已完成；真实 Codex Managed PTY 手动验证尚未完成，因此 Managed PTY 在进入 v0.2-1 时保持 experimental。
 
-进入 v0.2 开发前必须先完成：
+进入 v0.2-1 前已完成：
 
 1. 配置 GitHub remote/upstream。
-2. push 当前 `master`。
+2. push 当前 `main`。
 3. ChatGPT 阶段评审读取 GitHub 远程状态。
 4. 核对远程 commit 与本地报告一致。
 5. 如存在 GitHub Actions，确认 CI 通过。
-6. 完成真实 Codex Managed PTY 一轮手动验证，或明确将 Managed PTY 标记为 experimental。
+6. 明确将 Managed PTY 标记为 experimental，等待后续真实手动验证。
 
 ## v0.1 Learnings
 
@@ -178,3 +178,11 @@ v0.2 开发开始前必须完成 remote review：
 - GitHub Actions 如存在必须通过
 
 如果 remote review 不通过，不得开始 v0.2 实现。
+
+当前 remote review 状态：
+
+- branch: `main`
+- remote: `origin https://github.com/leekitleung/cli-bridge.git`
+- local commit: `ac2a9e9d4d62f007dbd9129ccb17fbcb89fc6848`
+- remote commit: `ac2a9e9d4d62f007dbd9129ccb17fbcb89fc6848`
+- remote verified: yes
