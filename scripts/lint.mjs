@@ -40,7 +40,8 @@ const requiredPaths = [
   'packages/shared/src/constants.ts',
   'packages/shared/src/utils/hash.ts',
   'packages/shared/src/utils/token-estimate.ts',
-  'scripts/build-extension.mjs'
+  'scripts/build-extension.mjs',
+  'scripts/remote-review-gate.mjs'
 ];
 
 const forbiddenPaths = [

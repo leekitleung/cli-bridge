@@ -9,6 +9,7 @@
   "scripts": {
     "build-extension": "node ./scripts/build-extension.mjs",
     "lint": "node ./scripts/lint.mjs",
+    "remote-review-gate": "node ./scripts/remote-review-gate.mjs --pretty",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test",
     "start:local-server": "node --experimental-strip-types apps/local-server/src/server.ts"

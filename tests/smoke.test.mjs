@@ -37,7 +37,8 @@ const expectedPaths = [
   'packages/shared/src/types.ts',
   'packages/shared/src/schemas.ts',
   'packages/shared/src/constants.ts',
-  'scripts/build-extension.mjs'
+  'scripts/build-extension.mjs',
+  'scripts/remote-review-gate.mjs'
 ];
 
 test('week 0 skeleton exists', () => {
