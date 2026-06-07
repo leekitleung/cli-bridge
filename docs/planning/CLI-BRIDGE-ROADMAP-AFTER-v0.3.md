@@ -257,6 +257,10 @@ Purpose:
 
 text Plan additional TUI agents only after v0.8 closeout. v0.9 must not directly implement OpenCode, DeepSeek, command transport, or managed PTY transport. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v0.9-CLOSEOUT-REVIEW.md; implementation commit bd20c01b0eabdb7285c20d0b3c7c4f5b1c6cb8d6 
+
 Entry condition:
 
 text EndpointRegistry is stable. Mock review lifecycle is stable. Codex -> Claude review is stable. Claude -> Codex review is stable. WorkBuddy state integration is stable. 
