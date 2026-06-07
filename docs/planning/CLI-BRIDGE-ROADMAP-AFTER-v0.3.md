@@ -279,6 +279,10 @@ Purpose:
 
 text Turn GitHub remote verification into a stronger release gate. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v1.0-CLOSEOUT-REVIEW.md; implementation commit 809d32b221697d76abf122cf80f1a58df2264864 
+
 Scope:
 
 text Verify reported commit exists on remote. Verify branch is pushed. Verify remote latest commit matches reported commit. Check PR if present. Check CI / Actions if present. Compare remote diff scope. Block next phase if CI fails. Block next phase if remote commit does not match report. 
