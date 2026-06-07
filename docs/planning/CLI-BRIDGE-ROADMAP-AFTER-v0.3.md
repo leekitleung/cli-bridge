@@ -187,6 +187,10 @@ Purpose:
 
 text Plan the first real agent-to-agent review path. v0.6 may enter planning only after v0.5 closeout; it must not directly implement a Claude Code adapter. 
 
+Status:
+
+text completed and closed out in docs/planning/CLI-BRIDGE-v0.6-CLOSEOUT-REVIEW.md; implementation commit 0090fe726cf8594a68914f0552cf5d116d0af30e 
+
 Recommended first path:
 
 text Codex output -> Claude Code review 
@@ -205,21 +209,21 @@ text No direct Claude Code adapter implementation during planning. No Claude Cod
 
 Gate:
 
-text transport decision, review-only prompt contract, result-capture contract, and implementation acceptance criteria are defined. Follow-up prompt requires second confirmation. v0.3 caveats remain documented. 
+text passed. Clipboard-only Codex -> Claude Code review handoff works as a copy-ready review-only payload. ReviewResult parser rejects execution flags. Follow-up prompt requires second confirmation. v0.3 caveats and Claude clipboard E2E risk remain documented. 
 
 ### v0.7 — Claude Code -> Codex Review / Execution Feasibility
 
 Purpose:
 
-text Support reverse review from Claude Code output or plan into Codex feasibility review. 
+text Plan reverse review from Claude Code output or plan into Codex feasibility review. v0.7 may enter planning only after v0.6 closeout; it must not directly implement Claude -> Codex. 
 
 Scope:
 
-text Generate feasibility review request. Ask Codex to assess minimum patch scope. Ask Codex to produce next execution prompt. Keep output as pending follow-up. No auto-execution. 
+text Planning only. Define Claude Code output / plan input shape. Draft Codex feasibility-only prompt contract. Preserve second confirmation. Define how Codex can assess minimum patch scope and optional next prompt draft without executing. Keep output as pending follow-up. No auto-execution. 
 
 Gate:
 
-text Claude -> Codex review works. Codex output remains review-only by default. Execution prompt requires separate confirmation. 
+text Claude output / plan input contract, Codex feasibility-only prompt contract, result-capture contract, and implementation acceptance criteria are defined. Execution prompt requires separate confirmation. No command transport, managed PTY expansion, shell endpoint, or source-agent auto feedback is introduced. 
 
 ### v0.8 — WorkBuddy State Integration
 
