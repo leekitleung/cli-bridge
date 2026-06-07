@@ -23,6 +23,8 @@ const expectedPaths = [
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
   'apps/local-server/src/routes/health.ts',
+  'apps/local-server/src/endpoints/endpoint-registry.ts',
+  'apps/local-server/src/endpoints/mock-endpoints.ts',
   'apps/local-server/src/security/pairing.ts',
   'apps/local-server/src/security/origin-guard.ts',
   'packages/shared/src/types.ts',

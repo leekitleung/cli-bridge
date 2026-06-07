@@ -1,11 +1,14 @@
 import {
   AUDIT_EVENT_TYPES,
   AUDIT_RISK_LEVELS,
+  AGENT_ENDPOINT_RISKS,
+  AGENT_ENDPOINT_TRANSPORTS,
   BRIDGE_PACKET_KINDS,
   BRIDGE_PACKET_SOURCES,
   BRIDGE_PACKET_STATUSES,
   BRIDGE_PACKET_TARGETS,
   RAW_CONTENT_REF_STORAGE,
+  type AgentEndpoint,
   type AuditEvent,
   type BridgePacket,
 } from './types.ts';
@@ -222,5 +225,62 @@ export function assertAuditEvent(value: unknown): asserts value is AuditEvent {
   const result = validateAuditEvent(value);
   if (!result.ok) {
     throw new Error(`Invalid AuditEvent: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateAgentEndpoint(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      errors: ['endpoint must be an object'],
+    };
+  }
+
+  if (typeof value.id !== 'string' || value.id.trim().length === 0) {
+    errors.push('id must be a non-empty string');
+  }
+
+  if (typeof value.label !== 'string' || value.label.trim().length === 0) {
+    errors.push('label must be a non-empty string');
+  }
+
+  if (!isOneOf(value.transport, AGENT_ENDPOINT_TRANSPORTS)) {
+    errors.push('transport is invalid');
+  }
+
+  if (!isOneOf(value.risk, AGENT_ENDPOINT_RISKS)) {
+    errors.push('risk is invalid');
+  }
+
+  if (!isRecord(value.capabilities)) {
+    errors.push('capabilities must be an object');
+  } else {
+    requireBoolean(value.capabilities, 'canAcceptPrompt', errors);
+    requireBoolean(value.capabilities, 'canReturnOutput', errors);
+    requireBoolean(value.capabilities, 'canReview', errors);
+    requireBoolean(value.capabilities, 'canExecute', errors);
+    requireBoolean(value.capabilities, 'canSummarize', errors);
+  }
+
+  if (value.adapterName !== undefined && typeof value.adapterName !== 'string') {
+    errors.push('adapterName must be a string');
+  }
+
+  if (value.experimental !== undefined && typeof value.experimental !== 'boolean') {
+    errors.push('experimental must be a boolean');
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+export function assertAgentEndpoint(value: unknown): asserts value is AgentEndpoint {
+  const result = validateAgentEndpoint(value);
+  if (!result.ok) {
+    throw new Error(`Invalid AgentEndpoint: ${result.errors.join(', ')}`);
   }
 }

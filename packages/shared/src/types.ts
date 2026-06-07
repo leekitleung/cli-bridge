@@ -226,3 +226,51 @@ export interface BridgeLoop {
   createdAt: number;
   updatedAt: number;
 }
+
+export const AGENT_ENDPOINT_TRANSPORTS = [
+  'mock',
+  'clipboard',
+  'command',
+  'managed-pty',
+  'file-protocol',
+  'web-dom',
+] as const;
+
+export const AGENT_ENDPOINT_RISKS = [
+  'low',
+  'medium',
+  'high',
+  'experimental',
+] as const;
+
+export const ENDPOINT_ACTIONS = [
+  'accept-prompt',
+  'return-output',
+  'review',
+  'execute',
+  'summarize',
+] as const;
+
+export type AgentEndpointTransport = typeof AGENT_ENDPOINT_TRANSPORTS[number];
+
+export type AgentEndpointRisk = typeof AGENT_ENDPOINT_RISKS[number];
+
+export type EndpointAction = typeof ENDPOINT_ACTIONS[number];
+
+export type AgentEndpointCapabilities = {
+  canAcceptPrompt: boolean;
+  canReturnOutput: boolean;
+  canReview: boolean;
+  canExecute: boolean;
+  canSummarize: boolean;
+};
+
+export type AgentEndpoint = {
+  id: string;
+  label: string;
+  transport: AgentEndpointTransport;
+  risk: AgentEndpointRisk;
+  capabilities: AgentEndpointCapabilities;
+  adapterName?: string;
+  experimental?: boolean;
+};
