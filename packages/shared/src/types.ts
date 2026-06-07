@@ -204,3 +204,25 @@ export interface TemplatePreview {
   preview: string;
   autoSend: false;
 }
+
+export type BridgeLoopStatus =
+  | 'codex-output-ready'
+  | 'chatgpt-awaiting-user-send'
+  | 'pending-prompt-ready'
+  | 'pending-prompt-confirmed'
+  | 'codex-delivered'
+  | 'cancelled'
+  | 'failed';
+
+export interface BridgeLoop {
+  id: string;
+  sessionId: string;
+  status: BridgeLoopStatus;
+  codexOutputPacketId: string;
+  pendingPromptId?: string;
+  chatGptFillRequired: boolean;
+  userSendRequired: boolean;
+  codexDeliveryRequired: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
