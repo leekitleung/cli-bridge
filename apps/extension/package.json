@@ -1,0 +1,9 @@
+{
+  "name": "@cli-bridge/extension",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "node ../../scripts/build-extension.mjs"
+  }
+}

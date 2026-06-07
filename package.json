@@ -1,0 +1,21 @@
+{
+  "name": "cli-bridge",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build-extension": "node ./scripts/build-extension.mjs",
+    "lint": "node ./scripts/lint.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types --test",
+    "start:local-server": "node --experimental-strip-types apps/local-server/src/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.8.3"
+  }
+}

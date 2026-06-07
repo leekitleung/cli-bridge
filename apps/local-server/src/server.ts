@@ -1,0 +1,146 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type RequestListener,
+  type ServerResponse,
+} from 'node:http';
+import { pathToFileURL } from 'node:url';
+
+import {
+  DEFAULT_LOCAL_SERVER_PORT,
+  LOCAL_SERVER_HOST,
+  PUBLIC_HEALTH_PATH,
+  PROTECTED_HEALTH_PATH,
+} from '../../../packages/shared/src/constants.ts';
+import { createHealthPayload } from './routes/health.ts';
+import {
+  assertAllowedOrigin,
+  getRequestOrigin,
+} from './security/origin-guard.ts';
+import {
+  createPairingToken,
+  extractPairingTokenFromRequest,
+  verifyPairingToken,
+} from './security/pairing.ts';
+
+export interface LocalServerHandle {
+  server: ReturnType<typeof createServer>;
+  host: string;
+  port: number;
+  url: string;
+  pairingToken: string;
+}
+
+function isMainModule(): boolean {
+  const entryPoint = process.argv[1];
+  if (!entryPoint) {
+    return false;
+  }
+
+  return import.meta.url === pathToFileURL(entryPoint).href;
+}
+
+function writeJson(
+  statusCode: number,
+  payload: unknown,
+  response: ServerResponse<IncomingMessage>,
+): void {
+  response.statusCode = statusCode;
+  response.setHeader('content-type', 'application/json; charset=utf-8');
+  response.end(`${JSON.stringify(payload)}\n`);
+}
+
+function isTestEnvironment(): boolean {
+  return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'node:test';
+}
+
+export async function startLocalServer(
+  port: number = DEFAULT_LOCAL_SERVER_PORT,
+): Promise<LocalServerHandle> {
+  const pairingToken = createPairingToken();
+  let boundPort = port;
+  const requestHandler: RequestListener = (request, response) => {
+    const url = new URL(request.url ?? '/', `http://${LOCAL_SERVER_HOST}`);
+
+    if (request.method === 'GET' && url.pathname === PUBLIC_HEALTH_PATH) {
+      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort), response);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === PROTECTED_HEALTH_PATH) {
+      const origin = getRequestOrigin(request);
+      const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
+      if (!originCheck.ok) {
+        writeJson(
+          originCheck.statusCode,
+          { status: 'error', message: originCheck.message },
+          response,
+        );
+        return;
+      }
+
+      const receivedToken = extractPairingTokenFromRequest(request);
+      if (!receivedToken) {
+        writeJson(
+          401,
+          { status: 'error', message: 'Missing pairing token' },
+          response,
+        );
+        return;
+      }
+
+      if (!verifyPairingToken(receivedToken, pairingToken)) {
+        writeJson(
+          403,
+          { status: 'error', message: 'Invalid pairing token' },
+          response,
+        );
+        return;
+      }
+
+      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort), response);
+      return;
+    }
+
+    if (url.pathname === PUBLIC_HEALTH_PATH) {
+      writeJson(405, { status: 'error', message: 'Method not allowed' }, response);
+      return;
+    }
+
+    if (url.pathname === PROTECTED_HEALTH_PATH) {
+      writeJson(405, { status: 'error', message: 'Method not allowed' }, response);
+      return;
+    }
+
+    writeJson(404, { status: 'error', message: 'Not found' }, response);
+  };
+
+  const server = createServer(requestHandler);
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, LOCAL_SERVER_HOST, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Local server failed to bind to an IPv4 address.');
+  }
+
+  boundPort = address.port;
+  return {
+    server,
+    host: LOCAL_SERVER_HOST,
+    port: boundPort,
+    url: `http://${LOCAL_SERVER_HOST}:${boundPort}`,
+    pairingToken,
+  };
+}
+
+if (isMainModule()) {
+  const handle = await startLocalServer();
+  console.log(`CLI Bridge local server listening on ${handle.url}`);
+}

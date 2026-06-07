@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "CLI Bridge",
+  "version": "0.1.0",
+  "description": "Local bridge skeleton for ChatGPT Web and local execution tools.",
+  "background": {
+    "service_worker": "dist/background/index.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "CLI Bridge"
+  },
+  "permissions": [
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:31337/*",
+    "https://chatgpt.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "dist/content/index.js"
+      ]
+    }
+  ]
+}
