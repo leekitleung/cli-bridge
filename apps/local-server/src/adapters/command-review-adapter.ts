@@ -121,12 +121,22 @@ function unwrapEnvelope(value: unknown): string | undefined {
   }
   const record = value as Record<string, unknown>;
 
-  // Claude result envelope and Codex message events both surface the payload in
-  // one of these string fields.
+  // Claude result envelope and simple message events surface the payload in one
+  // of these string fields.
   for (const key of ['result', 'text', 'message', 'content'] as const) {
     const field = record[key];
     if (typeof field === 'string' && field.trim().length > 0) {
       return field.trim();
+    }
+  }
+
+  // Codex `--json` event stream nests the agent message one level deeper:
+  // { type: "item.completed", item: { type: "agent_message", text: "<json>" } }
+  const item = record.item;
+  if (typeof item === 'object' && item !== null) {
+    const itemText = (item as Record<string, unknown>).text;
+    if (typeof itemText === 'string' && itemText.trim().length > 0) {
+      return itemText.trim();
     }
   }
 
@@ -225,14 +235,16 @@ export function createClaudeReviewCommandAdapter(): CommandReviewAdapter {
   });
 }
 
-// Codex review-only: prefer `codex exec review` (inherently read-only review
-// subcommand) with JSON event stream and an ephemeral session. Prompt via stdin
-// (the `-` marker is implicit when stdin is piped).
+// Codex review-only: use the general non-interactive `codex exec` with a
+// read-only sandbox (the `exec review` subcommand requires a git diff target and
+// does not accept an arbitrary review prompt). Prompt is piped via stdin (`-`).
 export const CODEX_REVIEW_ARGS: string[] = [
   'exec',
-  'review',
+  '-s',
+  'read-only',
   '--json',
   '--ephemeral',
+  '-',
 ];
 
 export function createCodexReviewCommandAdapter(): CommandReviewAdapter {

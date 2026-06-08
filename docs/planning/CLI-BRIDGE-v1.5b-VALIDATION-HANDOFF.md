@@ -181,3 +181,39 @@ node --experimental-strip-types tmp-v1.5b-validate.mjs
 确认门、通用 shell 端点、dangerous bypass flag、自动执行 follow-up、真实 PTY 写入。
 若真实输出捕获失败，正确的应对是调整固定 argv 的捕获策略（如改用 output 文件），而不是
 放宽 parser 或放宽安全约束。
+
+## 7. 结果
+
+验证日期：2026-06-09
+环境：Windows，Node 22，已登录的 Claude Code 2.1.168 与 codex-cli 0.135.0
+执行人：项目负责人（手动）
+
+### 真机发现与修复
+
+- **V0 launcher resolution**：Windows 上 `claude` / `codex` 的 PATH 入口是 `.cmd`
+  shim，`shell: false` 无法直接运行。runner 改为解析真实入口（Claude → `claude.exe`，
+  Codex → `node` + `@openai/codex/bin/codex.js`），保持 `shell: false`、解析失败
+  fail-closed。修复后 launcher 不再是阻塞点。
+- **Codex argv**：`codex exec review` 要求 git diff 目标（`--uncommitted` / `--base`
+  / `--commit`），不接受任意 review prompt。改为通用 `codex exec -s read-only --json
+  --ephemeral -`（只读 sandbox + stdin prompt）。
+- **Codex 输出形状（第四种）**：`codex exec --json` 把最终消息嵌在
+  `{type:"item.completed", item:{type:"agent_message", text:"<ReviewResult JSON>"}}`，
+  比顶层 `text` 深一层。`selectReviewText` / `unwrapEnvelope` 增加对嵌套 `item.text`
+  的支持。安全不变：仍只定位文本，执行字段仍由 parser 拒绝。
+
+### 测试矩阵结果
+
+| 用例 | 结果 | 现象 |
+| --- | --- | --- |
+| V0 launcher resolution | 通过 | 解析到真实入口，不再 `command-nonzero-exit`（启动层） |
+| V1 Claude `-p` 真实捕获 | 通过 | `ok:true`、review `returned` |
+| V2 Codex `exec` 真实捕获 | 通过（修复后） | `ok:true`、review `returned`（修 argv + 嵌套提取后） |
+| V3 执行字段被拒 | 通过 | `ok:false`、`review-result-forbidden-autoSend`、review `failed`、0 pending prompt |
+| V4 follow-up 草稿 | 通过 | `ok:true`、review `returned`、nextPrompt `draft`、pendingPrompt count 1 |
+
+结论：v1.5b 本地 CLI review-only command transport 真机验证全部用例通过。Claude 与
+Codex 均能在非交互 review-only 模式下被调用、输出被 parser 接住、执行字段被拒、
+follow-up 停在 draft。command transport 自此从「fake runner 测试绿」升级为「真机可用」。
+
+边界未变：无 shell、无自动发送、无真实 PTY 写入、无原始内容落盘、不自动执行 follow-up。

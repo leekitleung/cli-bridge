@@ -63,10 +63,10 @@ test('claude review argv is non-interactive review-only with tools disabled', ()
   assert.ok(CLAUDE_REVIEW_ARGS.includes('plan'));
 });
 
-test('codex review argv uses the non-interactive review subcommand', () => {
-  assert.deepEqual(CODEX_REVIEW_ARGS.slice(0, 2), ['exec', 'review']);
-  assert.ok(CODEX_REVIEW_ARGS.includes('--json'));
+test('codex review argv uses read-only non-interactive exec with stdin', () => {
+  assert.deepEqual(CODEX_REVIEW_ARGS.slice(0, 4), ['exec', '-s', 'read-only', '--json']);
   assert.ok(CODEX_REVIEW_ARGS.includes('--ephemeral'));
+  assert.equal(CODEX_REVIEW_ARGS[CODEX_REVIEW_ARGS.length - 1], '-');
 });
 
 test('adapter passes the prompt via stdin and fixed argv, never a shell string', async () => {
@@ -187,6 +187,18 @@ test('selectReviewText handles bare JSON, Claude envelope, and Codex JSONL shape
   ].join('\n');
   assert.equal(
     selectReviewText({ ok: true, stdout: jsonl, stderr: '', exitCode: 0, durationMs: 1, timedOut: false, truncated: false }),
+    reviewJson,
+  );
+
+  // 4. Real Codex `exec --json` shape: agent_message nested under item.text
+  const codexStream = [
+    JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: reviewJson } }),
+    JSON.stringify({ type: 'turn.completed' }),
+  ].join('\n');
+  assert.equal(
+    selectReviewText({ ok: true, stdout: codexStream, stderr: '', exitCode: 0, durationMs: 1, timedOut: false, truncated: false }),
     reviewJson,
   );
 });
