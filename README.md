@@ -32,10 +32,11 @@ to an agent goes through an explicit user-confirmation gate.
   (`npm run remote-review-gate`) that checks local/remote HEAD match, working
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
 
-> Status caveats: real ChatGPT Web manual E2E and real Codex Managed PTY delivery
-> remain unvalidated / experimental. The bidirectional loop, endpoint registry,
-> review lifecycle, and WorkBuddy contract are not yet exposed through a
-> user-runnable path; they are validated by automated tests.
+> Status caveats: real Codex Managed PTY delivery remains experimental. Real
+> ChatGPT Web manual E2E was validated on 2026-06-08 (see
+> `docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md`). The bidirectional loop,
+> endpoint registry, review lifecycle, and WorkBuddy contract are not yet exposed
+> through a user-runnable path; they are validated by automated tests.
 
 ## Requirements
 

@@ -157,7 +157,9 @@ v1.0 did not add:
 
 Residual risks:
 
-- ChatGPT Web real manual E2E is not validated.
+- ChatGPT Web real manual E2E was validated on 2026-06-08 at commit
+  `6c7aea9` (see `docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md`);
+  this caveat is now cleared. Re-validation is advised if the ChatGPT DOM changes.
 - Codex Managed PTY real delivery remains experimental.
 - Current Claude clipboard handoff does not prove real Claude Code interaction E2E.
 - Current Codex feasibility clipboard handoff does not prove real reverse review E2E.
