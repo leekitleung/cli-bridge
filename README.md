@@ -1,13 +1,14 @@
 # CLI Bridge
 
-CLI Bridge is a **safe, verifiable, semi-automatic context relay** between a CLI
-coding agent (Codex) and ChatGPT Web. It helps you move CLI output into ChatGPT
-and turn ChatGPT replies into reviewed, human-confirmed prompts — without giving
-any component terminal execution authority.
+CLI Bridge is a **safe, verifiable, controlled-automation context relay** between
+a CLI coding agent (Codex) and ChatGPT Web. It helps move CLI output into
+ChatGPT and turn ChatGPT replies into reviewed prompts while keeping shell
+execution and terminal control out of the product surface.
 
-It is **not** a terminal controller. It does not run shell commands, does not
-auto-click ChatGPT send, and does not run unattended agent loops. Every transfer
-to an agent goes through an explicit user-confirmation gate.
+It is **not** a terminal controller. It does not run shell commands. As of
+ADR-0001, automation is allowed only in staged, auditable slices: v1.5a can queue
+an outbound prompt and let the browser extension fill the ChatGPT composer, but
+it still does not auto-click ChatGPT send or run unattended agent loops.
 
 ## What works today
 
@@ -21,6 +22,9 @@ to an agent goes through an explicit user-confirmation gate.
 - **Browser panel synced to the server**: on a successful Fill / Extract, the
   Bridge Panel records a redacted packet / draft pending prompt via `/bridge`
   (token-gated, best-effort; falls back to local-only when unpaired).
+- **v1.5a outbound prompt queue**: authenticated `/bridge/outbound*` endpoints
+  can queue redacted Codex output for ChatGPT Web. The extension polls, fills the
+  composer, and records an acknowledgement. It does **not** submit the prompt.
 - **Optional JSON persistence**: set `CLI_BRIDGE_DATA_DIR` to make packets,
   audit events, and pending prompts survive a restart. Off by default
   (in-memory). Raw content is never written to disk; only redacted
@@ -90,12 +94,18 @@ request requires an allowed `origin` and a valid pairing-token header
 | `POST /bridge/pending-prompts/send` | Send a **confirmed** prompt via the mock agent `{ promptId }` |
 | `POST /bridge/pending-prompts/cancel` | Cancel a prompt `{ promptId }` |
 | `GET /bridge/pending-prompts` | List pending prompts |
+| `POST /bridge/outbound` | Queue a redacted prompt for ChatGPT Web `{ sessionId, prompt }` |
+| `GET /bridge/outbound/next` | Claim the next queued outbound prompt for extension fill |
+| `POST /bridge/outbound/ack` | Acknowledge composer fill `{ outboundPromptId, ok, failureReason? }` |
+| `GET /bridge/outbound` | List outbound prompts |
 | `GET /bridge/metrics` | Current metrics summary |
 
 Notes:
 
 - Delivery (`/send`) only targets the in-memory **mock agent**; no real agent is
   invoked, and a prompt must already be `confirmed`.
+- Outbound prompt queue delivery only fills the ChatGPT composer. It does not
+  click send, submit forms, or simulate keyboard input.
 - Responses expose redacted `processedContent` only; raw content stays
   memory-only and is never serialized.
 - The endpoint registry, agent-to-agent review lifecycle, and WorkBuddy state
@@ -128,9 +138,17 @@ CLI Bridge intentionally does **not** provide:
 
 - any `/exec`, `/shell`, `/run`, or `/command` endpoint;
 - stop-session or attach-to-existing-terminal behavior;
-- automatic ChatGPT send or automatic agent loops;
 - automatic commit / push / merge / PR creation;
 - MCP, app-prompt, OpenCode, DeepSeek TUI, or real WorkBuddy integration.
+
+Automation boundary after ADR-0001:
+
+- v1.5a allows automatic extension polling and composer fill only.
+- automatic ChatGPT send, automatic extraction loops, and real Codex PTY delivery
+  are allowed only as later explicit opt-in slices with visible audit logs,
+  round limits, and interrupt controls.
+- browser cookies, localStorage, page secrets, raw unredacted persistence, and
+  generic shell control remain hard prohibited.
 
 Sensitive content (API tokens, private keys, `.env` secret assignments) is
 redacted before any persistence; raw content stays memory-only by default.

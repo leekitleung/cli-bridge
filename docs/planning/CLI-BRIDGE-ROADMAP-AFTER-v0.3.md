@@ -334,3 +334,26 @@ Do not use older W1/W2 blocked status as the active project state.
 Do not implement v0.4 until v0.3-HANDOFF-REVIEW has produced a verdict.
 
 Do not erase the v0.3 caveats. The caveats are part of the route boundary.
+
+## 12. v1.5 Automation Boundary Update
+
+Current route overlay:
+
+text ADR-0001: docs/planning/ADR-0001-v1.5-automation-boundary.md handoff: docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md
+
+The project owner selected direction B: unfreeze automation so both ends can
+move data automatically. This supersedes the categorical v0.3-era ban on all
+automation, but only for explicitly staged, auditable slices.
+
+Allowed v1.5a scope:
+
+text local outbound prompt queue authenticated extension polling automatic ChatGPT composer fill acknowledgement audit no automatic send
+
+Still prohibited in v1.5a:
+
+text automatic ChatGPT send requestSubmit form submit keyboard simulation automatic agent loop real Codex PTY delivery generic shell endpoints attach existing terminal stop session browser cookie/localStorage reads automatic commit/push/merge/PR raw unredacted persistence
+
+Later v1.5 slices may implement automatic send, automatic extraction, bounded
+loops, and real Codex PTY delivery only after a separate implementation handoff
+or ADR update records the explicit opt-in controls, round limits, interrupt
+behavior, and audit evidence.

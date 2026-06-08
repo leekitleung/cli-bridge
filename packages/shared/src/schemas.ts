@@ -8,12 +8,14 @@ import {
   BRIDGE_PACKET_SOURCES,
   BRIDGE_PACKET_STATUSES,
   BRIDGE_PACKET_TARGETS,
+  OUTBOUND_PROMPT_STATUSES,
   RAW_CONTENT_REF_STORAGE,
   type AgentEndpoint,
   type AgentReviewRequest,
   type AgentReviewResult,
   type AuditEvent,
   type BridgePacket,
+  type OutboundPrompt,
   type WorkBuddyExecutionLedgerEvent,
   type WorkBuddyProjectSnapshot,
   type WorkBuddyPromptDraftSink,
@@ -233,6 +235,63 @@ export function assertAuditEvent(value: unknown): asserts value is AuditEvent {
   const result = validateAuditEvent(value);
   if (!result.ok) {
     throw new Error(`Invalid AuditEvent: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      errors: ['outbound prompt must be an object'],
+    };
+  }
+
+  if ('rawContent' in value) {
+    errors.push('rawContent must not be stored on OutboundPrompt');
+  }
+
+  for (const key of ['id', 'sessionId', 'packetId', 'prompt']) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (value.target !== 'chatgpt-web') {
+    errors.push('target must be chatgpt-web');
+  }
+
+  if (!isOneOf(value.status, OUTBOUND_PROMPT_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+
+  for (const key of ['claimedAt', 'deliveredAt', 'failedAt', 'cancelledAt']) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+    ) {
+      errors.push(`${key} must be a finite number`);
+    }
+  }
+
+  if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
+    errors.push('failureReason must be a string');
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+export function assertOutboundPrompt(value: unknown): asserts value is OutboundPrompt {
+  const result = validateOutboundPrompt(value);
+  if (!result.ok) {
+    throw new Error(`Invalid OutboundPrompt: ${result.errors.join(', ')}`);
   }
 }
 

@@ -516,7 +516,6 @@ test('W2 extension source does not send, read browser secrets, or implement late
   // Files that must remain pure DOM/clipboard helpers with no server vocabulary.
   const purePaths = [
     'apps/extension/src/content/chatgpt-dom.ts',
-    'apps/extension/src/content/index.ts',
     'apps/extension/src/content/clipboard.ts',
     'apps/extension/src/content/extraction.ts',
     'apps/extension/src/ui/state.ts',
@@ -552,6 +551,8 @@ test('W2 extension source does not send, read browser secrets, or implement late
   // but the hard security boundaries still apply everywhere: no page secret
   // reads, no auto-send, no keyboard simulation.
   const wiredPaths = [
+    'apps/extension/src/content/index.ts',
+    'apps/extension/src/content/outbound-poller.ts',
     'apps/extension/src/ui/bridge-panel.tsx',
     'apps/extension/src/content/bridge-client.ts',
   ];

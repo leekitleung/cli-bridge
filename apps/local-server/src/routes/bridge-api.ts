@@ -10,6 +10,7 @@ import {
   JsonSnapshotStore,
 } from '../storage/json-snapshot-store.ts';
 import { createMetricsSummary } from '../storage/metrics-summary.ts';
+import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts';
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
 
@@ -19,6 +20,7 @@ export interface BridgeRuntime {
   packetStore: InMemoryPacketStore;
   auditLog: InMemoryAuditLog;
   pendingPromptStore: InMemoryPendingPromptStore;
+  outboundPromptStore: InMemoryOutboundPromptStore;
   agent: MockAgentAdapter;
   persist: () => void;
 }
@@ -33,6 +35,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const packetStore = new InMemoryPacketStore();
   const auditLog = new InMemoryAuditLog();
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
+  const outboundPromptStore = new InMemoryOutboundPromptStore(packetStore, auditLog);
   const agent = new MockAgentAdapter();
 
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
@@ -44,6 +47,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       packetStore.hydratePackets(read.snapshot.packets);
       auditLog.hydrateEvents(read.snapshot.auditEvents);
       pendingPromptStore.hydratePrompts(read.snapshot.pendingPrompts);
+      outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
     }
   }
 
@@ -57,6 +61,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       packetStore.exportPackets(),
       auditLog.exportEvents(),
       pendingPromptStore.exportPrompts(),
+      outboundPromptStore.exportPrompts(),
     ));
   };
 
@@ -64,6 +69,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     packetStore,
     auditLog,
     pendingPromptStore,
+    outboundPromptStore,
     agent,
     persist,
   };
@@ -140,6 +146,9 @@ export const BRIDGE_PENDING_PROMPTS_PATH = '/bridge/pending-prompts';
 export const BRIDGE_PENDING_PROMPTS_CONFIRM_PATH = '/bridge/pending-prompts/confirm';
 export const BRIDGE_PENDING_PROMPTS_SEND_PATH = '/bridge/pending-prompts/send';
 export const BRIDGE_PENDING_PROMPTS_CANCEL_PATH = '/bridge/pending-prompts/cancel';
+export const BRIDGE_OUTBOUND_PATH = '/bridge/outbound';
+export const BRIDGE_OUTBOUND_NEXT_PATH = '/bridge/outbound/next';
+export const BRIDGE_OUTBOUND_ACK_PATH = '/bridge/outbound/ack';
 export const BRIDGE_METRICS_PATH = '/bridge/metrics';
 
 export function isBridgePath(pathname: string): boolean {
@@ -148,6 +157,9 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_PENDING_PROMPTS_CONFIRM_PATH ||
     pathname === BRIDGE_PENDING_PROMPTS_SEND_PATH ||
     pathname === BRIDGE_PENDING_PROMPTS_CANCEL_PATH ||
+    pathname === BRIDGE_OUTBOUND_PATH ||
+    pathname === BRIDGE_OUTBOUND_NEXT_PATH ||
+    pathname === BRIDGE_OUTBOUND_ACK_PATH ||
     pathname === BRIDGE_METRICS_PATH;
 }
 
@@ -184,6 +196,59 @@ export async function handleBridgeRequest(
 
   if (pathname === BRIDGE_PENDING_PROMPTS_PATH && method === 'GET') {
     return ok({ pendingPrompts: runtime.pendingPromptStore.listPrompts() });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_PATH && method === 'GET') {
+    return ok({ outboundPrompts: runtime.outboundPromptStore.listPrompts() });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const prompt = requireString(parsed.body, 'prompt');
+    if (!sessionId || !prompt) {
+      return error(400, 'sessionId and prompt are required');
+    }
+    const outboundPrompt = runtime.outboundPromptStore.createOutboundPrompt({
+      sessionId,
+      prompt,
+    });
+    runtime.persist();
+    return created({ outboundPrompt });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_NEXT_PATH && method === 'GET') {
+    const outboundPrompt = runtime.outboundPromptStore.claimNext();
+    runtime.persist();
+    return ok({ outboundPrompt: outboundPrompt ?? null });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_ACK_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const outboundPromptId = requireString(parsed.body, 'outboundPromptId');
+    const okValue = parsed.body.ok;
+    if (!outboundPromptId || typeof okValue !== 'boolean') {
+      return error(400, 'outboundPromptId and ok are required');
+    }
+    const failureReason = typeof parsed.body.failureReason === 'string'
+      ? parsed.body.failureReason
+      : undefined;
+    const outboundPrompt = runtime.outboundPromptStore.acknowledge({
+      id: outboundPromptId,
+      ok: okValue,
+      failureReason,
+    });
+    if (!outboundPrompt) {
+      return error(409, 'Outbound prompt cannot be acknowledged');
+    }
+    runtime.persist();
+    return ok({ outboundPrompt });
   }
 
   if (pathname === BRIDGE_PENDING_PROMPTS_PATH && method === 'POST') {

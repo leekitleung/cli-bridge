@@ -14,6 +14,7 @@ const requiredPaths = [
   'apps/extension/src/content/clipboard.ts',
   'apps/extension/src/content/extraction.ts',
   'apps/extension/src/content/bridge-client.ts',
+  'apps/extension/src/content/outbound-poller.ts',
   'apps/extension/src/ui/bridge-panel.tsx',
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
@@ -34,6 +35,7 @@ const requiredPaths = [
   'apps/local-server/src/review/review-result-parser.ts',
   'apps/local-server/src/workbuddy/workbuddy-state-store.ts',
   'apps/local-server/src/storage/packet-store.ts',
+  'apps/local-server/src/storage/outbound-prompt-store.ts',
   'apps/local-server/src/storage/audit-log.ts',
   'apps/local-server/src/storage/json-snapshot-store.ts',
   'apps/local-server/src/storage/pending-prompt-store.ts',
@@ -46,10 +48,12 @@ const requiredPaths = [
   'scripts/build-extension.mjs',
   'scripts/remote-review-gate.mjs',
   'README.md',
+  'docs/planning/ADR-0001-v1.5-automation-boundary.md',
   'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md',
-  'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md'
 ];
 
 const forbiddenPaths = [
