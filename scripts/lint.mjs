@@ -26,6 +26,7 @@ const requiredPaths = [
   'apps/local-server/src/adapters/MockAgentAdapter.ts',
   'apps/local-server/src/adapters/CodexManagedPtyAdapter.ts',
   'apps/local-server/src/adapters/command-runner.ts',
+  'apps/local-server/src/adapters/command-review-adapter.ts',
   'apps/local-server/src/security/pairing.ts',
   'apps/local-server/src/security/origin-guard.ts',
   'apps/local-server/src/security/redaction.ts',
