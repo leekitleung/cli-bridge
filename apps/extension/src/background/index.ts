@@ -167,3 +167,40 @@ export function buildExtensionOriginHeaders(pairingToken: string): HeadersInit {
     origin: ALLOWED_EXTENSION_ORIGIN,
   };
 }
+
+
+// --- Pairing token management ---
+// The background script provides a message-based API for the content script
+// and popup to set/get the pairing token stored in chrome.storage.local.
+
+interface PairingMessage {
+  type: 'cli-bridge-set-token' | 'cli-bridge-get-token';
+  token?: string;
+}
+
+if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener(
+    (msg: unknown, _sender, sendResponse) => {
+      const message = msg as PairingMessage;
+      if (message.type === 'cli-bridge-set-token' && typeof message.token === 'string') {
+        chrome.storage.local.set({ cliBridgePairingToken: message.token }).then(() => {
+          sendResponse({ ok: true });
+        }).catch(() => {
+          sendResponse({ ok: false });
+        });
+        return true; // async response
+      }
+
+      if (message.type === 'cli-bridge-get-token') {
+        chrome.storage.local.get('cliBridgePairingToken').then((result) => {
+          sendResponse({ ok: true, token: result?.cliBridgePairingToken ?? null });
+        }).catch(() => {
+          sendResponse({ ok: false, token: null });
+        });
+        return true; // async response
+      }
+
+      return false;
+    },
+  );
+}

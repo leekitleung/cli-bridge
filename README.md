@@ -18,6 +18,9 @@ to an agent goes through an explicit user-confirmation gate.
 - **In-memory core relay, wired over local HTTP** (`/bridge/*`, authenticated):
   BridgePacket + redaction + audit log, Pending Prompt lifecycle
   (create / confirm / send-via-mock / cancel), and a metrics summary.
+- **Browser panel synced to the server**: on a successful Fill / Extract, the
+  Bridge Panel records a redacted packet / draft pending prompt via `/bridge`
+  (token-gated, best-effort; falls back to local-only when unpaired).
 - **Still library-only** (validated by tests, not yet exposed over HTTP):
   bidirectional loop orchestration, endpoint registry with capability gating,
   agent-to-agent review lifecycle, and a WorkBuddy state contract.

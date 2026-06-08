@@ -419,7 +419,7 @@ test('extension manifest and background source stay minimal for W1-4', async () 
     service_worker: 'dist/background/index.js',
     type: 'module',
   });
-  assert.deepEqual(manifest.permissions, ['clipboardWrite']);
+  assert.deepEqual(manifest.permissions, ['clipboardWrite', 'storage']);
   assert.deepEqual(manifest.host_permissions, [`${LOCAL_SERVER_BASE_URL}/*`, 'https://chatgpt.com/*']);
   assert.deepEqual(manifest.content_scripts, [
     {

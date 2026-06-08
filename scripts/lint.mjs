@@ -13,6 +13,7 @@ const requiredPaths = [
   'apps/extension/src/content/chatgpt-dom.ts',
   'apps/extension/src/content/clipboard.ts',
   'apps/extension/src/content/extraction.ts',
+  'apps/extension/src/content/bridge-client.ts',
   'apps/extension/src/ui/bridge-panel.tsx',
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
@@ -44,7 +45,8 @@ const requiredPaths = [
   'scripts/build-extension.mjs',
   'scripts/remote-review-gate.mjs',
   'README.md',
-  'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md'
 ];
 
 const forbiddenPaths = [

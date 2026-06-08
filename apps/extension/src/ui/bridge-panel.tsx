@@ -2,6 +2,13 @@ import { copyTextToClipboard, type ClipboardFallbackResult } from '../content/cl
 import { extractPromptText, type ExtractPromptResult } from '../content/extraction.ts';
 import { fillComposerText, type FillComposerResult } from '../content/chatgpt-dom.ts';
 import {
+  createPacket,
+  createPendingPrompt,
+  getMetrics,
+  hasPairingToken,
+  loadPairingTokenFromStorage,
+} from '../content/bridge-client.ts';
+import {
   createCopyPanelStatus,
   createExtractPanelStatus,
   createFillPanelStatus,
@@ -135,6 +142,11 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   renderLoopStatus(latestLoopStage);
 
+  // Try to load pairing token from extension storage for server sync
+  loadPairingTokenFromStorage().catch(() => {});
+
+  const sessionId = `panel-${Date.now()}`;
+
   fillButton.addEventListener('click', async () => {
     latestFillStatus = await fillComposerText(input.value, {
       root,
@@ -143,10 +155,14 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     renderStatus(createFillPanelStatus(latestFillStatus));
     if (latestFillStatus.ok) {
       renderLoopStatus('chatgpt-awaiting-user-send');
+      // Sync to server: record the content as a packet
+      if (hasPairingToken()) {
+        createPacket(sessionId, input.value).catch(() => {});
+      }
     }
   });
 
-  extractButton.addEventListener('click', () => {
+  extractButton.addEventListener('click', async () => {
     latestExtractStatus = extractPromptText({
       root,
     });
@@ -154,6 +170,10 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     renderStatus(createExtractPanelStatus(latestExtractStatus));
     if (latestExtractStatus.ok) {
       renderLoopStatus('pending-prompt-ready');
+      // Sync to server: create a pending prompt from extraction
+      if (hasPairingToken()) {
+        createPendingPrompt(sessionId, latestExtractStatus.text).catch(() => {});
+      }
     }
   });
 

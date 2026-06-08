@@ -35,7 +35,7 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
       js: ['content/index.js'],
     },
   ]);
-  assert.deepEqual(manifest.permissions, ['clipboardWrite']);
+  assert.deepEqual(manifest.permissions, ['clipboardWrite', 'storage']);
   assert.deepEqual(manifest.host_permissions, [
     'http://127.0.0.1:31337/*',
     'https://chatgpt.com/*',

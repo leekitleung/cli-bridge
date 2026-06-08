@@ -513,17 +513,17 @@ test('extractLastCompleteAssistantMessage returns only the last visible assistan
 });
 
 test('W2 extension source does not send, read browser secrets, or implement later scopes', async () => {
-  const paths = [
+  // Files that must remain pure DOM/clipboard helpers with no server vocabulary.
+  const purePaths = [
     'apps/extension/src/content/chatgpt-dom.ts',
     'apps/extension/src/content/index.ts',
     'apps/extension/src/content/clipboard.ts',
     'apps/extension/src/content/extraction.ts',
-    'apps/extension/src/ui/bridge-panel.tsx',
     'apps/extension/src/ui/state.ts',
   ];
 
-  const source = (await Promise.all(
-    paths.map((path) => readFile(resolve(root, path), 'utf8')),
+  const pureSource = (await Promise.all(
+    purePaths.map((path) => readFile(resolve(root, path), 'utf8')),
   )).join('\n');
 
   for (const snippet of [
@@ -545,7 +545,32 @@ test('W2 extension source does not send, read browser secrets, or implement late
     'WorkBuddy',
     'MCP',
   ]) {
-    assert.equal(source.includes(snippet), false, `W2 source must not contain ${snippet}`);
+    assert.equal(pureSource.includes(snippet), false, `pure W2 source must not contain ${snippet}`);
+  }
+
+  // The panel and bridge-client legitimately sync to /bridge endpoints in v1.2,
+  // but the hard security boundaries still apply everywhere: no page secret
+  // reads, no auto-send, no keyboard simulation.
+  const wiredPaths = [
+    'apps/extension/src/ui/bridge-panel.tsx',
+    'apps/extension/src/content/bridge-client.ts',
+  ];
+
+  const wiredSource = (await Promise.all(
+    wiredPaths.map((path) => readFile(resolve(root, path), 'utf8')),
+  )).join('\n');
+
+  for (const snippet of [
+    'localStorage',
+    'document.cookie',
+    'KeyboardEvent',
+    'requestSubmit',
+    '.submit(',
+    'send-button',
+    'CodexManaged',
+    'MockAgent',
+  ]) {
+    assert.equal(wiredSource.includes(snippet), false, `wired source must not contain ${snippet}`);
   }
 });
 
@@ -556,17 +581,16 @@ test('Bridge Panel exposes only fill, extract, and copy actions', async () => {
     .filter((label) => ['填入', '提取', '复制'].includes(label));
 
   assert.deepEqual(actionLabels, ['填入', '提取', '复制']);
-  assert.equal(source.includes('Pending Prompt'), false);
-  assert.equal(source.includes('Codex'), false);
-  assert.equal(source.includes('Agent'), false);
-  assert.equal(source.includes('Packet'), false);
-  assert.equal(source.includes('Audit'), false);
+  // The panel must not present any auto-send / agent-control affordance.
+  assert.equal(source.includes('send-button'), false);
+  assert.equal(source.includes('requestSubmit'), false);
+  assert.equal(source.includes('KeyboardEvent'), false);
 });
 
-test('extension manifest only adds ChatGPT content script and clipboard permission for W2', async () => {
+test('extension manifest adds ChatGPT content script, clipboard and storage permissions', async () => {
   const manifest = JSON.parse(await readFile(resolve(root, 'apps/extension/manifest.json'), 'utf8'));
 
-  assert.deepEqual(manifest.permissions, ['clipboardWrite']);
+  assert.deepEqual(manifest.permissions, ['clipboardWrite', 'storage']);
   assert.deepEqual(manifest.host_permissions, [
     'http://127.0.0.1:31337/*',
     'https://chatgpt.com/*',
