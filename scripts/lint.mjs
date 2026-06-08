@@ -17,6 +17,7 @@ const requiredPaths = [
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
   'apps/local-server/src/routes/health.ts',
+  'apps/local-server/src/routes/bridge-api.ts',
   'apps/local-server/src/routes/pending-prompts.ts',
   'apps/local-server/src/routes/sessions.ts',
   'apps/local-server/src/adapters/AgentAdapter.ts',
@@ -42,7 +43,8 @@ const requiredPaths = [
   'packages/shared/src/utils/token-estimate.ts',
   'scripts/build-extension.mjs',
   'scripts/remote-review-gate.mjs',
-  'README.md'
+  'README.md',
+  'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md'
 ];
 
 const forbiddenPaths = [

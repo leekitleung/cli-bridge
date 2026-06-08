@@ -15,17 +15,20 @@ to an agent goes through an explicit user-confirmation gate.
   `GET /health/private` (origin guard + pairing token).
 - **Browser extension**: mounts a Bridge Panel on ChatGPT Web with three
   actions — Fill / Extract / Copy — plus a clipboard fallback.
-- **In-memory contract libraries** (exercised by the test suite, not yet wired
-  to an HTTP/UI runtime): BridgePacket + redaction + audit log, Pending Prompt
-  lifecycle, bidirectional loop orchestration, endpoint registry with capability
-  gating, agent-to-agent review lifecycle, and a WorkBuddy state contract.
+- **In-memory core relay, wired over local HTTP** (`/bridge/*`, authenticated):
+  BridgePacket + redaction + audit log, Pending Prompt lifecycle
+  (create / confirm / send-via-mock / cancel), and a metrics summary.
+- **Still library-only** (validated by tests, not yet exposed over HTTP):
+  bidirectional loop orchestration, endpoint registry with capability gating,
+  agent-to-agent review lifecycle, and a WorkBuddy state contract.
 - **Remote Review Gate**: a local, read-only release gate
   (`npm run remote-review-gate`) that checks local/remote HEAD match, working
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
 
 > Status caveats: real ChatGPT Web manual E2E and real Codex Managed PTY delivery
-> remain unvalidated / experimental. The v0.4–v1.0 contract libraries are not yet
-> exposed through a user-runnable path; they are validated by automated tests.
+> remain unvalidated / experimental. The bidirectional loop, endpoint registry,
+> review lifecycle, and WorkBuddy contract are not yet exposed through a
+> user-runnable path; they are validated by automated tests.
 
 ## Requirements
 
@@ -63,6 +66,32 @@ It logs the bound URL (default `http://127.0.0.1:31337`). Smoke check:
 curl http://127.0.0.1:31337/health          # 200 ok
 curl http://127.0.0.1:31337/health/private   # 401/403 without origin + pairing token
 ```
+
+## Core relay endpoints
+
+The local server exposes the core relay loop under `/bridge`. Every `/bridge`
+request requires an allowed `origin` and a valid pairing-token header
+(`x-cli-bridge-pairing-token`), exactly like `/health/private`.
+
+| Method + path | Purpose |
+| --- | --- |
+| `POST /bridge/packets` | Create a redacted BridgePacket from `{ sessionId, content }` |
+| `GET /bridge/packets` | List packets (processed content only) |
+| `POST /bridge/pending-prompts` | Create a pending prompt `{ sessionId, prompt }` (status `draft`) |
+| `POST /bridge/pending-prompts/confirm` | Confirm a prompt `{ promptId }` |
+| `POST /bridge/pending-prompts/send` | Send a **confirmed** prompt via the mock agent `{ promptId }` |
+| `POST /bridge/pending-prompts/cancel` | Cancel a prompt `{ promptId }` |
+| `GET /bridge/pending-prompts` | List pending prompts |
+| `GET /bridge/metrics` | Current metrics summary |
+
+Notes:
+
+- Delivery (`/send`) only targets the in-memory **mock agent**; no real agent is
+  invoked, and a prompt must already be `confirmed`.
+- Responses expose redacted `processedContent` only; raw content stays
+  memory-only and is never serialized.
+- The endpoint registry, agent-to-agent review lifecycle, and WorkBuddy state
+  remain library contracts and are intentionally **not** exposed over HTTP yet.
 
 ## Load the extension
 

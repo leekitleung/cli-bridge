@@ -14,6 +14,13 @@ import {
 } from '../../../packages/shared/src/constants.ts';
 import { createHealthPayload } from './routes/health.ts';
 import {
+  createBridgeRuntime,
+  handleBridgeRequest,
+  isBridgePath,
+  writeBridgeResult,
+  type BridgeRuntime,
+} from './routes/bridge-api.ts';
+import {
   assertAllowedOrigin,
   getRequestOrigin,
 } from './security/origin-guard.ts';
@@ -58,7 +65,46 @@ export async function startLocalServer(
   port: number = DEFAULT_LOCAL_SERVER_PORT,
 ): Promise<LocalServerHandle> {
   const pairingToken = createPairingToken();
+  const bridgeRuntime: BridgeRuntime = createBridgeRuntime();
   let boundPort = port;
+
+  function checkAuth(
+    request: IncomingMessage,
+    response: ServerResponse<IncomingMessage>,
+  ): boolean {
+    const origin = getRequestOrigin(request);
+    const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
+    if (!originCheck.ok) {
+      writeJson(
+        originCheck.statusCode,
+        { status: 'error', message: originCheck.message },
+        response,
+      );
+      return false;
+    }
+
+    const receivedToken = extractPairingTokenFromRequest(request);
+    if (!receivedToken) {
+      writeJson(
+        401,
+        { status: 'error', message: 'Missing pairing token' },
+        response,
+      );
+      return false;
+    }
+
+    if (!verifyPairingToken(receivedToken, pairingToken)) {
+      writeJson(
+        403,
+        { status: 'error', message: 'Invalid pairing token' },
+        response,
+      );
+      return false;
+    }
+
+    return true;
+  }
+
   const requestHandler: RequestListener = (request, response) => {
     const url = new URL(request.url ?? '/', `http://${LOCAL_SERVER_HOST}`);
 
@@ -68,37 +114,26 @@ export async function startLocalServer(
     }
 
     if (request.method === 'GET' && url.pathname === PROTECTED_HEALTH_PATH) {
-      const origin = getRequestOrigin(request);
-      const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
-      if (!originCheck.ok) {
-        writeJson(
-          originCheck.statusCode,
-          { status: 'error', message: originCheck.message },
-          response,
-        );
-        return;
-      }
-
-      const receivedToken = extractPairingTokenFromRequest(request);
-      if (!receivedToken) {
-        writeJson(
-          401,
-          { status: 'error', message: 'Missing pairing token' },
-          response,
-        );
-        return;
-      }
-
-      if (!verifyPairingToken(receivedToken, pairingToken)) {
-        writeJson(
-          403,
-          { status: 'error', message: 'Invalid pairing token' },
-          response,
-        );
+      if (!checkAuth(request, response)) {
         return;
       }
 
       writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort), response);
+      return;
+    }
+
+    if (isBridgePath(url.pathname)) {
+      if (!checkAuth(request, response)) {
+        return;
+      }
+
+      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request)
+        .then((result) => {
+          writeBridgeResult(result, response);
+        })
+        .catch(() => {
+          writeJson(500, { status: 'error', message: 'Internal bridge error' }, response);
+        });
       return;
     }
 

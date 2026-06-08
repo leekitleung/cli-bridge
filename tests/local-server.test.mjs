@@ -38,6 +38,7 @@ const root = process.cwd();
 const sourceFiles = [
   'apps/local-server/src/server.ts',
   'apps/local-server/src/routes/health.ts',
+  'apps/local-server/src/routes/bridge-api.ts',
   'apps/local-server/src/security/pairing.ts',
   'apps/local-server/src/security/origin-guard.ts',
   'packages/shared/src/constants.ts',
