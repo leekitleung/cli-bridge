@@ -68,4 +68,24 @@ export class InMemoryAuditLog {
       .filter((event) => event.packetId === packetId)
       .map(cloneAuditEvent);
   }
+
+  // Serialization for persistence: returns validated event records.
+  exportEvents(): AuditEvent[] {
+    return this.listEvents();
+  }
+
+  // Hydrate events from a snapshot. Invalid records are skipped, not trusted.
+  hydrateEvents(events: unknown[]): number {
+    let restored = 0;
+    for (const candidate of events) {
+      try {
+        assertAuditEvent(candidate);
+        this.events.push(cloneAuditEvent(candidate as AuditEvent));
+        restored += 1;
+      } catch {
+        // skip invalid record
+      }
+    }
+    return restored;
+  }
 }

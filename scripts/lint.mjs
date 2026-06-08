@@ -35,6 +35,7 @@ const requiredPaths = [
   'apps/local-server/src/workbuddy/workbuddy-state-store.ts',
   'apps/local-server/src/storage/packet-store.ts',
   'apps/local-server/src/storage/audit-log.ts',
+  'apps/local-server/src/storage/json-snapshot-store.ts',
   'apps/local-server/src/storage/pending-prompt-store.ts',
   'apps/local-server/src/storage/pending-review-store.ts',
   'packages/shared/src/types.ts',
@@ -46,7 +47,8 @@ const requiredPaths = [
   'scripts/remote-review-gate.mjs',
   'README.md',
   'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md',
-  'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md'
 ];
 
 const forbiddenPaths = [

@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 apps/extension/dist/
+.cli-bridge-data/
+*.cli-bridge-runtime/

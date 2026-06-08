@@ -21,6 +21,10 @@ to an agent goes through an explicit user-confirmation gate.
 - **Browser panel synced to the server**: on a successful Fill / Extract, the
   Bridge Panel records a redacted packet / draft pending prompt via `/bridge`
   (token-gated, best-effort; falls back to local-only when unpaired).
+- **Optional JSON persistence**: set `CLI_BRIDGE_DATA_DIR` to make packets,
+  audit events, and pending prompts survive a restart. Off by default
+  (in-memory). Raw content is never written to disk; only redacted
+  `processedContent` is persisted.
 - **Still library-only** (validated by tests, not yet exposed over HTTP):
   bidirectional loop orchestration, endpoint registry with capability gating,
   agent-to-agent review lifecycle, and a WorkBuddy state contract.

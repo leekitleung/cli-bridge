@@ -5,6 +5,10 @@ import type {
 
 import { MockAgentAdapter } from '../adapters/MockAgentAdapter.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
+import {
+  buildSnapshot,
+  JsonSnapshotStore,
+} from '../storage/json-snapshot-store.ts';
 import { createMetricsSummary } from '../storage/metrics-summary.ts';
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
@@ -16,20 +20,58 @@ export interface BridgeRuntime {
   auditLog: InMemoryAuditLog;
   pendingPromptStore: InMemoryPendingPromptStore;
   agent: MockAgentAdapter;
+  persist: () => void;
 }
 
-export function createBridgeRuntime(): BridgeRuntime {
+export interface BridgeRuntimeOptions {
+  // When set, the runtime hydrates from and persists to a JSON snapshot in this
+  // directory. When omitted, the runtime stays fully in-memory.
+  dataDir?: string;
+}
+
+export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeRuntime {
   const packetStore = new InMemoryPacketStore();
   const auditLog = new InMemoryAuditLog();
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
   const agent = new MockAgentAdapter();
+
+  const dataDir = options.dataDir ?? resolveDataDirFromEnv();
+  const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
+
+  if (snapshotStore) {
+    const read = snapshotStore.read();
+    if (read.ok && read.snapshot) {
+      packetStore.hydratePackets(read.snapshot.packets);
+      auditLog.hydrateEvents(read.snapshot.auditEvents);
+      pendingPromptStore.hydratePrompts(read.snapshot.pendingPrompts);
+    }
+  }
+
+  const persist = (): void => {
+    if (!snapshotStore) {
+      return;
+    }
+    // Best-effort: only redacted/persistable records are exported. Raw content
+    // is never part of these exports.
+    snapshotStore.write(buildSnapshot(
+      packetStore.exportPackets(),
+      auditLog.exportEvents(),
+      pendingPromptStore.exportPrompts(),
+    ));
+  };
 
   return {
     packetStore,
     auditLog,
     pendingPromptStore,
     agent,
+    persist,
   };
+}
+
+function resolveDataDirFromEnv(): string | undefined {
+  const dir = process.env.CLI_BRIDGE_DATA_DIR;
+  return typeof dir === 'string' && dir.trim().length > 0 ? dir.trim() : undefined;
 }
 
 export interface BridgeResult {
@@ -136,6 +178,7 @@ export async function handleBridgeRequest(
       kind: 'cli-output-review',
       rawContent: content,
     });
+    runtime.persist();
     return created({ packet });
   }
 
@@ -159,6 +202,7 @@ export async function handleBridgeRequest(
       source: 'chatgpt-web',
       transport: 'clipboard',
     });
+    runtime.persist();
     return created({ pendingPrompt });
   }
 
@@ -175,6 +219,7 @@ export async function handleBridgeRequest(
     if (!confirmed) {
       return error(409, 'Pending prompt cannot be confirmed');
     }
+    runtime.persist();
     return ok({ pendingPrompt: confirmed });
   }
 
@@ -194,6 +239,7 @@ export async function handleBridgeRequest(
     if (!result.ok) {
       return error(409, result.failureReason ?? 'Pending prompt delivery failed');
     }
+    runtime.persist();
     return ok({
       pendingPrompt: result.prompt,
       delivery: result.delivery,
@@ -213,6 +259,7 @@ export async function handleBridgeRequest(
     if (!cancelled) {
       return error(409, 'Pending prompt cannot be cancelled');
     }
+    runtime.persist();
     return ok({ pendingPrompt: cancelled });
   }
 

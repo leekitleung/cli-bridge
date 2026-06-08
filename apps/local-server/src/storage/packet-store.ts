@@ -84,4 +84,28 @@ export class InMemoryPacketStore {
   clearRawContent(packetId: string): void {
     this.rawContents.delete(packetId);
   }
+
+  // Serialization for persistence. Returns only the validated packet records.
+  // The rawContents map is intentionally excluded so raw content is never
+  // written to disk.
+  exportPackets(): BridgePacket[] {
+    return this.listPackets();
+  }
+
+  // Hydrate packets from a snapshot. Invalid records are skipped, not trusted.
+  // rawContent is never restored (it was never persisted).
+  hydratePackets(packets: unknown[]): number {
+    let restored = 0;
+    for (const candidate of packets) {
+      try {
+        assertBridgePacket(candidate);
+        const packet = candidate as BridgePacket;
+        this.packets.set(packet.id, clonePacket(packet));
+        restored += 1;
+      } catch {
+        // skip invalid record
+      }
+    }
+    return restored;
+  }
 }

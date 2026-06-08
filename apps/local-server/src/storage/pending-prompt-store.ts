@@ -50,6 +50,33 @@ function clonePrompt(prompt: PendingPrompt): PendingPrompt {
   return structuredClone(prompt);
 }
 
+const PENDING_PROMPT_STATUS_VALUES = new Set([
+  'draft',
+  'previewed',
+  'confirmed',
+  'sent',
+  'failed',
+  'cancelled',
+]);
+
+function isPendingPromptShape(value: unknown): value is PendingPrompt {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    typeof record.sessionId === 'string' &&
+    typeof record.packetId === 'string' &&
+    typeof record.prompt === 'string' &&
+    typeof record.status === 'string' &&
+    PENDING_PROMPT_STATUS_VALUES.has(record.status) &&
+    (record.transport === 'managed-pty' || record.transport === 'clipboard') &&
+    typeof record.createdAt === 'number' &&
+    typeof record.updatedAt === 'number'
+  );
+}
+
 export class InMemoryPendingPromptStore {
   private readonly prompts = new Map<string, PendingPrompt>();
   private readonly packetStore: InMemoryPacketStore;
@@ -291,6 +318,25 @@ export class InMemoryPendingPromptStore {
 
   listPrompts(): PendingPrompt[] {
     return Array.from(this.prompts.values(), clonePrompt);
+  }
+
+  // Serialization for persistence. Pending prompts carry processedContent-derived
+  // prompt text only; no rawContent is involved.
+  exportPrompts(): PendingPrompt[] {
+    return this.listPrompts();
+  }
+
+  // Hydrate prompts from a snapshot. Records missing required fields are skipped.
+  hydratePrompts(prompts: unknown[]): number {
+    let restored = 0;
+    for (const candidate of prompts) {
+      if (!isPendingPromptShape(candidate)) {
+        continue;
+      }
+      this.prompts.set(candidate.id, clonePrompt(candidate));
+      restored += 1;
+    }
+    return restored;
   }
 
   private markFailed(prompt: PendingPrompt, failureReason: string, now: number): PendingPrompt {
