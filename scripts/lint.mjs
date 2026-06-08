@@ -35,6 +35,7 @@ const requiredPaths = [
   'apps/local-server/src/review/codex-feasibility-prompt.ts',
   'apps/local-server/src/review/codex-feasibility-handoff.ts',
   'apps/local-server/src/review/review-result-parser.ts',
+  'apps/local-server/src/review/command-review-runner.ts',
   'apps/local-server/src/workbuddy/workbuddy-state-store.ts',
   'apps/local-server/src/storage/packet-store.ts',
   'apps/local-server/src/storage/outbound-prompt-store.ts',
