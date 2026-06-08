@@ -9,8 +9,9 @@ Status: PLAN（构想记录，非活跃切片）。
 `PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md` 互补：那份定义分层与控制台视图，本份
 定义 goal → plan → step 的执行引擎。
 
-当前活跃推进不变：安全地基（已完成）-> 轨道 A（command transport review-only）->
-轨道 B（web-dom 自动模式）。本引擎在这些机制验证后才考虑转为实现切片。
+当前活跃推进不变：安全地基（已完成）-> 轨道 A（command transport review-only）。
+web-dom 自动发送/提取（曾称"轨道 B"）已由 ADR-0002 标记为 superseded/deferred，除非
+后续 ADR 重新批准，否则不作为活跃路线。本引擎在轨道 A 机制验证后才考虑转为实现切片。
 
 ## 1. 能力目标
 
@@ -71,7 +72,8 @@ automatic agent loop。调和方式不是放弃安全，而是把人类确认门
        - 随时中断
        - 每步审计
   -> 高风险步骤（写文件 / commit / push / 删除 / 其它状态变更）即使在已批准计划内，
-     仍必须单独 gate 或限定在用户预批的 scope 内
+     也必须进入 blocked-needs-gate 并单独确认。用户预批的 scope 只用于判定"是否允许
+     该步请求 gate"，绝不替代 gate 本身。
   -> 步骤失败时上层可 re-plan；若 re-plan 超出原 goal 范围 -> 重新触发计划级审批
 ```
 
@@ -79,9 +81,10 @@ automatic agent loop。调和方式不是放弃安全，而是把人类确认门
 
 - **无界自动 loop：仍禁止。**
 - **有界、在已批准计划内的自动执行：这是本引擎新解锁的能力。**
-- 状态变更（执行副作用）永远是强制 gate 点，不被计划级批准覆盖。
-- "不自动执行 follow-up" 在本模型下精确化为："不自动执行**未被计划批准且为状态变更**
-  的 follow-up"。
+- 状态变更（执行副作用）永远是强制 gate 点，不被计划级批准覆盖，预批 scope 也不能
+  覆盖。
+- "不自动执行 follow-up" 在本模型下精确化为两条并存：(1) 不自动执行**任何未被计划
+  批准**的 follow-up；(2) 状态变更类 follow-up 即使已在已批准计划内，仍必须单独 gate。
 
 ## 4. 数据模型（草案）
 
@@ -136,8 +139,8 @@ Step:  pending -> assigned -> running -> done | failed | blocked-needs-gate
 ## 8. 启动条件
 
 - 轨道 A 已实现并在真实使用中产出过可用 review。
-- 轨道 B 自动模式确认门体验已验证。
 - 至少手动走通过一次 "goal -> 人工分解的计划 -> 分步派发" 的流程，确认形态值得固化。
+- （web-dom 自动发送/提取为 deferred；非启动前提，除非后续 ADR 重新批准。）
 
 满足后再把本构想拆为带 ADR 的实现切片（预计从 Goal/Plan 数据模型 + 计划级审批门
 开始，再做编排器，最后做 tier-aware 路由与升级策略）。
