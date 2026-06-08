@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const root = process.cwd();
 
 test('extension build emits Chrome-loadable JS manifest and scripts', async () => {
-  await execFileAsync('npm', ['run', 'build-extension'], {
+  await execFileAsync(process.execPath, ['scripts/build-extension.mjs'], {
     cwd: root,
   });
 

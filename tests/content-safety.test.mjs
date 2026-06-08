@@ -77,3 +77,19 @@ test('redactSensitiveContent blocks private keys and env secret assignments', ()
   assert.match(result.processedContent, /\[REDACTED_PRIVATE_KEY\]/);
   assert.doesNotMatch(result.processedContent, /private material/);
 });
+
+test('redactSensitiveContent redacts lowercase and colon-style secret assignments', () => {
+  const result = redactSensitiveContent([
+    'password=hunter2supersecretvalue',
+    'api_key: abcdefghijklmnopqrstuv',
+    'My_Secret = plain-text-secret',
+  ].join('\n'));
+
+  assert.equal(result.redactionApplied, true);
+  assert.equal(result.blocked, true);
+  assert.match(result.processedContent, /password=\[REDACTED_ENV_SECRET\]/);
+  assert.match(result.processedContent, /api_key: \[REDACTED_ENV_SECRET\]/);
+  assert.match(result.processedContent, /My_Secret = \[REDACTED_ENV_SECRET\]/);
+  assert.doesNotMatch(result.processedContent, /hunter2supersecretvalue/);
+  assert.doesNotMatch(result.processedContent, /plain-text-secret/);
+});

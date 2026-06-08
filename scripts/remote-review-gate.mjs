@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 function runReadOnlyCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -277,7 +278,15 @@ function parseCliArgs(argv) {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isMainModule() {
+  const entryPoint = process.argv[1];
+  if (!entryPoint) {
+    return false;
+  }
+  return import.meta.url === pathToFileURL(entryPoint).href;
+}
+
+if (isMainModule()) {
   const options = parseCliArgs(process.argv.slice(2));
   const report = collectRemoteReviewGateReport(options);
   console.log(JSON.stringify(report, null, options.pretty ? 2 : 0));

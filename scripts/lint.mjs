@@ -41,7 +41,8 @@ const requiredPaths = [
   'packages/shared/src/utils/hash.ts',
   'packages/shared/src/utils/token-estimate.ts',
   'scripts/build-extension.mjs',
-  'scripts/remote-review-gate.mjs'
+  'scripts/remote-review-gate.mjs',
+  'README.md'
 ];
 
 const forbiddenPaths = [

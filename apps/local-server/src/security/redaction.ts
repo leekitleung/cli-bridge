@@ -22,7 +22,7 @@ const REDACTION_RULES: RedactionRule[] = [
   },
   {
     name: 'env-secret-assignment',
-    pattern: /^([A-Z][A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*\s*=\s*).+$/gm,
+    pattern: /^([A-Za-z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Za-z0-9_]*\s*[:=]\s*).+$/gim,
     replacement: '$1[REDACTED_ENV_SECRET]',
     blockReason: 'env-secret-assignment',
   },

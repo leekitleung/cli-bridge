@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import test from 'node:test';
 
 import {
@@ -180,4 +181,35 @@ test('github run parser reports absent, pending, pass, and fail states', () => {
     stdout: '[{"status":"completed","conclusion":"failure","url":"https://example.test/run"}]',
     stderr: '',
   }).status, 'fail');
+});
+
+test('remote review gate CLI entry prints JSON and exits non-zero on a failing verdict', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { resolve } = await import('node:path');
+  const execFileAsync = promisify(execFile);
+
+  const scriptPath = resolve(process.cwd(), 'scripts/remote-review-gate.mjs');
+
+  // Run in a directory that is not a git repository so the gate fails
+  // deterministically (no upstream / no remote head), and assert that the
+  // CLI entry actually executes: it must print a JSON report and exit 1.
+  let stdout = '';
+  let exitCode = 0;
+  try {
+    const result = await execFileAsync(
+      process.execPath,
+      [scriptPath, '--no-github'],
+      { cwd: os.tmpdir() },
+    );
+    stdout = result.stdout;
+  } catch (error) {
+    stdout = error.stdout ?? '';
+    exitCode = error.code ?? 1;
+  }
+
+  assert.ok(stdout.trim().length > 0, 'CLI entry must print a report to stdout');
+  const report = JSON.parse(stdout);
+  assert.equal(report.verdict, 'fail');
+  assert.equal(exitCode, 1);
 });
