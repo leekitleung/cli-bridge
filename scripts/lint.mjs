@@ -48,7 +48,8 @@ const requiredPaths = [
   'README.md',
   'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md',
-  'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md'
 ];
 
 const forbiddenPaths = [
