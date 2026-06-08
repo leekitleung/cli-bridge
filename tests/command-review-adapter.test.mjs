@@ -22,11 +22,15 @@ import { InMemoryPendingReviewStore } from '../apps/local-server/src/storage/pen
 
 const now = 1770000000000;
 
+// Tests must not depend on a real local install: inject a fixed resolver.
+const fakeLauncherResolver = (command) => ({ executable: `/fake/${command}`, prependArgs: [] });
+
 function fakeRunner(result, capture) {
   return {
-    async run(execution, options) {
+    async run(execution, launcher, options) {
       if (capture) {
         capture.execution = execution;
+        capture.launcher = launcher;
         capture.options = options;
       }
       if (typeof result === 'function') {
@@ -70,7 +74,7 @@ test('adapter passes the prompt via stdin and fixed argv, never a shell string',
   const adapter = createClaudeReviewCommandAdapter();
   const result = await adapter.review(
     { prompt: 'review this output', reviewRequestId: 'r1', cwd: '/repo' },
-    { runner: fakeRunner(okRun('{"summary":"ok","findings":[]}'), capture) },
+    { runner: fakeRunner(okRun('{"summary":"ok","findings":[]}'), capture), launcherResolver: fakeLauncherResolver },
   );
 
   assert.equal(result.ok, true);
@@ -90,6 +94,7 @@ test('adapter parses a clean ReviewResult from CLI stdout', async () => {
         findings: ['no blocking issues'],
         nextPromptDraft: 'consider adding a test',
       }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
 
@@ -110,6 +115,7 @@ test('adapter fails closed when the CLI returns execution fields', async () => {
         findings: [],
         autoSend: true,
       }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
 
@@ -122,14 +128,14 @@ test('adapter fails closed on bad JSON and on non-zero exit', async () => {
 
   const badJson = await adapter.review(
     { prompt: 'p', reviewRequestId: 'r1' },
-    { runner: fakeRunner(okRun('not json')) },
+    { runner: fakeRunner(okRun('not json')), launcherResolver: fakeLauncherResolver },
   );
   assert.equal(badJson.ok, false);
   assert.equal(badJson.failureReason, 'review-result-invalid-json');
 
   const nonZero = await adapter.review(
     { prompt: 'p', reviewRequestId: 'r1' },
-    { runner: fakeRunner({ exitCode: 2, stdout: '', stderr: 'err', timedOut: false }) },
+    { runner: fakeRunner({ exitCode: 2, stdout: '', stderr: 'err', timedOut: false }), launcherResolver: fakeLauncherResolver },
   );
   assert.equal(nonZero.ok, false);
   assert.equal(nonZero.failureReason, 'command-nonzero-exit');
@@ -192,6 +198,7 @@ test('adapter parses a Claude envelope-wrapped ReviewResult end to end', async (
     { prompt: 'p', reviewRequestId: 'r1', resultId: 'res-1', now },
     {
       runner: fakeRunner(okRun(JSON.stringify({ type: 'result', result: inner }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
   assert.equal(result.ok, true);
@@ -205,6 +212,7 @@ test('adapter still rejects execution fields inside a Claude envelope', async ()
     { prompt: 'p', reviewRequestId: 'r1' },
     {
       runner: fakeRunner(okRun(JSON.stringify({ type: 'result', result: inner }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
   assert.equal(result.ok, false);
@@ -248,6 +256,7 @@ test('a returned command review result drives PendingReview to returned with a d
         findings: ['add null check'],
         nextPromptDraft: 'Ask Codex to add a null check after confirmation',
       }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
   assert.equal(reviewResult.ok, true);

@@ -4,19 +4,24 @@ import test from 'node:test';
 import {
   ALLOWED_COMMANDS,
   FORBIDDEN_ARG_PATTERNS,
+  defaultLauncherResolver,
   runAllowlistedCommand,
   validateCommandExecution,
 } from '../apps/local-server/src/adapters/command-runner.ts';
 
+// Tests must not depend on a real local install: inject a fixed resolver.
+const fakeLauncherResolver = (command) => ({ executable: `/fake/${command}`, prependArgs: [] });
+
 function fakeRunner(result, capture) {
   return {
-    async run(execution, options) {
+    async run(execution, launcher, options) {
       if (capture) {
         capture.execution = execution;
+        capture.launcher = launcher;
         capture.options = options;
       }
       if (typeof result === 'function') {
-        return result(execution, options);
+        return result(execution, launcher, options);
       }
       return result;
     },
@@ -91,7 +96,7 @@ test('runAllowlistedCommand passes argv array and stdin without a shell string',
       stdin: 'review this',
       cwd: '/repo',
     },
-    { runner: fakeRunner(okProcess, capture) },
+    { runner: fakeRunner(okProcess, capture), launcherResolver: fakeLauncherResolver },
   );
 
   assert.equal(result.ok, true);
@@ -106,7 +111,7 @@ test('runAllowlistedCommand passes argv array and stdin without a shell string',
 test('runAllowlistedCommand surfaces a clean success', async () => {
   const result = await runAllowlistedCommand(
     { command: 'claude', args: ['-p'] },
-    { runner: fakeRunner(okProcess) },
+    { runner: fakeRunner(okProcess), launcherResolver: fakeLauncherResolver },
   );
   assert.equal(result.ok, true);
   assert.equal(result.exitCode, 0);
@@ -117,7 +122,7 @@ test('runAllowlistedCommand surfaces a clean success', async () => {
 test('runAllowlistedCommand fails closed on non-zero exit', async () => {
   const result = await runAllowlistedCommand(
     { command: 'codex', args: ['exec', 'review'] },
-    { runner: fakeRunner({ exitCode: 1, stdout: '', stderr: 'boom', timedOut: false }) },
+    { runner: fakeRunner({ exitCode: 1, stdout: '', stderr: 'boom', timedOut: false }), launcherResolver: fakeLauncherResolver },
   );
   assert.equal(result.ok, false);
   assert.equal(result.failureReason, 'command-nonzero-exit');
@@ -127,7 +132,7 @@ test('runAllowlistedCommand fails closed on non-zero exit', async () => {
 test('runAllowlistedCommand fails closed on timeout', async () => {
   const result = await runAllowlistedCommand(
     { command: 'claude', args: ['-p'] },
-    { runner: fakeRunner({ exitCode: null, stdout: 'partial', stderr: '', timedOut: true }) },
+    { runner: fakeRunner({ exitCode: null, stdout: 'partial', stderr: '', timedOut: true }), launcherResolver: fakeLauncherResolver },
   );
   assert.equal(result.ok, false);
   assert.equal(result.timedOut, true);
@@ -141,6 +146,7 @@ test('runAllowlistedCommand fails closed when output exceeds the cap', async () 
     {
       maxOutputBytes: 50,
       runner: fakeRunner({ exitCode: 0, stdout: big, stderr: '', timedOut: false }),
+      launcherResolver: fakeLauncherResolver,
     },
   );
   assert.equal(result.ok, false);
@@ -156,8 +162,48 @@ test('runAllowlistedCommand fails closed when the runner throws', async () => {
   };
   const result = await runAllowlistedCommand(
     { command: 'codex', args: ['exec'] },
-    { runner },
+    { runner, launcherResolver: fakeLauncherResolver },
   );
   assert.equal(result.ok, false);
   assert.equal(result.failureReason, 'process-runner-threw');
+});
+
+test('runAllowlistedCommand fails closed when the launcher cannot be resolved', async () => {
+  let runnerCalled = false;
+  const runner = {
+    async run() {
+      runnerCalled = true;
+      return okProcess;
+    },
+  };
+  const result = await runAllowlistedCommand(
+    { command: 'claude', args: ['-p'] },
+    { runner, launcherResolver: () => null },
+  );
+  assert.equal(runnerCalled, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.failureReason, 'launcher-not-resolved');
+});
+
+test('runner receives the resolved launcher, not the bare command name', async () => {
+  const capture = {};
+  await runAllowlistedCommand(
+    { command: 'codex', args: ['exec', 'review'] },
+    {
+      runner: fakeRunner(okProcess, capture),
+      launcherResolver: () => ({ executable: '/path/to/node', prependArgs: ['/pkg/codex.js'] }),
+    },
+  );
+  assert.equal(capture.launcher.executable, '/path/to/node');
+  assert.deepEqual(capture.launcher.prependArgs, ['/pkg/codex.js']);
+});
+
+test('defaultLauncherResolver returns the bare command on non-Windows', () => {
+  if (process.platform === 'win32') {
+    return; // platform-specific resolution is exercised on the host only
+  }
+  const resolved = defaultLauncherResolver('claude');
+  assert.ok(resolved);
+  assert.equal(resolved.executable, 'claude');
+  assert.deepEqual(resolved.prependArgs, []);
 });

@@ -118,6 +118,16 @@ node --experimental-strip-types tmp-v1.5b-validate.mjs
 
 每条记录：通过 / 失败、观察到的现象、`failureReason`（若有）。
 
+### V0 —— Launcher resolution（Windows 必过的前置）
+- 背景：Windows 上 `claude` / `codex` 的 PATH 入口是 `.cmd` shim，`CreateProcess` 不能
+  以 `shell: false` 直接运行 `.cmd`。runner（commit 之后）会把命令解析到真实入口：
+  Claude → `claude.exe`；Codex → `node` + 包内 JS 入口。解析失败即 fail-closed，
+  `failureReason: launcher-not-resolved`，绝不回退 `.cmd`、绝不回退 shell。
+- 预期：V1/V2 不再立刻返回 `command-nonzero-exit`（那是 launcher 未解析的旧症状）。
+- 若仍 `command-nonzero-exit` 且 stderr 为空、耗时极短：说明 launcher 仍未解析到真实
+  入口，记录你机器上 `where claude` / `where codex` 的结果，作为 resolver 调整输入。
+- 测试结果：____
+
 ### V1 —— Claude `-p` 真实输出捕获
 - 用 `createClaudeReviewCommandAdapter()` 跑上面的脚本。
 - 预期：`runCommandReview ok: true`；review status `returned`。

@@ -16,6 +16,9 @@ import { InMemoryPendingReviewStore } from '../apps/local-server/src/storage/pen
 
 const now = 1770000000000;
 
+// Tests must not depend on a real local install: inject a fixed resolver.
+const fakeLauncherResolver = (command) => ({ executable: `/fake/${command}`, prependArgs: [] });
+
 function fakeRunner(result) {
   return {
     async run() {
@@ -85,6 +88,7 @@ test('runCommandReview drives a sent review to returned with a draft follow-up',
         findings: ['add a null check'],
         nextPromptDraft: 'Ask Codex to add a null check after confirmation',
       }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
 
@@ -127,7 +131,7 @@ test('runCommandReview refuses a review that has not been sent', async () => {
     stores.auditLog,
     adapterReturning(),
     { reviewId: review.id, prompt: 'p', now: now + 3 },
-    { runner: fakeRunner(okRun('{"summary":"x","findings":[]}')) },
+    { runner: fakeRunner(okRun('{"summary":"x","findings":[]}')), launcherResolver: fakeLauncherResolver },
   );
 
   assert.equal(result.ok, false);
@@ -150,6 +154,7 @@ test('runCommandReview fails the review when the CLI returns execution fields', 
         findings: [],
         autoSend: true,
       }))),
+      launcherResolver: fakeLauncherResolver,
     },
   );
 
@@ -169,7 +174,7 @@ test('runCommandReview fails closed on a non-zero CLI exit', async () => {
     stores.auditLog,
     adapterReturning(),
     { reviewId: review.id, prompt: 'p', now: now + 4 },
-    { runner: fakeRunner({ exitCode: 1, stdout: '', stderr: 'boom', timedOut: false }) },
+    { runner: fakeRunner({ exitCode: 1, stdout: '', stderr: 'boom', timedOut: false }), launcherResolver: fakeLauncherResolver },
   );
 
   assert.equal(result.ok, false);

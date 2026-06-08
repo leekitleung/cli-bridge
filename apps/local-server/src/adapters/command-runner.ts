@@ -14,6 +14,8 @@
 import {
   spawn,
 } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter as pathDelimiter, join as joinPath } from 'node:path';
 
 // Only these base commands may ever be executed. The list is fixed in source;
 // it is never derived from request input.
@@ -53,7 +55,25 @@ export interface CommandRunOptions {
   timeoutMs?: number;
   maxOutputBytes?: number;
   runner?: ProcessRunner;
+  launcherResolver?: LauncherResolver;
 }
+
+// Resolves an allowlisted command name to a concrete, directly-spawnable
+// executable plus any args that must precede the caller's argv. This exists
+// because on Windows the PATH entry for `claude` / `codex` is a `.cmd` shim,
+// which CreateProcess cannot run with `shell: false`. The resolver locates the
+// real `.exe` or the `node` + JS entry so we keep `shell: false` and never fall
+// back to a shell or to executing the `.cmd`.
+//
+// Returns null when it cannot resolve a concrete launcher; the runner then
+// fails closed with `launcher-not-resolved`. It NEVER returns a `.cmd` path and
+// NEVER signals a shell fallback.
+export interface ResolvedLauncher {
+  executable: string;
+  prependArgs: string[];
+}
+
+export type LauncherResolver = (command: AllowedCommand) => ResolvedLauncher | null;
 
 export interface RawProcessResult {
   exitCode: number | null;
@@ -63,9 +83,14 @@ export interface RawProcessResult {
 }
 
 // Injectable boundary so tests drive behaviour with a fake and never spawn a
-// real CLI.
+// real CLI. The launcher is the concrete executable resolved from the command
+// name; the runner spawns it directly with `shell: false`.
 export interface ProcessRunner {
-  run(execution: CommandExecution, options: ResolvedRunOptions): Promise<RawProcessResult>;
+  run(
+    execution: CommandExecution,
+    launcher: ResolvedLauncher,
+    options: ResolvedRunOptions,
+  ): Promise<RawProcessResult>;
 }
 
 export interface ResolvedRunOptions {
@@ -120,14 +145,19 @@ export function validateCommandExecution(execution: CommandExecution): CommandVa
 class NodeSpawnRunner implements ProcessRunner {
   async run(
     execution: CommandExecution,
+    launcher: ResolvedLauncher,
     options: ResolvedRunOptions,
   ): Promise<RawProcessResult> {
     return await new Promise<RawProcessResult>((resolve) => {
-      const child = spawn(execution.command, execution.args, {
-        cwd: execution.cwd,
-        stdio: 'pipe',
-        shell: false,
-      });
+      const child = spawn(
+        launcher.executable,
+        [...launcher.prependArgs, ...execution.args],
+        {
+          cwd: execution.cwd,
+          stdio: 'pipe',
+          shell: false,
+        },
+      );
 
       let stdout = '';
       let stderr = '';
@@ -172,9 +202,56 @@ class NodeSpawnRunner implements ProcessRunner {
 
 const defaultRunner: ProcessRunner = new NodeSpawnRunner();
 
+// Default launcher resolver. On non-Windows, the bare command name is directly
+// spawnable, so we use it as-is. On Windows, the PATH entry is a `.cmd` shim
+// that CreateProcess cannot run with `shell: false`, so we resolve to a concrete
+// launcher:
+//   - claude: the real `claude.exe` next to the shim.
+//   - codex:  `node` + the package's JS entry next to the shim.
+// Resolution is best-effort and fail-closed: if the concrete launcher cannot be
+// located, it returns null and the caller fails with `launcher-not-resolved`.
+// It never returns a `.cmd` path and never enables a shell.
+export function defaultLauncherResolver(command: AllowedCommand): ResolvedLauncher | null {
+  if (process.platform !== 'win32') {
+    return { executable: command, prependArgs: [] };
+  }
+
+  const shimDir = findShimDir(command);
+  if (!shimDir) {
+    return null;
+  }
+
+  if (command === 'claude') {
+    const exe = resolvePath(shimDir, ['node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe']);
+    return exe ? { executable: exe, prependArgs: [] } : null;
+  }
+
+  // codex: run the package JS entry via node.
+  const jsEntry = resolvePath(shimDir, ['node_modules', '@openai', 'codex', 'bin', 'codex.js']);
+  return jsEntry ? { executable: process.execPath, prependArgs: [jsEntry] } : null;
+}
+
+function findShimDir(command: AllowedCommand): string | null {
+  const pathEnv = process.env.PATH ?? process.env.Path ?? '';
+  for (const dir of pathEnv.split(pathDelimiter)) {
+    if (!dir) {
+      continue;
+    }
+    if (existsSync(joinPath(dir, `${command}.cmd`)) || existsSync(joinPath(dir, `${command}.exe`))) {
+      return dir;
+    }
+  }
+  return null;
+}
+
+function resolvePath(baseDir: string, segments: string[]): string | null {
+  const full = joinPath(baseDir, ...segments);
+  return existsSync(full) ? full : null;
+}
+
 // Runs an allowlisted command through the hardened gate. Fail-closed: any
-// validation failure, non-zero exit, timeout, or output overflow yields
-// `ok: false` with a structured failureReason and never throws.
+// validation failure, unresolved launcher, non-zero exit, timeout, or output
+// overflow yields `ok: false` with a structured failureReason and never throws.
 export async function runAllowlistedCommand(
   execution: CommandExecution,
   options: CommandRunOptions = {},
@@ -193,6 +270,21 @@ export async function runAllowlistedCommand(
     };
   }
 
+  const resolveLauncher = options.launcherResolver ?? defaultLauncherResolver;
+  const launcher = resolveLauncher(execution.command);
+  if (!launcher) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+      truncated: false,
+      durationMs: 0,
+      failureReason: 'launcher-not-resolved',
+    };
+  }
+
   const resolved: ResolvedRunOptions = {
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
@@ -202,7 +294,7 @@ export async function runAllowlistedCommand(
   const startedAt = Date.now();
   let raw: RawProcessResult;
   try {
-    raw = await runner.run(execution, resolved);
+    raw = await runner.run(execution, launcher, resolved);
   } catch {
     return {
       ok: false,
