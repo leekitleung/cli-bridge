@@ -145,6 +145,27 @@ export function buildRemoteReviewGateReport(input) {
     failures.push('ci-failing');
   }
 
+  // pushed is true only when the local HEAD is actually present on the remote
+  // upstream HEAD. This is a real push verification, not a restatement of
+  // remoteMatchesLocal: it additionally requires an upstream and a clean tree
+  // so an uncommitted local change cannot be reported as "pushed".
+  const pushed = Boolean(
+    input.upstream &&
+    remoteMatchesLocal &&
+    input.workingTreeClean,
+  );
+
+  // Hard failure when the remote diff scope contradicts the reported changed
+  // files. Only evaluated when the caller supplies reportedChangedFiles and a
+  // summarized remote diff scope; otherwise the diff scope stays a soft signal.
+  const diffScopeContradiction = detectDiffScopeContradiction(
+    input.remoteDiffScope,
+    input.reportedChangedFiles,
+  );
+  if (diffScopeContradiction) {
+    failures.push('remote-diff-scope-contradiction');
+  }
+
   for (const [name, value] of [
     ['pr', input.pr],
     ['ci', input.ci],
@@ -162,7 +183,7 @@ export function buildRemoteReviewGateReport(input) {
     remoteHead: input.remoteHead,
     remoteMatchesLocal,
     workingTreeClean: input.workingTreeClean,
-    pushed: remoteMatchesLocal,
+    pushed,
     pr: input.pr,
     ci: input.ci,
     remoteDiffScope: input.remoteDiffScope,
@@ -171,6 +192,36 @@ export function buildRemoteReviewGateReport(input) {
     warnings,
   };
 }
+
+function normalizeChangedFileList(files) {
+  if (!Array.isArray(files)) {
+    return null;
+  }
+  return files
+    .map((file) => String(file ?? '').trim())
+    .filter((file) => file.length > 0)
+    .sort();
+}
+
+export function detectDiffScopeContradiction(remoteDiffScope, reportedChangedFiles) {
+  const reported = normalizeChangedFileList(reportedChangedFiles);
+  if (!reported || remoteDiffScope?.status !== 'summarized') {
+    return false;
+  }
+
+  const summary = String(remoteDiffScope.summary ?? '').trim();
+
+  // No remote-only divergence: the report must also claim no changed files.
+  if (summary === '' || summary === 'none') {
+    return reported.length > 0;
+  }
+
+  // The remote diff summary lists changed files (git diff --stat style). Each
+  // reported file must appear in the summary; a reported file that is absent
+  // from the remote diff is a contradiction.
+  return reported.some((file) => !summary.includes(file));
+}
+
 
 function collectGitEvidence(cwd) {
   const branch = trimOrNull(runReadOnlyCommand('git', ['branch', '--show-current'], { cwd }).stdout);
@@ -268,13 +319,23 @@ export function collectRemoteReviewGateReport(options = {}) {
   return buildRemoteReviewGateReport({
     ...gitEvidence,
     ...githubEvidence,
+    reportedChangedFiles: options.reportedChangedFiles,
   });
 }
 
 function parseCliArgs(argv) {
+  const reportedChangedFiles = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--reported-file' && index + 1 < argv.length) {
+      reportedChangedFiles.push(argv[index + 1]);
+      index += 1;
+    }
+  }
+
   return {
     checkGithub: !argv.includes('--no-github'),
     pretty: argv.includes('--pretty'),
+    reportedChangedFiles: reportedChangedFiles.length > 0 ? reportedChangedFiles : undefined,
   };
 }
 

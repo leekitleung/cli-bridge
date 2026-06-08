@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   buildRemoteReviewGateReport,
+  detectDiffScopeContradiction,
   parseGithubRunList,
   parsePullRequestView,
 } from '../scripts/remote-review-gate.mjs';
@@ -212,4 +213,97 @@ test('remote review gate CLI entry prints JSON and exits non-zero on a failing v
   const report = JSON.parse(stdout);
   assert.equal(report.verdict, 'fail');
   assert.equal(exitCode, 1);
+});
+
+test('pushed is true only with upstream, matching remote head, and clean tree', () => {
+  const pushed = buildRemoteReviewGateReport({
+    branch: 'main',
+    localHead: 'abc123',
+    upstream: 'origin/main',
+    remoteHead: 'abc123',
+    workingTreeClean: true,
+    pr: { status: 'absent' },
+    ci: { status: 'absent' },
+    remoteDiffScope: { status: 'summarized', summary: 'none' },
+  });
+  assert.equal(pushed.pushed, true);
+
+  const dirty = buildRemoteReviewGateReport({
+    branch: 'main',
+    localHead: 'abc123',
+    upstream: 'origin/main',
+    remoteHead: 'abc123',
+    workingTreeClean: false,
+    pr: { status: 'absent' },
+    ci: { status: 'absent' },
+    remoteDiffScope: { status: 'summarized', summary: 'none' },
+  });
+  assert.equal(dirty.pushed, false, 'a dirty tree must not be reported as pushed');
+
+  const noUpstream = buildRemoteReviewGateReport({
+    branch: 'main',
+    localHead: 'abc123',
+    upstream: null,
+    remoteHead: null,
+    workingTreeClean: true,
+    pr: { status: 'unavailable', reason: 'no upstream' },
+    ci: { status: 'unavailable', reason: 'no upstream' },
+    remoteDiffScope: { status: 'unavailable', reason: 'no upstream' },
+  });
+  assert.equal(noUpstream.pushed, false, 'no upstream must not be reported as pushed');
+});
+
+test('remote review gate fails when remote diff scope contradicts reported changed files', () => {
+  const report = buildRemoteReviewGateReport({
+    branch: 'main',
+    localHead: 'abc123',
+    upstream: 'origin/main',
+    remoteHead: 'def456',
+    workingTreeClean: true,
+    reportedChangedFiles: ['src/only-local.ts'],
+    pr: { status: 'absent' },
+    ci: { status: 'absent' },
+    remoteDiffScope: {
+      status: 'summarized',
+      summary: ' src/other.ts | 2 +-\n 1 file changed',
+    },
+  });
+
+  assert.equal(report.verdict, 'fail');
+  assert.ok(report.failures.includes('remote-diff-scope-contradiction'));
+});
+
+test('detectDiffScopeContradiction handles none, match, and mismatch cases', () => {
+  // No reported files supplied: never a contradiction (soft signal only).
+  assert.equal(
+    detectDiffScopeContradiction({ status: 'summarized', summary: 'x.ts | 1 +' }, undefined),
+    false,
+  );
+
+  // Reported empty + remote none: consistent.
+  assert.equal(
+    detectDiffScopeContradiction({ status: 'summarized', summary: 'none' }, []),
+    false,
+  );
+
+  // Reported files but remote says none: contradiction.
+  assert.equal(
+    detectDiffScopeContradiction({ status: 'summarized', summary: 'none' }, ['a.ts']),
+    true,
+  );
+
+  // Reported file present in summary: consistent.
+  assert.equal(
+    detectDiffScopeContradiction(
+      { status: 'summarized', summary: ' src/a.ts | 3 +++\n 1 file changed' },
+      ['src/a.ts'],
+    ),
+    false,
+  );
+
+  // Unavailable diff scope: cannot contradict.
+  assert.equal(
+    detectDiffScopeContradiction({ status: 'unavailable', reason: 'x' }, ['a.ts']),
+    false,
+  );
 });

@@ -86,7 +86,30 @@ Residual caveats:
 
 ## Required Fixes
 
-None.
+None at original review time.
+
+## Post-Review Correction Addendum
+
+A later release-candidate review (cross-platform, executable-product standard)
+found defects that the original review missed because its tests only exercised
+the gate's pure functions, never the CLI entry on Windows:
+
+- P0 — gate CLI entry dead on Windows: the `import.meta.url === \`file://${process.argv[1]}\``
+  guard never matches Windows paths (`file:///H:/...`), so `npm run remote-review-gate`
+  printed nothing and exited 0 on this platform. The "live remote gate ... verdict: pass"
+  evidence above could not have been produced on Windows. Fixed with `pathToFileURL`.
+- P0 — `tests/extension-build.test.mjs` spawned bare `npm` (`spawn npm ENOENT` on
+  Windows). Fixed to run via `process.execPath`.
+- P1 — `pushed` only restated `remoteMatchesLocal`; now requires upstream +
+  matching remote HEAD + clean tree.
+- P1 — the "remote diff scope contradicts reported changed files" hard failure
+  from the planning contract was not implemented; now enforced.
+- P2 — lowercase / colon-style secret redaction gap; now covered.
+
+New tests: spawn-level gate CLI exit-code test, `pushed` semantics test,
+diff-scope contradiction tests, and lowercase redaction test. Full local gate
+passes on Windows (112/112). Lesson: the implementation review must spawn the CLI
+entry on the target platform, not only unit-test pure helpers.
 
 ## Verification
 

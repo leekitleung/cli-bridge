@@ -2,9 +2,15 @@
 
 ## 1. Verdict
 
-Status: PASS.
+Status: PASS, amended after cross-platform and contract-alignment hardening.
 
-v1.0 Remote Review Gate Hardening is complete. The implementation review found no P0/P1/P2 issues, the required local gate passed, and the new remote review gate passed after commit and push.
+v1.0 Remote Review Gate Hardening is complete. The original closeout recorded a
+clean PASS, but a post-closeout release-candidate review found that the gate's
+CLI entry was non-functional on Windows (printed nothing, exited 0) and that two
+behaviors were weaker than the planning contract (`pushed` semantics and the
+remote-diff-scope hard-failure were not implemented). These were corrected; see
+§4 and §5. The gate now runs on Windows, reports a verdict, exits non-zero on
+failure, and enforces the planning contract's hard-failure list.
 
 ## 2. Baseline
 
@@ -39,13 +45,28 @@ v1.0 implemented:
 
 ## 4. Review Findings
 
-Implementation review result:
+Initial implementation review result:
 
 - no P0 findings.
 - no P1 findings.
 - no P2 findings.
 
-Confirmed behavior:
+Post-closeout release-candidate review found the following, now fixed:
+
+- P0: gate CLI entry guard used a naive `file://` + path string comparison; on
+  Windows `import.meta.url` is `file:///H:/...` so the guard never matched. The
+  CLI printed nothing and exited 0 regardless of state. Fixed with
+  `pathToFileURL`; a spawn-level CLI test now guards the exit code.
+- P0: `tests/extension-build.test.mjs` spawned bare `npm`, which fails on Windows
+  with `spawn npm ENOENT`. Fixed to run the build via `process.execPath`.
+- P1: `pushed` was a restatement of `remoteMatchesLocal`. It is now true only
+  with an upstream, a matching remote HEAD, and a clean working tree.
+- P1: the planning contract's "remote diff scope contradicts reported changed
+  files" hard failure was not implemented. It is now enforced via
+  `detectDiffScopeContradiction` and a `--reported-file` CLI input.
+- P2: redaction missed lowercase / colon-style secret assignments; now covered.
+
+Confirmed behavior (after fixes):
 
 - local branch is reported.
 - local HEAD is reported.
@@ -62,7 +83,7 @@ Confirmed behavior:
 
 ## 5. Verification
 
-Required local gate passed:
+Required local gate passed (verified on Windows, Node 22):
 
 ```text
 npm run build-extension
@@ -71,23 +92,27 @@ npm run typecheck
 npm run test
 ```
 
-Remote review gate passed after implementation commit and implementation review commit:
+`npm run test` result: 112/112 pass, exit 0.
 
-```text
-npm run remote-review-gate
-```
+> Post-closeout correction (cross-platform hardening): the original v1.0
+> closeout recorded a gate `verdict: pass`, but the gate's CLI entry guard used a
+> naive `file://` + path comparison that does not match `import.meta.url` on
+> Windows. On Windows the CLI printed nothing and exited 0, so the recorded
+> verdict could not actually have been produced on this platform. This was fixed
+> by switching the entry guard to `pathToFileURL`, and a spawn-level CLI test now
+> guards the exit-code behavior. The `extension-build` test was likewise fixed to
+> run the build via `process.execPath` instead of bare `npm`. See commit
+> "修复发布门禁跨平台缺陷并补齐文档与脱敏".
 
-Latest observed remote review gate result:
+Remote review gate run after the cross-platform fix (`node scripts/remote-review-gate.mjs --no-github`, Windows):
 
 - branch: `main`
-- local HEAD: `92e74859bdf7baf320531ff0e8b131100204b9e8`
-- remote HEAD: `92e74859bdf7baf320531ff0e8b131100204b9e8`
-- remote matches local: true
-- working tree clean: true
-- pushed: true
+- local HEAD matches remote HEAD: true when committed and pushed
+- working tree clean: required for pass
+- pushed: true only with upstream + matching remote HEAD + clean tree
 - PR: unavailable because GitHub CLI is not authenticated
 - CI: unavailable because GitHub CLI is not authenticated
-- verdict: pass
+- the CLI now prints a JSON report and exits non-zero on any `fail` verdict
 
 ## 6. Security Boundary
 

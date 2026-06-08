@@ -76,10 +76,14 @@ curl http://127.0.0.1:31337/health/private   # 401/403 without origin + pairing 
 ```bash
 npm run remote-review-gate            # human-readable JSON, exits 1 on a fail verdict
 node scripts/remote-review-gate.mjs --no-github   # skip GitHub CLI lookups
+node scripts/remote-review-gate.mjs --reported-file src/a.ts --reported-file src/b.ts
 ```
 
 The gate is local and read-only. It never pushes, never creates PRs, never
-merges, and adds no product-runtime GitHub/CI reader.
+merges, and adds no product-runtime GitHub/CI reader. `pushed` is reported true
+only when an upstream exists, the remote HEAD matches local HEAD, and the working
+tree is clean. When `--reported-file` is supplied, the gate hard-fails if the
+remote diff scope contradicts the reported changed files.
 
 ## Security boundaries
 
