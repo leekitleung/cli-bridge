@@ -15,6 +15,20 @@
 
 运行本验证无需修改产品代码。若验证暴露缺陷，作为单独代码切片处理。
 
+### 已加固的输出形状（commit `7fb7132`）
+
+验证交接最初点名的两类真机风险已经在代码层提前处理：
+
+- 裸 ReviewResult JSON：直接交给 `parseClaudeReviewResult`。
+- Claude `--output-format json` 信封：若 stdout 是 `{ "type": "result", "result": "<内层 JSON>" }`，
+  `selectReviewText` 会取 `result` 字段。
+- Codex `--json` JSONL：`selectReviewText` 会从最后一条携带文本字段的事件中取 ReviewResult
+  文本。
+
+这层只负责定位 ReviewResult 文本；提取后仍由 `parseClaudeReviewResult` 校验并拒绝
+`executable` / `autoSend` / `confirmed` / `sent` 等执行字段。V1/V2 的验证重点因此从
+"这些形状是否必然失败" 改为 "真实 CLI 是否落在这三类之一，或是否出现第四种输出形状"。
+
 ## 2. 前置条件
 
 - Node 22+，已 `npm install`。
@@ -107,17 +121,18 @@ node --experimental-strip-types tmp-v1.5b-validate.mjs
 ### V1 —— Claude `-p` 真实输出捕获
 - 用 `createClaudeReviewCommandAdapter()` 跑上面的脚本。
 - 预期：`runCommandReview ok: true`；review status `returned`。
-- 记录：Claude 实际输出是否为合法 JSON；`--output-format json` 是否带额外包装层
-  （若 Claude 返回的是带 `result` 字段的信封而非裸 ReviewResult，则 parser 会失败，
-  这是需要捕获的真机差异 —— 记录原始 stdout 形状作为下一个切片输入）。
+- 记录：Claude 实际输出形状。裸 ReviewResult JSON 与带 `result` 字段的信封都应已被
+  `selectReviewText` 接住。如果仍失败，优先记录原始 stdout 是否是第四种信封结构，不得
+  放宽 parser。
 - 测试结果：____
 
 ### V2 —— Codex `exec review` 真实输出捕获
 - 切换脚本为 `createCodexReviewCommandAdapter()`，重跑。
 - 预期：`runCommandReview ok: true`；review status `returned`。
-- 记录：`codex exec review --json` 输出的是 JSONL 事件流；最终 ReviewResult 是否能从
-  stdout 直接被 parser 接住。若不能（例如需要从 `--output-last-message` 文件取最终
-  消息，而非 stdout），记录这一差异 —— 这会成为 adapter 的捕获策略调整切片。
+- 记录：`codex exec review --json` 的实际 stdout 形状。JSONL 事件流中最后一条携带
+  `result` / `text` / `message` / `content` 字段的事件应已被 `selectReviewText` 接住。
+  若不能（例如最终消息只写进 `--output-last-message` 文件而非 stdout，或事件字段名不同），
+  记录这一差异 —— 这会成为 adapter 的捕获策略调整切片。
 - 测试结果：____
 
 ### V3 —— ReviewResult parser 接住 + 执行字段被拒
@@ -140,7 +155,8 @@ node --experimental-strip-types tmp-v1.5b-validate.mjs
 
 - 待测 commit hash。
 - V1–V4 各自通过/失败 + 一行现象。
-- V1、V2 的**原始 stdout 形状**（裸 JSON / 带信封 / JSONL），这是最易出真机差异的点。
+- V1、V2 的**原始 stdout 形状**（裸 JSON / 带信封 / JSONL / 第四种形状），这是最易
+  出真机差异的点。前三种应已由 `selectReviewText` 覆盖。
 - 任何 `failureReason`。
 - 若 adapter 需要调整捕获策略（例如改用 `--output-last-message` 文件），明确记录所需
   argv 变更，作为下一个代码切片输入。
