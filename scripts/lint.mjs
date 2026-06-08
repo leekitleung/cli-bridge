@@ -25,6 +25,7 @@ const requiredPaths = [
   'apps/local-server/src/adapters/AgentAdapter.ts',
   'apps/local-server/src/adapters/MockAgentAdapter.ts',
   'apps/local-server/src/adapters/CodexManagedPtyAdapter.ts',
+  'apps/local-server/src/adapters/command-runner.ts',
   'apps/local-server/src/security/pairing.ts',
   'apps/local-server/src/security/origin-guard.ts',
   'apps/local-server/src/security/redaction.ts',
@@ -53,7 +54,10 @@ const requiredPaths = [
   'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md',
-  'docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md',
+  'docs/planning/ADR-0002-v1.5b-command-transport.md',
+  'docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md',
+  'docs/planning/PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md'
 ];
 
 const forbiddenPaths = [
