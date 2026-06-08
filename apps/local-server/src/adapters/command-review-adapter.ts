@@ -56,12 +56,81 @@ export interface CommandReviewAdapterConfig {
   buildArgs: () => string[];
 }
 
-// Captures the agent's final text from a successful run. Claude `-p
-// --output-format json` and Codex `--json` differ in shape; we accept either a
-// plain ReviewResult JSON body or a captured last-message string. The parser
-// then enforces the ReviewResult contract and rejects execution fields.
+// Captures the agent's final text from a successful run. Real CLIs differ in
+// shape, so we normalize the three observed forms into a single candidate text
+// and let the existing parser enforce the ReviewResult contract (including
+// forbidden execution-field rejection). This NEVER relaxes the parser; it only
+// locates where the ReviewResult JSON lives in the CLI's output.
+//
+// Handled shapes:
+//   1. bare ReviewResult JSON on stdout.
+//   2. Claude `--output-format json` envelope: { type:"result", result:"<text>" }
+//      — the ReviewResult JSON is inside the `result` string.
+//   3. Codex `--json` JSONL event stream: the final assistant/message text is in
+//      the last event that carries a text/message/result field.
 export function selectReviewText(run: CommandRunResult): string {
-  return run.stdout.trim();
+  const stdout = run.stdout.trim();
+  if (stdout.length === 0) {
+    return stdout;
+  }
+
+  // Try the whole stdout as a single JSON value first.
+  const whole = tryParseJson(stdout);
+  if (whole !== undefined) {
+    const unwrapped = unwrapEnvelope(whole);
+    if (unwrapped !== undefined) {
+      return unwrapped;
+    }
+    // It parsed as JSON but is not an envelope: it may already be the bare
+    // ReviewResult object. Hand the original text to the parser.
+    return stdout;
+  }
+
+  // Not a single JSON value: treat it as JSONL and scan events newest-first for
+  // one that carries review text.
+  const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const event = tryParseJson(lines[i]);
+    if (event === undefined) {
+      continue;
+    }
+    const text = unwrapEnvelope(event);
+    if (text !== undefined) {
+      return text;
+    }
+  }
+
+  // Fall back to the raw stdout; the parser will fail closed if it is not a
+  // valid ReviewResult.
+  return stdout;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+// Returns inner ReviewResult-bearing text from a known envelope shape, or
+// undefined when the value is not a recognized envelope.
+function unwrapEnvelope(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+
+  // Claude result envelope and Codex message events both surface the payload in
+  // one of these string fields.
+  for (const key of ['result', 'text', 'message', 'content'] as const) {
+    const field = record[key];
+    if (typeof field === 'string' && field.trim().length > 0) {
+      return field.trim();
+    }
+  }
+
+  return undefined;
 }
 
 export function createCommandReviewAdapter(config: CommandReviewAdapterConfig) {

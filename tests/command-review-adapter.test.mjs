@@ -7,6 +7,7 @@ import {
   createClaudeReviewCommandAdapter,
   createCodexReviewCommandAdapter,
   createCommandReviewAdapter,
+  selectReviewText,
 } from '../apps/local-server/src/adapters/command-review-adapter.ts';
 import { InMemoryEndpointRegistry } from '../apps/local-server/src/endpoints/endpoint-registry.ts';
 import {
@@ -155,6 +156,59 @@ test('adapter never invokes a non-allowlisted command', async () => {
   assert.equal(called, false);
   assert.equal(result.ok, false);
   assert.equal(result.failureReason, 'command-not-allowlisted');
+});
+
+test('selectReviewText handles bare JSON, Claude envelope, and Codex JSONL shapes', () => {
+  const reviewJson = '{"summary":"ok","findings":["none"]}';
+
+  // 1. bare ReviewResult JSON
+  assert.equal(
+    selectReviewText({ ok: true, stdout: reviewJson, stderr: '', exitCode: 0, durationMs: 1, timedOut: false, truncated: false }),
+    reviewJson,
+  );
+
+  // 2. Claude --output-format json envelope: ReviewResult inside `result`
+  const envelope = JSON.stringify({ type: 'result', result: reviewJson });
+  assert.equal(
+    selectReviewText({ ok: true, stdout: envelope, stderr: '', exitCode: 0, durationMs: 1, timedOut: false, truncated: false }),
+    reviewJson,
+  );
+
+  // 3. Codex --json JSONL stream: last event carrying text wins
+  const jsonl = [
+    JSON.stringify({ type: 'task_started' }),
+    JSON.stringify({ type: 'item', message: reviewJson }),
+  ].join('\n');
+  assert.equal(
+    selectReviewText({ ok: true, stdout: jsonl, stderr: '', exitCode: 0, durationMs: 1, timedOut: false, truncated: false }),
+    reviewJson,
+  );
+});
+
+test('adapter parses a Claude envelope-wrapped ReviewResult end to end', async () => {
+  const adapter = createClaudeReviewCommandAdapter();
+  const inner = JSON.stringify({ summary: 'wrapped ok', findings: ['x'] });
+  const result = await adapter.review(
+    { prompt: 'p', reviewRequestId: 'r1', resultId: 'res-1', now },
+    {
+      runner: fakeRunner(okRun(JSON.stringify({ type: 'result', result: inner }))),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.result.summary, 'wrapped ok');
+});
+
+test('adapter still rejects execution fields inside a Claude envelope', async () => {
+  const adapter = createClaudeReviewCommandAdapter();
+  const inner = JSON.stringify({ summary: 'x', findings: [], autoSend: true });
+  const result = await adapter.review(
+    { prompt: 'p', reviewRequestId: 'r1' },
+    {
+      runner: fakeRunner(okRun(JSON.stringify({ type: 'result', result: inner }))),
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failureReason, 'review-result-forbidden-autoSend');
 });
 
 test('a returned command review result drives PendingReview to returned with a draft follow-up', async () => {
