@@ -339,7 +339,7 @@ Do not erase the v0.3 caveats. The caveats are part of the route boundary.
 
 Current route overlay:
 
-text ADR-0001: docs/planning/ADR-0001-v1.5-automation-boundary.md handoff: docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md
+text ADR-0001: docs/planning/ADR-0001-v1.5-automation-boundary.md ADR-0002: docs/planning/ADR-0002-v1.5b-command-transport.md handoff: docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md v1.5b: docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md
 
 The project owner selected direction B: unfreeze automation so both ends can
 move data automatically. This supersedes the categorical v0.3-era ban on all
@@ -353,7 +353,14 @@ Still prohibited in v1.5a:
 
 text automatic ChatGPT send requestSubmit form submit keyboard simulation automatic agent loop real Codex PTY delivery generic shell endpoints attach existing terminal stop session browser cookie/localStorage reads automatic commit/push/merge/PR raw unredacted persistence
 
-Later v1.5 slices may implement automatic send, automatic extraction, bounded
-loops, and real Codex PTY delivery only after a separate implementation handoff
-or ADR update records the explicit opt-in controls, round limits, interrupt
-behavior, and audit evidence.
+v1.5b active route:
+
+text fixed review-only local command transport Codex CLI Claude Code CLI shell:false allowlisted argv no-tools/read-only/plan constraints ReviewResult schema/parser PendingReview returned no automatic follow-up execution
+
+Superseded/deferred for v1.5b:
+
+text web-dom automatic ChatGPT send automatic ChatGPT extraction automatic source-agent feedback real Codex PTY delivery
+
+Later v1.5 slices may revisit web-dom send, extraction loops, or real Codex PTY
+delivery only after a separate ADR update records explicit opt-in controls,
+round limits, interrupt behavior, and audit evidence.

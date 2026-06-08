@@ -5,10 +5,12 @@ a CLI coding agent (Codex) and ChatGPT Web. It helps move CLI output into
 ChatGPT and turn ChatGPT replies into reviewed prompts while keeping shell
 execution and terminal control out of the product surface.
 
-It is **not** a terminal controller. It does not run shell commands. As of
-ADR-0001, automation is allowed only in staged, auditable slices: v1.5a can queue
-an outbound prompt and let the browser extension fill the ChatGPT composer, but
-it still does not auto-click ChatGPT send or run unattended agent loops.
+It is **not** a terminal controller. It does not expose shell endpoints. As of
+ADR-0001 and ADR-0002, automation is allowed only in staged, auditable slices:
+v1.5a can queue an outbound prompt and let the browser extension fill the
+ChatGPT composer, while v1.5b is planned as fixed review-only local CLI command
+transport. It still does not auto-click ChatGPT send or run unattended agent
+loops.
 
 ## What works today
 
@@ -35,6 +37,10 @@ it still does not auto-click ChatGPT send or run unattended agent loops.
 - **Remote Review Gate**: a local, read-only release gate
   (`npm run remote-review-gate`) that checks local/remote HEAD match, working
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
+- **Planned v1.5b route**: local review-only command transport for Codex CLI and
+  Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /
+  read-only constraints, and ReviewResult parsing. Web-DOM automatic send is
+  superseded for v1.5b.
 
 > Status caveats: real Codex Managed PTY delivery remains experimental. Real
 > ChatGPT Web manual E2E was validated on 2026-06-08 (see
@@ -144,9 +150,11 @@ CLI Bridge intentionally does **not** provide:
 Automation boundary after ADR-0001:
 
 - v1.5a allows automatic extension polling and composer fill only.
+- v1.5b proceeds through fixed local CLI review-only command transport, not
+  ChatGPT Web automatic send.
 - automatic ChatGPT send, automatic extraction loops, and real Codex PTY delivery
-  are allowed only as later explicit opt-in slices with visible audit logs,
-  round limits, and interrupt controls.
+  are deferred unless a later ADR explicitly re-approves them with visible audit
+  logs, round limits, and interrupt controls.
 - browser cookies, localStorage, page secrets, raw unredacted persistence, and
   generic shell control remain hard prohibited.
 

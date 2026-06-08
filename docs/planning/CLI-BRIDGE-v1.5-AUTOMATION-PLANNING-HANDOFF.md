@@ -2,7 +2,13 @@
 
 ## 0. 状态
 
-Status: PLANNING（需求优先）+ 安全边界反转决策待批。
+Status: SUPERSEDED IN PART.
+
+本文件记录 v1.5 初始方向 B 与 v1.5a 出站填入切片。v1.5b 的 web-dom 自动发送路线已由
+`docs/planning/ADR-0002-v1.5b-command-transport.md` supersede；活跃 v1.5b 路线改为
+本地 Codex CLI / Claude Code CLI 的 review-only command transport。
+
+历史状态：PLANNING（需求优先）+ 安全边界反转决策待批。
 
 本文件**不是**代码切片。它记录一次产品方向的根本性转变，并把它拆成可逐个审批的
 受限切片。在你（项目负责人）对 §3 的安全边界反转明确签字之前，不得编写任何
@@ -85,8 +91,12 @@ Codex 输出
 - **v1.5a 出站队列 + 自动注入（不含自动发送）**：server 增加出站 prompt 队列与
   `GET /bridge/outbound` 拉取端点；插件轮询并自动注入输入框，但**停在发送前**，由人点
   发送。低风险，可先验证"自动到达"链路。
-- **v1.5b 自动发送 + 自动提取（高风险，需 §3 签字）**：插件加「自动模式」开关，注入
-  后自动 `requestSubmit`，探测流式结束后自动提取并回传。带轮次上限与中断。
+- **v1.5b command transport review-only adapters（活跃路线，见 ADR-0002）**：不做
+  web-dom 自动发送；改为固定 allowlist argv 调用本地 Codex CLI / Claude Code CLI 的
+  非交互 review-only 模式，捕获 ReviewResult，保持 follow-up 为 draft。
+- **v1.5b 自动发送 + 自动提取（superseded/deferred）**：原设想为插件加「自动模式」
+  开关，注入后自动 `requestSubmit`，探测流式结束后自动提取并回传。此路线因账号/ToS
+  风险和 command transport 可行性，已不作为 v1.5b 活跃路线。
 - **v1.5c 真实 Codex 投递适配器（高风险）**：实现 `CodexPtyAdapter`（替换 mock），
   通过 PTY/stdin 把确认/自动通过的 prompt 写入用户指定的本地 Codex 会话。
 - **v1.5d 端到端 loop 编排**：把 a/b/c 串成可中断、有上限、全程审计的自动回路。
