@@ -392,3 +392,100 @@ export type AgentEndpoint = {
   adapterName?: string;
   experimental?: boolean;
 };
+
+// --- v2.0 Goal-driven controlled execution (ADR-0003) ---
+// Data model only. No execution authority lives in these types; the gate and
+// step ceiling are enforced by the orchestrator/store in later slices.
+
+export const GOAL_STATUSES = [
+  'draft',
+  'planned',
+  'approved',
+  'executing',
+  'done',
+  'cancelled',
+  'failed',
+] as const;
+
+export type GoalStatus = typeof GOAL_STATUSES[number];
+
+export const PLAN_STATUSES = [
+  'draft',
+  'awaiting-approval',
+  'approved',
+  'executing',
+  'done',
+  'cancelled',
+] as const;
+
+export type PlanStatus = typeof PLAN_STATUSES[number];
+
+export const PLAN_STEP_STATUSES = [
+  'pending',
+  'running',
+  'done',
+  'failed',
+  'blocked-needs-gate',
+  'gated-approved',
+] as const;
+
+export type PlanStepStatus = typeof PLAN_STEP_STATUSES[number];
+
+// What a step does. Non-mutating kinds may auto-run within an approved plan;
+// mutating kinds always require the per-step gate (ADR-0003 §4).
+export const PLAN_STEP_KINDS = [
+  'review',
+  'summarize',
+  'propose-patch',
+  'apply-patch',
+  'run-command',
+  'write-file',
+  'delete-file',
+  'git-commit',
+  'git-push',
+] as const;
+
+export type PlanStepKind = typeof PLAN_STEP_KINDS[number];
+
+// Execution permission tier (ADR-0003 §2). Default is patch-proposal.
+export const EXECUTION_TIERS = [
+  'patch-proposal',
+  'workspace-write',
+] as const;
+
+export type ExecutionTier = typeof EXECUTION_TIERS[number];
+
+export interface Goal {
+  id: string;
+  sessionId: string;
+  description: string;
+  status: GoalStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlanStep {
+  id: string;
+  planId: string;
+  index: number;
+  intent: string;
+  kind: PlanStepKind;
+  targetEndpointId: string;
+  tier: ExecutionTier;
+  // True for any state-changing step; such steps must pass the per-step gate
+  // and are never covered by plan-level approval (ADR-0003 §4).
+  isStateMutating: boolean;
+  status: PlanStepStatus;
+  output?: string;
+  failureReason?: string;
+}
+
+export interface Plan {
+  id: string;
+  goalId: string;
+  steps: PlanStep[];
+  status: PlanStatus;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+}

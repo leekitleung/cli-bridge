@@ -46,7 +46,7 @@ const requiredPaths = [
   'apps/local-server/src/storage/audit-log.ts',
   'apps/local-server/src/storage/json-snapshot-store.ts',
   'apps/local-server/src/storage/pending-prompt-store.ts',
-  'apps/local-server/src/storage/pending-review-store.ts',
+  'apps/local-server/src/storage/goal-store.ts',
   'packages/shared/src/types.ts',
   'packages/shared/src/schemas.ts',
   'packages/shared/src/constants.ts',

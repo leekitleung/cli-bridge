@@ -10,12 +10,20 @@ import {
   BRIDGE_PACKET_TARGETS,
   OUTBOUND_PROMPT_STATUSES,
   RAW_CONTENT_REF_STORAGE,
+  GOAL_STATUSES,
+  PLAN_STATUSES,
+  PLAN_STEP_STATUSES,
+  PLAN_STEP_KINDS,
+  EXECUTION_TIERS,
   type AgentEndpoint,
   type AgentReviewRequest,
   type AgentReviewResult,
   type AuditEvent,
   type BridgePacket,
   type OutboundPrompt,
+  type Goal,
+  type Plan,
+  type PlanStep,
   type WorkBuddyExecutionLedgerEvent,
   type WorkBuddyProjectSnapshot,
   type WorkBuddyPromptDraftSink,
@@ -608,5 +616,92 @@ export function assertWorkBuddyExecutionLedgerEvent(
   const result = validateWorkBuddyExecutionLedgerEvent(value);
   if (!result.ok) {
     throw new Error(`Invalid WorkBuddyExecutionLedgerEvent: ${result.errors.join(', ')}`);
+  }
+}
+
+// --- v2.0 Goal / Plan / PlanStep validators (ADR-0003) ---
+
+export function validateGoal(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['goal must be an object'] };
+  }
+  requireString(value, 'id', errors);
+  requireString(value, 'sessionId', errors);
+  requireString(value, 'description', errors);
+  if (!isOneOf(value.status, GOAL_STATUSES)) {
+    errors.push('status is invalid');
+  }
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertGoal(value: unknown): asserts value is Goal {
+  const result = validateGoal(value);
+  if (!result.ok) {
+    throw new Error(`Invalid Goal: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validatePlanStep(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['plan step must be an object'] };
+  }
+  requireString(value, 'id', errors);
+  requireString(value, 'planId', errors);
+  requireNumber(value, 'index', errors);
+  requireString(value, 'intent', errors);
+  if (!isOneOf(value.kind, PLAN_STEP_KINDS)) {
+    errors.push('kind is invalid');
+  }
+  requireString(value, 'targetEndpointId', errors);
+  if (!isOneOf(value.tier, EXECUTION_TIERS)) {
+    errors.push('tier is invalid');
+  }
+  requireBoolean(value, 'isStateMutating', errors);
+  if (!isOneOf(value.status, PLAN_STEP_STATUSES)) {
+    errors.push('status is invalid');
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertPlanStep(value: unknown): asserts value is PlanStep {
+  const result = validatePlanStep(value);
+  if (!result.ok) {
+    throw new Error(`Invalid PlanStep: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validatePlan(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['plan must be an object'] };
+  }
+  requireString(value, 'id', errors);
+  requireString(value, 'goalId', errors);
+  if (!isOneOf(value.status, PLAN_STATUSES)) {
+    errors.push('status is invalid');
+  }
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+  if (!Array.isArray(value.steps)) {
+    errors.push('steps must be an array');
+  } else {
+    value.steps.forEach((step, i) => {
+      const stepResult = validatePlanStep(step);
+      if (!stepResult.ok) {
+        errors.push(`steps[${i}]: ${stepResult.errors.join(', ')}`);
+      }
+    });
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertPlan(value: unknown): asserts value is Plan {
+  const result = validatePlan(value);
+  if (!result.ok) {
+    throw new Error(`Invalid Plan: ${result.errors.join(', ')}`);
   }
 }
