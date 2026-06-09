@@ -16,6 +16,7 @@ It extends, but does not replace:
 - `PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md`
 - `PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md`
 - `PLAN-PROJECT-CONVERSATION-TIMELINE.md`
+- `CLI-BRIDGE-v2.1-AGENTTEAM-PLANNING-REVIEW.md`
 
 This is not an implementation handoff. Code changes that add new execution
 authority still require their own ADR or approved implementation handoff.
@@ -70,6 +71,15 @@ ExecutionProvider
 
 PolicyEngine is the hard boundary. Model output is never authorization.
 
+Responsibility boundaries:
+
+- AuditLog is the authoritative event ledger.
+- ConversationTimeline is a project-facing event view derived from audit,
+  review, prompt, and future step logs; see
+  `PLAN-PROJECT-CONVERSATION-TIMELINE.md`.
+- MemoryStore is a derived and curated continuity layer. It may summarize
+  events, but it is not the source of truth for approvals, gates, or execution.
+
 ## 3. AgentTeam Definition
 
 AgentTeam does not require multiple external tools. The first-class concept is
@@ -88,6 +98,10 @@ AgentSlot
 AgentTeam
   a coordinated group of AgentSlots
 ```
+
+ToolProvider is a registration namespace, not a permission carrier. Authority
+comes from the concrete endpoint/execution-object capability declaration in §4
+and from PolicyEngine checks.
 
 The default AgentTeam mode should be single-provider, multi-slot:
 
@@ -135,9 +149,33 @@ Important fields:
 - `supportedModes`: `review-only`, `patch-proposal`, `workspace-write`,
   `verify`, `task-sync`.
 
+Parallel execution requires both `supportsParallelSlots=true` and `maxSlots >= 2`.
+If either condition is not met, the orchestrator must explicitly reject the
+parallel request or present a sequential/patch-only/provider-switch fallback.
+
 If a requested AgentTeam needs more slots than a provider supports, the middle
 layer must report that explicitly and offer safe alternatives. It must not
 silently fake parallel execution.
+
+Concrete schemas and state machines are intentionally deferred to each v2.x
+implementation handoff. This plan defines the conceptual shape and invariants.
+
+## 4.1 PolicyEngine Required Invariants
+
+PolicyEngine is the hard boundary for AgentTeam and provider dispatch.
+
+Minimum invariants:
+
+- A plan must be approved before execution.
+- A state-mutating step must enter the per-step gate before it can run.
+- Capability must be explicitly declared by the endpoint/execution object.
+- Tool/provider names do not grant authority.
+- Requested isolation must satisfy the execution strategy; unsafe shared
+  workspace writes require explicit scope and gate policy.
+- Parallel execution requires `supportsParallelSlots=true` and `maxSlots >= 2`.
+- Step limits, retry limits, and budget limits must stop execution when reached.
+- Replanning outside the approved Goal scope must trigger plan-level approval.
+- Model output cannot authorize workspace-write, execution, or gate bypass.
 
 ## 5. WorkBuddy / qclaw / openclaw / hermes
 
@@ -304,7 +342,40 @@ The model API may also:
 - Propose replans after failure.
 - Explain audit history.
 
+AuditExplainerModel output is annotation only. UI must distinguish model
+explanations from authoritative audit rows produced by AuditLog and
+orchestrator.
+
+Replanning that exceeds the approved Goal scope must re-trigger plan-level
+approval, preserving ADR-0003 §5.
+
 It may not authorize execution or gate bypass.
+
+## 9.1 Self-Iteration Boundaries
+
+Self-iteration is allowed only when bounded, auditable, and policy-checked.
+
+Allowed non-mutating self-iteration:
+
+- Plan critique.
+- Plan refinement.
+- Failure analysis.
+- Replan proposal.
+- Test failure diagnosis.
+- Self-review.
+
+Mutation-capable self-iteration must not bypass ADR-0003 controls. It requires:
+
+- Approved plan scope.
+- Step ceiling.
+- Consecutive-failure stop.
+- Per-step gate for state-mutating work.
+- Audit.
+- User interruption.
+
+Self-iteration may propose a new step or plan. It may not approve that proposal,
+grant workspace-write, commit/push, or continue after crossing the approved Goal
+scope.
 
 ## 10. Harness Integration
 
@@ -331,6 +402,9 @@ harness-governance-reviewer
   canExecute=false
 ```
 
+`harness-verifier` is one implementation of the generic `verify` mode listed in
+§4. It does not add a separate mode dimension.
+
 Any mutation-capable harness mode must be a separately approved endpoint.
 
 ## 11. Memory Model
@@ -353,6 +427,10 @@ Write policy:
 - Decision memory must come from ADRs, approvals, and gates.
 - Agent performance memory should come from orchestrator metrics.
 - Task memory should sync with WorkBuddy/task systems and execution ledger.
+
+Long-lived memory review workflow is TBD. Until a concrete handoff defines it,
+project memory writes should be derived from verified facts, human decisions, or
+reviewed summaries, and linked back to AuditLog or ConversationTimeline events.
 
 ## 12. UI Direction
 
@@ -413,10 +491,12 @@ v2.3
   slot capability detection
   patch-proposal fanout
 
-v2.4
-  multi-provider AgentTeam
+v2.4a
   model API planner/critic/arbiter
-  replan and self-iteration
+  bounded replan and self-iteration
+
+v2.4b
+  multi-provider AgentTeam
 
 v2.5+
   governed workspace-write expansion
@@ -424,6 +504,10 @@ v2.5+
   merge queue
   advanced tool executors
 ```
+
+Each v2.x slice needs its own ADR or implementation handoff before code. The
+thresholds from ADR-0003 remain binding unless a later ADR changes them: step
+ceiling default 1, hard ceiling 10, consecutive-failure stop threshold 2.
 
 ## 14. Non-Goals Until Separately Approved
 
@@ -452,3 +536,23 @@ tool as verifier
 
 Each identity must be registered separately with capabilities and policy.
 
+Synchronized upstream documents as of this plan:
+
+- `ADR-0003-controlled-execution-layer.md`
+- `CLI-BRIDGE-v2.0-IMPLEMENTATION-HANDOFF.md`
+- `PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md`
+- `PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md`
+- `PLAN-PROJECT-CONVERSATION-TIMELINE.md`
+
+## 16. Open Questions
+
+- Partial failure strategy: when one AgentSlot fails while others continue, does
+  the TeamRun abort all, isolate the failed slot, or continue best-effort?
+- Patch overlap detection: what is the minimal merge queue algorithm, and when
+  does file overlap require human review?
+- Cost model: how are ModelProvider and ExecutionProvider calls counted against
+  budget limits?
+- Long-lived memory review: who approves project memory writes, and how are
+  they linked to audit/timeline evidence?
+- Project/session ownership: how are goals, sessions, timeline threads, and task
+  systems linked without overfitting too early?

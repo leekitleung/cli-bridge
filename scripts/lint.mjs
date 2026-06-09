@@ -66,6 +66,7 @@ const requiredPaths = [
   'docs/planning/CLI-BRIDGE-v2.0-IMPLEMENTATION-HANDOFF.md',
   'docs/planning/PLAN-PROJECT-CONVERSATION-TIMELINE.md',
   'docs/planning/CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md',
+  'docs/planning/CLI-BRIDGE-v2.1-AGENTTEAM-PLANNING-REVIEW.md',
   'docs/planning/PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md',
   'docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.5b-VALIDATION-HANDOFF.md',

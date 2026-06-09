@@ -11,6 +11,11 @@ Status: PLAN（构想记录，非活跃切片）。
 本功能独立于受控执行层（ADR-0003 / v2.0）：它是只读的上下文聚合，不持有任何执行
 权限。可与执行层并行规划。
 
+后续 AgentTeam / Project Control Plane 规划把 ConversationTimeline 列为核心子系统。
+本文件仍定义时间线自身的只读 observability 边界；AgentTeam 侧只能把它作为事件视图或
+记忆派生来源，不能让时间线获得执行权。详见
+`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`。
+
 ## 1. 核心定位
 
 - 这是一条**可观测时间线**，不是执行控制面。
@@ -105,6 +110,9 @@ UI 三栏：
 - 与 v2.0 执行层解耦：执行层产出 step log，时间线通过 linkedPlanStepId 引用，但
   时间线自身无执行权。
 - 与 console（v1.8）同源 UI，可作为 console 的新视图或独立页。
+- 与 `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md` 的关系：ConversationTimeline 是事件
+  视图；MemoryStore 是从事件、验证和人工决策中派生的连续性摘要；AuditLog 仍是审批、
+  gate 和执行事实的权威记录。
 
 ## 8. 为什么现在不实现
 

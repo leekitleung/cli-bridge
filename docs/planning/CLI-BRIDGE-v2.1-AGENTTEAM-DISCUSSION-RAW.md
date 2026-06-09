@@ -9,6 +9,12 @@ Plan generation. It preserves the original intent and decisions in a lightly
 structured form. The canonical planning synthesis lives in
 `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`.
 
+PLAN synchronization status: `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md` captures
+the 10 raw topics in §1. The planning review
+`CLI-BRIDGE-v2.1-AGENTTEAM-PLANNING-REVIEW.md` identified follow-up tightening
+items, including explicit self-iteration boundaries, PolicyEngine invariants,
+timeline/memory boundaries, and open questions.
+
 This record is not an implementation handoff. It does not authorize new
 execution code, new workspace-write behavior, or any bypass of ADR-0003 gates.
 
@@ -310,4 +316,3 @@ The structured plan is:
 ```text
 docs/planning/PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md
 ```
-
