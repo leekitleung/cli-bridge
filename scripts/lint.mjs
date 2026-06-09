@@ -64,6 +64,7 @@ const requiredPaths = [
   'docs/planning/ADR-0002-v1.5b-command-transport.md',
   'docs/planning/ADR-0003-controlled-execution-layer.md',
   'docs/planning/CLI-BRIDGE-v2.0-IMPLEMENTATION-HANDOFF.md',
+  'docs/planning/PLAN-PROJECT-CONVERSATION-TIMELINE.md',
   'docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.5b-VALIDATION-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.6-VALIDATION-HANDOFF.md',
