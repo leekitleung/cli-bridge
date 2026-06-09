@@ -165,6 +165,7 @@ footer button {
 footer button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── Shared ─── */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--border); display: inline-block; }
 .pill.done { background: var(--done); color: #bbf7d0; }
 .pill.failed { background: var(--danger); color: #fecaca; }
@@ -207,7 +208,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <input id="token" type="password" placeholder="pairing token" size="28" aria-label="Pairing token" />
     <button class="secondary" id="connect">Connect</button>
     <span class="conn-dot" id="conn-dot"></span>
-    <span class="conn-status" id="conn-status"></span>
+    <span class="conn-status" id="conn-status" aria-live="polite" role="status"></span>
   </div>
 </header>
 
@@ -217,12 +218,12 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <ul class="project-list" id="project-list">
     <li class="empty-state" id="project-empty">No projects yet</li>
   </ul>
-  <ul class="section-nav" id="section-nav">
-    <li class="active" data-view="workspace">Timeline &amp; Goals</li>
-    <li data-view="reviews">Reviews</li>
-    <li data-view="prompts">Prompts</li>
-    <li data-view="audit">Audit</li>
-    <li data-view="memory">Memory</li>
+  <ul class="section-nav" id="section-nav" role="tablist">
+    <li class="active" data-view="workspace" role="tab" tabindex="0" aria-selected="true">Timeline &amp; Goals</li>
+    <li data-view="reviews" role="tab" tabindex="0" aria-selected="false">Reviews</li>
+    <li data-view="prompts" role="tab" tabindex="0" aria-selected="false">Prompts</li>
+    <li data-view="audit" role="tab" tabindex="0" aria-selected="false">Audit</li>
+    <li data-view="memory" role="tab" tabindex="0" aria-selected="false">Memory</li>
   </ul>
 </nav>
 
@@ -432,7 +433,7 @@ function renderGoalCard() {
   } else if (g.status === 'draft') {
     html += '<div style="margin-top:10px;"><button class="secondary" id="btn-gen-plan">Generate plan</button> <button class="danger" id="btn-cancel">Cancel</button></div>';
   }
-  html += '<div class="action-status" id="goal-action-status"></div>';
+  html += '<div class="action-status" id="goal-action-status" aria-live="polite" role="status"></div>';
   $('goal-content').innerHTML = html;
   bindGoalActions(g.id);
 }
@@ -531,11 +532,22 @@ function renderSectionView() {
 $('section-nav').addEventListener('click', (e) => {
   const li = e.target.closest('[data-view]');
   if (!li) return;
-  store.view = li.dataset.view;
-  document.querySelectorAll('#section-nav li').forEach(el => el.classList.remove('active'));
-  li.classList.add('active');
-  renderWorkspace();
+  switchSection(li);
 });
+$('section-nav').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    const li = e.target.closest('[data-view]');
+    if (li) switchSection(li);
+  }
+});
+function switchSection(li) {
+  store.view = li.dataset.view;
+  document.querySelectorAll('#section-nav li').forEach(el => { el.classList.remove('active'); el.setAttribute('aria-selected', 'false'); });
+  li.classList.add('active');
+  li.setAttribute('aria-selected', 'true');
+  renderWorkspace();
+}
 
 // ─── Command Bar ───
 $('command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCommand(); });
