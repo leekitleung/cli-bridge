@@ -1,8 +1,10 @@
 # ADR-0003: Controlled Execution Layer
 
-Status: Proposed (awaiting project-owner sign-off)
+Status: Accepted
 
 Date: 2026-06-09
+
+Sign-off: Project owner accepted the Decision and Risk Acceptance on 2026-06-09.
 
 ## Context
 
@@ -125,19 +127,20 @@ raw CLI output are never persisted; only redacted summaries.
   - **v2.1 WorkBuddy task/result integration** — as source/sink only.
 - Each of v2.0 / v2.1 needs its own implementation handoff before code.
 
-## Open Questions (resolve before v2.0 implementation)
+## Resolved Decisions (2026-06-09 sign-off)
 
-1. Default tier: confirm patch-proposal as default, workspace-write as explicit
-   opt-in per plan?
-2. Step ceiling default (proposed 1) and hard ceiling (proposed 10) — acceptable?
-3. Consecutive-failure stop threshold (proposed 2)?
-4. Initial execution endpoint: start with Codex `exec` patch-proposal only, or
-   enable both Codex and Claude execution from the start?
-5. Does the state-changing gate confirm in the console UI only, or also via an
-   HTTP endpoint for headless use?
+1. Default tier = **patch-proposal**. `workspace-write` must be explicitly opted
+   in per plan.
+2. Step ceiling default = **1**; hard ceiling = **10**.
+3. Consecutive-failure stop threshold = **2**.
+4. First execution endpoint = **Codex `exec` patch-proposal only**. Claude
+   execution is NOT enabled initially (Claude stays review-only for now).
+5. State-changing gate confirms in the **console UI only**. No headless HTTP gate
+   in the first iteration.
 
 ## Status / Next
 
-Not implemented. No execution code may be written until the project owner signs
-off on §Decision and §Risk Acceptance and answers the open questions. This branch
-adds only this ADR.
+Accepted. Decisions above are binding for v2.0. Implementation still pending the
+v2.0 implementation handoff review; no execution code is written by this ADR.
+Next: draft `CLI-BRIDGE-v2.0-IMPLEMENTATION-HANDOFF.md` (Goal-driven Console MVP),
+then implement after that handoff is reviewed.
