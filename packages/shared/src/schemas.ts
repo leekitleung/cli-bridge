@@ -24,6 +24,7 @@ import {
   type Goal,
   type Plan,
   type PlanStep,
+  type Project,
   type WorkBuddyExecutionLedgerEvent,
   type WorkBuddyProjectSnapshot,
   type WorkBuddyPromptDraftSink,
@@ -717,5 +718,23 @@ export function assertPlan(value: unknown): asserts value is Plan {
   const result = validatePlan(value);
   if (!result.ok) {
     throw new Error(`Invalid Plan: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateProject(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['project must be an object'] };
+  }
+  requireString(value, 'key', errors);
+  requireString(value, 'label', errors);
+  requireNumber(value, 'createdAt', errors);
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertProject(value: unknown): asserts value is Project {
+  const result = validateProject(value);
+  if (!result.ok) {
+    throw new Error(`Invalid Project: ${result.errors.join(', ')}`);
   }
 }

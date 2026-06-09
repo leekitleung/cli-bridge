@@ -20,6 +20,8 @@ export interface CreatePendingPromptInput {
   prompt: string;
   source?: 'chatgpt-web' | 'user-selection' | 'clipboard';
   transport?: 'managed-pty' | 'clipboard';
+  /** Optional project scope (Phase B). */
+  projectId?: string;
   now?: number;
 }
 
@@ -108,6 +110,7 @@ export class InMemoryPendingPromptStore {
       sessionId: input.sessionId,
       packetId: packet.id,
       prompt: packet.processedContent,
+      projectId: input.projectId,
       status: 'draft',
       transport: input.transport ?? 'managed-pty',
       createdAt: now,

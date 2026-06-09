@@ -355,11 +355,15 @@ export async function handleBridgeRequest(
     if (!sessionId || !prompt) {
       return error(400, 'sessionId and prompt are required');
     }
+    const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
+      ? parsed.body.projectId.trim()
+      : undefined;
     const pendingPrompt = runtime.pendingPromptStore.createPendingPrompt({
       sessionId,
       prompt,
       source: 'chatgpt-web',
       transport: 'clipboard',
+      projectId,
     });
     runtime.persist();
     return created({ pendingPrompt });
@@ -449,11 +453,15 @@ export async function handleBridgeRequest(
     }
     let review;
     try {
+      const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
+        ? parsed.body.projectId.trim()
+        : undefined;
       review = runtime.pendingReviewStore.createDraft({
         sessionId,
         sourceEndpointId,
         targetEndpointId,
         prompt,
+        projectId,
       });
     } catch {
       return error(400, 'Unable to create review for the given endpoints');
@@ -578,7 +586,10 @@ export async function handleBridgeRequest(
     if (!sessionId || !description) {
       return error(400, 'sessionId and description are required');
     }
-    const goal = runtime.goalStore.createGoal({ sessionId, description });
+    const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
+      ? parsed.body.projectId.trim()
+      : undefined;
+    const goal = runtime.goalStore.createGoal({ sessionId, description, projectId });
     runtime.persist();
     return created({ goal });
   }

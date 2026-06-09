@@ -28,6 +28,8 @@ export interface CreatePendingReviewInput {
   sourceEndpointId: string;
   targetEndpointId: string;
   prompt: string;
+  /** Optional project scope (Phase B). */
+  projectId?: string;
   now?: number;
 }
 
@@ -100,6 +102,7 @@ export class InMemoryPendingReviewStore {
       sourceEndpointId: input.sourceEndpointId,
       targetEndpointId: input.targetEndpointId,
       packetId: packet.id,
+      projectId: input.projectId,
       status: 'draft',
       prompt: packet.processedContent,
       createdAt: now,

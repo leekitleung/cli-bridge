@@ -183,6 +183,8 @@ export interface PendingPrompt {
   sessionId: string;
   packetId: string;
   prompt: string;
+  /** Optional project scope (Phase B). */
+  projectId?: string;
   status: PendingPromptStatus;
   transport: 'managed-pty' | 'clipboard';
   clipboardHandoff?: {
@@ -222,6 +224,8 @@ export interface AgentReviewRequest {
   sourceEndpointId: string;
   targetEndpointId: string;
   packetId: string;
+  /** Optional project scope (Phase B). */
+  projectId?: string;
   status: AgentReviewStatus;
   prompt: string;
   createdAt: number;
@@ -458,6 +462,9 @@ export type ExecutionTier = typeof EXECUTION_TIERS[number];
 export interface Goal {
   id: string;
   sessionId: string;
+  /** Optional project scope (Phase B). Records without projectId
+   *  are backfilled to the default project at query time. */
+  projectId?: string;
   description: string;
   status: GoalStatus;
   createdAt: number;
@@ -494,3 +501,33 @@ export interface Plan {
   updatedAt: number;
   approvedAt?: number;
 }
+
+// --- Phase B: Project workspace model ---
+
+export interface Project {
+  /** Unique project key. The default project is 'cli-bridge'. */
+  key: string;
+  /** Human-readable label. */
+  label: string;
+  /** Optional longer description. */
+  description?: string;
+  /** Created timestamp. */
+  createdAt: number;
+}
+
+/** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */
+export interface ProjectSummary {
+  project: Project;
+  /** Number of goals scoped to this project. */
+  goalCount: number;
+  /** Active goal count (not done/cancelled/failed). */
+  activeGoalCount: number;
+  /** Number of reviews scoped to this project. */
+  reviewCount: number;
+  /** Number of pending prompts scoped to this project. */
+  promptCount: number;
+  /** Derived project status hint. */
+  status: 'active' | 'idle' | 'unknown';
+}
+
+export const DEFAULT_PROJECT_KEY = 'cli-bridge';

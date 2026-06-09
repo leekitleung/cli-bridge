@@ -44,6 +44,8 @@ export interface CreateGoalInput {
   id?: string;
   sessionId: string;
   description: string;
+  /** Optional project scope (Phase B). Defaults to 'cli-bridge' at query time. */
+  projectId?: string;
   now?: number;
 }
 
@@ -85,6 +87,7 @@ export class InMemoryGoalStore {
     const goal: Goal = {
       id: input.id ?? randomUUID(),
       sessionId: input.sessionId,
+      projectId: input.projectId,
       description: input.description,
       status: 'draft',
       createdAt: now,
