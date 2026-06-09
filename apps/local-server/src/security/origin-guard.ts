@@ -7,6 +7,15 @@ import {
 
 export const ORIGIN_HEADER = 'origin';
 
+// Loopback origins for the locally-served console page. Safe to allow because
+// the server binds 127.0.0.1 only; any page able to send this origin is already
+// local, and the pairing token remains the real authentication.
+const LOOPBACK_ORIGIN_PATTERN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/u;
+
+export function isLoopbackOrigin(origin: string | null): boolean {
+  return typeof origin === 'string' && LOOPBACK_ORIGIN_PATTERN.test(origin);
+}
+
 export function getRequestOrigin(
   request: Pick<IncomingMessage, 'headers'>,
 ): string | null {
@@ -25,6 +34,10 @@ export function getRequestOrigin(
 export function isAllowedOrigin(origin: string | null, isTestEnvironment = false): boolean {
   if (!origin) {
     return isTestEnvironment && TEST_NO_ORIGIN_ALLOWED;
+  }
+
+  if (isLoopbackOrigin(origin)) {
+    return true;
   }
 
   return ALLOWED_ORIGINS.includes(origin as (typeof ALLOWED_ORIGINS)[number]);

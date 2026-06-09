@@ -14,6 +14,10 @@ import {
 } from '../../../packages/shared/src/constants.ts';
 import { createHealthPayload } from './routes/health.ts';
 import {
+  CONSOLE_PATH,
+  renderConsoleHtml,
+} from './routes/console.ts';
+import {
   createBridgeRuntime,
   handleBridgeRequest,
   isBridgePath,
@@ -122,6 +126,13 @@ export async function startLocalServer(
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === CONSOLE_PATH) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(renderConsoleHtml());
+      return;
+    }
+
     if (isBridgePath(url.pathname)) {
       if (!checkAuth(request, response)) {
         return;
@@ -178,5 +189,6 @@ export async function startLocalServer(
 if (isMainModule()) {
   const handle = await startLocalServer();
   console.log(`CLI Bridge local server listening on ${handle.url}`);
+  console.log(`Console UI: ${handle.url}/console`);
   console.log(`Pairing token: ${handle.pairingToken}`);
 }
