@@ -497,7 +497,18 @@ function renderSectionView() {
   const main = $('workspace');
   let html = '';
   if (store.view === 'reviews') {
-    html = '<div class="card"><h3>Reviews</h3>';
+    html = '<div class="card"><h3>New Review (review-only)</h3>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">';
+    html += '<div><label for="review-target" style="font-size:11px;color:var(--muted);">Target</label><select id="review-target" style="font:inherit;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;">';
+    html += '<option value="claude-code-command">Claude Code (review)</option><option value="codex-command">Codex (review)</option></select></div>';
+    html += '<button class="secondary" id="btn-run-review" style="font-size:12px;padding:6px 12px;">Create → Confirm → Dispatch</button>';
+    html += '<span class="action-status" id="review-action-status" aria-live="polite" role="status"></span>';
+    html += '</div>';
+    html += '<textarea id="review-content" placeholder="Paste content to review…" style="width:100%;min-height:70px;resize:vertical;font:inherit;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:8px;font-size:12px;"></textarea>';
+    html += '<p style="font-size:11px;color:var(--muted);margin:6px 0 0;">Dispatch runs a review-only CLI server-side. Any next-prompt stays a draft requiring separate confirmation; nothing is auto-executed.</p>';
+    html += '<pre id="review-result" style="margin-top:8px;">—</pre>';
+    html += '</div>';
+    html += '<div class="card" style="margin-top:16px;"><h3>Reviews</h3>';
     if (store.cache.reviews.length === 0) html += '<span class="unavailable">no reviews</span>';
     else {
       html += '<table><thead><tr><th>id</th><th>target</th><th>status</th></tr></thead><tbody>';
@@ -519,13 +530,59 @@ function renderSectionView() {
   } else if (store.view === 'memory') {
     html = '<div class="card"><h3>Memory</h3><span class="unavailable">No memory store in Phase A. This section will show project long-term facts once a backend memory source is added (Phase B).</span></div>';
   }
-  // Replace workspace content below goal-card (hide goal card for section views)
   const existing = document.getElementById('section-panel');
   if (existing) existing.remove();
   const div = document.createElement('div');
   div.id = 'section-panel';
   div.innerHTML = html;
   main.appendChild(div);
+
+  // Bind review creation if in reviews view
+  if (store.view === 'reviews') {
+    const btn = document.getElementById('btn-run-review');
+    if (btn) btn.addEventListener('click', runReviewFlow);
+  }
+}
+
+async function runReviewFlow() {
+  const content = document.getElementById('review-content');
+  const target = document.getElementById('review-target');
+  const statusEl = document.getElementById('review-action-status');
+  const resultEl = document.getElementById('review-result');
+  if (!content || !content.value.trim()) { if (statusEl) { statusEl.textContent = 'enter content first'; statusEl.style.color = '#f87171'; } return; }
+  const btn = document.getElementById('btn-run-review');
+  if (btn) btn.disabled = true;
+  if (resultEl) resultEl.textContent = '';
+
+  try {
+    if (statusEl) { statusEl.textContent = 'creating…'; statusEl.style.color = 'var(--muted)'; }
+    const created = await api('/bridge/reviews', 'POST', {
+      sessionId: 'project-console-' + Date.now(), sourceEndpointId: 'codex-command',
+      targetEndpointId: target.value, prompt: content.value.trim(),
+    });
+    if (!created.ok) { if (statusEl) { statusEl.textContent = 'create failed: ' + (created.data?.message || created.status); statusEl.style.color = '#f87171'; } return; }
+    const reviewId = created.data.review.id;
+
+    if (statusEl) statusEl.textContent = 'confirming…';
+    const confirmed = await api('/bridge/reviews/confirm', 'POST', { reviewId });
+    if (!confirmed.ok) { if (statusEl) { statusEl.textContent = 'confirm failed: ' + (confirmed.data?.message || confirmed.status); statusEl.style.color = '#f87171'; } return; }
+
+    if (statusEl) statusEl.textContent = 'dispatching (running CLI)…';
+    const dispatched = await api('/bridge/reviews/dispatch', 'POST', { reviewId });
+    if (!dispatched.ok) { if (statusEl) { statusEl.textContent = 'dispatch failed: ' + (dispatched.data?.message || dispatched.status); statusEl.style.color = '#f87171'; } return; }
+
+    if (statusEl) { statusEl.textContent = 'returned'; statusEl.style.color = 'var(--muted)'; }
+    if (resultEl) {
+      resultEl.textContent = JSON.stringify(dispatched.data.result, null, 2)
+        + (dispatched.data.nextPrompt ? '\\n\\n[next-prompt draft ' + dispatched.data.nextPrompt.id.slice(0,8) + ' — status ' + dispatched.data.nextPrompt.status + ', requires confirm]' : '');
+    }
+    content.value = '';
+    await refreshAll();
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = 'error: ' + (e?.message || e); statusEl.style.color = '#f87171'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ─── Section Nav ───

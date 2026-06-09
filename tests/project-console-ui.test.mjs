@@ -59,6 +59,8 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
     '/bridge/goals/cancel',
     '/bridge/goals/plan',
     '/bridge/goals/gate',
+    '/bridge/reviews/confirm',
+    '/bridge/reviews/dispatch',
   ]));
 
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
@@ -97,9 +99,9 @@ test('project console command bar routes only to controlled goal workflow action
   assert.match(html, /blocked-needs-gate/);
   assert.match(html, /Approve gate/);
 
-  // Phase A does not create reviews directly inside the cockpit yet; it links
-  // to the existing review console instead.
-  assert.equal(/api\('\/bridge\/reviews', 'POST'/.test(html), false);
+  // Reviews are created in the Reviews section view (Task 8), not from the
+  // command bar. The command bar only routes to goal workflow endpoints.
+  assert.match(html, /\/bridge\/reviews', 'POST'/);  // present in reviews section, not command bar
 });
 
 test('project console page is served as HTML at /console/project without a token', async (t) => {
