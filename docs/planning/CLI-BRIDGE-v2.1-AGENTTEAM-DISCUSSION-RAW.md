@@ -16,6 +16,8 @@ items, including explicit self-iteration boundaries, PolicyEngine invariants,
 timeline/memory boundaries, and open questions. The directional review
 `CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md` further downgrades AgentTeam
 from near-term baseline to FUTURE / NOT BASELINE pending v2.0 real-use evidence.
+PLAN §16 open questions remain unresolved and must be settled by later ADRs or
+implementation handoffs before any affected behavior is implemented.
 
 This record is not an implementation handoff. It does not authorize new
 execution code, new workspace-write behavior, or any bypass of ADR-0003 gates.

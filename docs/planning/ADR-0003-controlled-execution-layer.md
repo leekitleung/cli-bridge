@@ -109,7 +109,9 @@ introduced as separate execution endpoint identities if an implementation
 handoff explicitly registers their capabilities, scope, isolation mode, gates,
 and audit requirements. The task-system identity still must not trigger
 execution by itself. See `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md` and
-`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`.
+`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`. For the later directional
+correction that keeps AgentTeam out of the near-term baseline, see
+`CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md`.
 
 ## Risk Acceptance (requires sign-off)
 

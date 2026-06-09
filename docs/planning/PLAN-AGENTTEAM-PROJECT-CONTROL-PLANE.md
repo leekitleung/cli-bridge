@@ -588,6 +588,10 @@ Kill gates:
   agents, re-evaluate whether the project should return to review gateway and
   safety-foundation scope.
 
+If a freeze gate triggers, change this plan status from FUTURE / NOT BASELINE to
+ARCHIVED-STALLED. Revival then requires a new ADR or replacement plan that
+explicitly accepts the new route.
+
 ## 14. Non-Goals Until Separately Approved
 
 - Unbounded autonomous loop.

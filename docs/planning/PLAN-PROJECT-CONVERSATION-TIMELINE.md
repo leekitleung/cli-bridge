@@ -14,7 +14,11 @@ Status: PLAN（构想记录，非活跃切片）。
 后续 AgentTeam / Project Control Plane 规划把 ConversationTimeline 列为核心子系统。
 本文件仍定义时间线自身的只读 observability 边界；AgentTeam 侧只能把它作为事件视图或
 记忆派生来源，不能让时间线获得执行权。详见
-`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`。
+`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md` 和
+`CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md`。
+
+方向性评审后，v2.1 的近端范围收缩为只读 observability；ConversationTimeline 是该
+范围的核心子集之一。AgentTeam、模型 API、多槽位执行仍是 FUTURE / NOT BASELINE。
 
 ## 1. 核心定位
 

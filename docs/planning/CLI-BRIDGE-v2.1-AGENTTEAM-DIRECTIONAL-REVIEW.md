@@ -8,6 +8,8 @@ This review evaluates whether the AgentTeam / Project Control Plane planning
 should become a near-term baseline after v2.0. It supersedes no ADR, but it
 tightens the interpretation of `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`.
 
+Application status: applied on 2026-06-09 in commit `19a9925`.
+
 ## 1. Overall Judgment
 
 v2.0 remains the correct active path:
@@ -123,4 +125,3 @@ has been run on real project goals and reviewed.
 ```
 
 No middle-layer model API should begin until a dedicated ADR accepts it.
-
