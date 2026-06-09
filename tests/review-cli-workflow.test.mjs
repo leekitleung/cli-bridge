@@ -21,9 +21,9 @@ function fakeFetch(routes, calls) {
   };
 }
 
-test('parseReviewArgs maps target aliases and requires prompt + token', () => {
+test('parseReviewArgs maps target aliases and requires a prompt source + token', () => {
   const bad = parseReviewArgs(['--target', 'claude'], {});
-  assert.equal(bad.ok, false); // missing prompt
+  assert.equal(bad.ok, false); // missing prompt source
 
   const noToken = parseReviewArgs(['--target', 'claude', '--prompt', 'x'], {});
   assert.equal(noToken.ok, false);
@@ -32,9 +32,24 @@ test('parseReviewArgs maps target aliases and requires prompt + token', () => {
   assert.equal(ok.ok, true);
   assert.equal(ok.values.target, 'codex-command');
   assert.equal(ok.values.token, 't');
+  assert.equal(ok.values.prompt, 'review x');
 
   const claude = parseReviewArgs(['--target', 'claude', '--prompt', 'y', '--token', 'z'], {});
   assert.equal(claude.values.target, 'claude-code-command');
+});
+
+test('parseReviewArgs accepts --prompt-file and --stdin, rejects multiple sources', () => {
+  const file = parseReviewArgs(['--prompt-file', 'x.md', '--token', 't'], {});
+  assert.equal(file.ok, true);
+  assert.equal(file.values.promptFile, 'x.md');
+
+  const stdin = parseReviewArgs(['--stdin', '--token', 't'], {});
+  assert.equal(stdin.ok, true);
+  assert.equal(stdin.values.readStdin, true);
+
+  const multi = parseReviewArgs(['--prompt', 'a', '--stdin', '--token', 't'], {});
+  assert.equal(multi.ok, false);
+  assert.match(multi.error, /only one of/);
 });
 
 test('parseReviewArgs rejects an unknown target', () => {

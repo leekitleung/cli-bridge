@@ -113,7 +113,9 @@ export interface ParsedReviewArgs {
   error?: string;
   values?: {
     target: string;
-    prompt: string;
+    prompt?: string;
+    promptFile?: string;
+    readStdin: boolean;
     sessionId: string;
     source: string;
     url: string;
@@ -156,8 +158,15 @@ export function parseReviewArgs(
   }
 
   const prompt = flags.get('prompt');
-  if (!prompt) {
-    return { ok: false, error: 'missing --prompt' };
+  const promptFile = flags.get('prompt-file');
+  const readStdin = flags.get('stdin') === 'true';
+  // Exactly one prompt source is required: --prompt, --prompt-file, or --stdin.
+  const sourceCount = [prompt, promptFile, readStdin ? 'x' : undefined].filter(Boolean).length;
+  if (sourceCount === 0) {
+    return { ok: false, error: 'provide one of --prompt, --prompt-file <path>, or --stdin' };
+  }
+  if (sourceCount > 1) {
+    return { ok: false, error: 'use only one of --prompt, --prompt-file, --stdin' };
   }
 
   const url = flags.get('url') ?? env.CLI_BRIDGE_URL ?? 'http://127.0.0.1:31337';
@@ -171,6 +180,8 @@ export function parseReviewArgs(
     values: {
       target,
       prompt,
+      promptFile,
+      readStdin,
       sessionId: flags.get('session') ?? `cli-${Date.now()}`,
       source: flags.get('source') ?? 'codex-command',
       url,
