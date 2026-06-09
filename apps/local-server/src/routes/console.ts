@@ -43,6 +43,7 @@ export function renderConsoleHtml(): string {
 <body>
 <header>
   <h1>CLI Bridge Console</h1>
+  <a href="/console/goals" style="color:#93c5fd;font-size:12px;text-decoration:none;">Goal console &rarr;</a>
   <div class="row">
     <input id="token" type="password" placeholder="pairing token" size="34" />
     <button class="secondary" id="connect">Connect</button>
