@@ -30,7 +30,19 @@ import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
 import { InMemoryPendingReviewStore } from '../storage/pending-review-store.ts';
+import {
+  InMemoryProjectStore,
+  resolveProjectKey,
+} from '../storage/project-store.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
+import type {
+  AgentReviewRequest,
+  AuditEvent,
+  Goal,
+  PendingPrompt,
+  Plan,
+  ProjectSummary,
+} from '../../../../packages/shared/src/types.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -66,6 +78,8 @@ export interface BridgeRuntime {
   // v2.0 Goal-driven execution (ADR-0003). In-memory only — goal data is not
   // included in the JSON snapshot at this time.
   goalStore: InMemoryGoalStore;
+  // Phase B Project grouping. Read-only aggregation only; no mutation authority.
+  projectStore: InMemoryProjectStore;
   /** Command runner override for goal→plan generation (test injection). */
   goalPlanCommandOptions?: CommandRunOptions;
 }
@@ -100,6 +114,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   );
   const agent = new MockAgentAdapter();
   const goalStore = new InMemoryGoalStore();
+  const projectStore = new InMemoryProjectStore();
 
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
   const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
@@ -143,6 +158,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     agent,
     persist,
     goalStore,
+    projectStore,
     goalPlanCommandOptions: options.goalPlanCommandOptions,
   };
 }
@@ -176,6 +192,137 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requireString(body: Record<string, unknown>, key: string): string | null {
   const value = body[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+interface GoalWithPlan {
+  goal: Goal;
+  plan: Plan | null;
+}
+
+interface ProjectDerivedStatus {
+  progress: { completed: number; total: number } | null;
+  activeGoal: { id: string; description: string; status: Goal['status'] } | null;
+  goalsSummary: Array<{ id: string; description: string; status: Goal['status'] }>;
+  blockedGate: { goalId: string; stepId: string; stepIndex: number } | null;
+  latestAudit: null;
+  memory: [];
+}
+
+function listGoalsWithPlans(runtime: BridgeRuntime): GoalWithPlan[] {
+  return runtime.goalStore.listGoals().map((goal) => ({
+    goal,
+    plan: runtime.goalStore.getPlanByGoal(goal.id) ?? null,
+  }));
+}
+
+function projectMatches(record: { projectId?: string }, projectKey: string): boolean {
+  return resolveProjectKey(record.projectId) === projectKey;
+}
+
+function buildProjectSummaries(runtime: BridgeRuntime): ProjectSummary[] {
+  return runtime.projectStore.buildAllSummaries({
+    goals: runtime.goalStore.listGoals(),
+    reviews: runtime.pendingReviewStore.list(),
+    prompts: runtime.pendingPromptStore.listPrompts(),
+  });
+}
+
+function buildProjectStatus(goals: GoalWithPlan[]): ProjectDerivedStatus {
+  const activeEntry = goals.find(({ goal }) =>
+    goal.status !== 'done' &&
+    goal.status !== 'cancelled' &&
+    goal.status !== 'failed'
+  );
+  const activePlan = activeEntry?.plan ?? null;
+  const steps = activePlan?.steps ?? [];
+  const completed = steps.filter((step) => step.status === 'done').length;
+  const blocked = goals
+    .flatMap(({ goal, plan }) => (plan?.steps ?? []).map((step) => ({ goal, step })))
+    .find(({ step }) => step.status === 'blocked-needs-gate');
+
+  return {
+    progress: activePlan ? { completed, total: steps.length } : null,
+    activeGoal: activeEntry
+      ? {
+        id: activeEntry.goal.id,
+        description: activeEntry.goal.description,
+        status: activeEntry.goal.status,
+      }
+      : null,
+    goalsSummary: goals.map(({ goal }) => ({
+      id: goal.id,
+      description: goal.description,
+      status: goal.status,
+    })),
+    blockedGate: blocked
+      ? {
+        goalId: blocked.goal.id,
+        stepId: blocked.step.id,
+        stepIndex: blocked.step.index,
+      }
+      : null,
+    // These sources are introduced by later Phase B slices (task 17).
+    latestAudit: null,
+    memory: [],
+  };
+}
+
+function collectSessionIds(
+  goals: GoalWithPlan[],
+  reviews: AgentReviewRequest[],
+  prompts: PendingPrompt[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const { goal } of goals) ids.add(goal.sessionId);
+  for (const review of reviews) ids.add(review.sessionId);
+  for (const prompt of prompts) ids.add(prompt.sessionId);
+  return ids;
+}
+
+function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
+  summary: ProjectSummary;
+  goals: GoalWithPlan[];
+  reviews: AgentReviewRequest[];
+  pendingPrompts: PendingPrompt[];
+  auditEvents: AuditEvent[];
+  status: ProjectDerivedStatus;
+} | undefined {
+  const goals = listGoalsWithPlans(runtime).filter(({ goal }) => projectMatches(goal, projectKey));
+  const reviews = runtime.pendingReviewStore.list().filter((review) => projectMatches(review, projectKey));
+  const pendingPrompts = runtime.pendingPromptStore.listPrompts().filter((prompt) => projectMatches(prompt, projectKey));
+  const summary = buildProjectSummaries(runtime).find((item) => item.project.key === projectKey);
+  if (!summary) {
+    return undefined;
+  }
+
+  const sessionIds = collectSessionIds(goals, reviews, pendingPrompts);
+  const auditEvents = runtime.auditLog.listEvents()
+    .filter((event) => sessionIds.has(event.sessionId));
+
+  return {
+    summary,
+    goals,
+    reviews,
+    pendingPrompts,
+    auditEvents,
+    status: buildProjectStatus(goals),
+  };
+}
+
+function projectDetailPathKey(pathname: string): string | undefined {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) {
+    return undefined;
+  }
+  const raw = pathname.slice(prefix.length);
+  if (raw.length === 0 || raw.includes('/')) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function readJsonBody(request: IncomingMessage): Promise<
@@ -226,6 +373,7 @@ export const BRIDGE_REVIEWS_CONFIRM_PATH = '/bridge/reviews/confirm';
 export const BRIDGE_REVIEWS_RUN_PATH = '/bridge/reviews/dispatch';
 export const BRIDGE_REVIEWS_CANCEL_PATH = '/bridge/reviews/cancel';
 export const BRIDGE_METRICS_PATH = '/bridge/metrics';
+export const BRIDGE_PROJECTS_PATH = '/bridge/projects';
 
 // v2.0 Goal-driven execution endpoints (ADR-0003 §7.4).
 export const BRIDGE_GOALS_PATH = '/bridge/goals';
@@ -249,6 +397,8 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_REVIEWS_RUN_PATH ||
     pathname === BRIDGE_REVIEWS_CANCEL_PATH ||
     pathname === BRIDGE_METRICS_PATH ||
+    pathname === BRIDGE_PROJECTS_PATH ||
+    pathname.startsWith(`${BRIDGE_PROJECTS_PATH}/`) ||
     pathname === BRIDGE_GOALS_PLAN_PATH ||
     pathname === BRIDGE_GOALS_APPROVE_PATH ||
     pathname === BRIDGE_GOALS_STEP_PATH ||
@@ -562,6 +712,29 @@ export async function handleBridgeRequest(
         auditLog: runtime.auditLog,
         pendingPromptStore: runtime.pendingPromptStore,
       }),
+    });
+  }
+
+  // ── Phase B Project aggregation (read-only; no new mutation authority) ──
+
+  if (pathname === BRIDGE_PROJECTS_PATH && method === 'GET') {
+    return ok({ projects: buildProjectSummaries(runtime) });
+  }
+
+  const projectKey = projectDetailPathKey(pathname);
+  if (projectKey && method === 'GET') {
+    const detail = buildProjectDetail(runtime, projectKey);
+    if (!detail) {
+      return error(404, 'Project not found');
+    }
+    return ok({
+      project: detail.summary.project,
+      summary: detail.summary,
+      goals: detail.goals,
+      reviews: detail.reviews,
+      pendingPrompts: detail.pendingPrompts,
+      auditEvents: detail.auditEvents,
+      status: detail.status,
     });
   }
 
