@@ -7,6 +7,15 @@ import {
 
 export const ORIGIN_HEADER = 'origin';
 
+// Loopback origins for the locally-served console page. Safe to allow because
+// the server binds 127.0.0.1 only; any page able to send this origin is already
+// local, and the pairing token remains the real authentication.
+const LOOPBACK_ORIGIN_PATTERN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/u;
+
+export function isLoopbackOrigin(origin: string | null): boolean {
+  return typeof origin === 'string' && LOOPBACK_ORIGIN_PATTERN.test(origin);
+}
+
 export function getRequestOrigin(
   request: Pick<IncomingMessage, 'headers'>,
 ): string | null {
@@ -23,8 +32,18 @@ export function getRequestOrigin(
 }
 
 export function isAllowedOrigin(origin: string | null, isTestEnvironment = false): boolean {
+  // A missing Origin header is allowed: browsers always attach Origin to
+  // cross-origin requests (which the allowlist below blocks), so an absent
+  // Origin can only come from a same-origin page (the local console) or a
+  // non-browser client (curl) — neither of which is a cross-site attack, and
+  // the pairing token remains the real gate. The server binds loopback only.
+  // `isTestEnvironment` is retained for compatibility but no longer required.
   if (!origin) {
-    return isTestEnvironment && TEST_NO_ORIGIN_ALLOWED;
+    return true;
+  }
+
+  if (isLoopbackOrigin(origin)) {
+    return true;
   }
 
   return ALLOWED_ORIGINS.includes(origin as (typeof ALLOWED_ORIGINS)[number]);

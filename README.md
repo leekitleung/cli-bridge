@@ -127,6 +127,23 @@ Notes:
 - The endpoint registry, agent-to-agent review lifecycle, and WorkBuddy state
   remain library contracts and are intentionally **not** exposed over HTTP yet.
 
+## Console UI
+
+Run the local server, then open the console in a browser:
+
+```
+npm run start:local-server
+# open the printed Console UI URL, e.g. http://127.0.0.1:31337/console
+```
+
+The console is a thin view over the existing `/bridge/*` endpoints. Paste the
+printed pairing token, click Connect, then create a review, which runs
+create → confirm → dispatch against the review-only command transport. It holds
+no business logic: every action calls a server endpoint that already enforces
+redaction, capability gating, and the human confirmation gates. Any
+`nextPromptDraft` stays a draft requiring separate confirmation; nothing is
+auto-executed.
+
 ## Load the extension
 
 1. Run `npm run build-extension`.

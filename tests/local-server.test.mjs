@@ -157,7 +157,9 @@ test('origin guard helpers work for allowed, blocked, and missing origins', () =
   assert.equal(isAllowedOrigin('https://chatgpt.com'), true);
   assert.equal(isAllowedOrigin(ALLOWED_EXTENSION_ORIGIN), true);
   assert.equal(isAllowedOrigin('https://example.com'), false);
-  assert.equal(isAllowedOrigin(null), false);
+  // A missing Origin is allowed: it cannot be a cross-site request, and the
+  // pairing token remains the gate.
+  assert.equal(isAllowedOrigin(null), true);
   assert.equal(isAllowedOrigin(null, true), true);
 
   const request = {
@@ -171,7 +173,7 @@ test('origin guard helpers work for allowed, blocked, and missing origins', () =
   assert.equal(ALLOWED_ORIGINS.includes(ALLOWED_EXTENSION_ORIGIN), true);
 });
 
-test('private health endpoint is rejected when origin is absent', async (t) => {
+test('private health endpoint treats the pairing token as the gate when origin is absent', async (t) => {
   const handle = await startLocalServer(0);
 
   t.after(async () => {
@@ -187,13 +189,16 @@ test('private health endpoint is rejected when origin is absent', async (t) => {
     });
   });
 
+  // No origin + no token -> 401 (token is the gate; origin absence is allowed
+  // because it cannot be a cross-site request on a loopback-bound server).
   const missingTokenResponse = await fetch(`${handle.url}/health/private`);
-  assert.equal(missingTokenResponse.status, 403);
+  assert.equal(missingTokenResponse.status, 401);
   assert.deepEqual(await missingTokenResponse.json(), {
     status: 'error',
-    message: 'Missing origin',
+    message: 'Missing pairing token',
   });
 
+  // No origin + wrong token -> 403.
   const invalidTokenResponse = await fetch(`${handle.url}/health/private`, {
     headers: {
       [PAIRING_TOKEN_HEADER]: 'wrong-token',
@@ -202,19 +207,16 @@ test('private health endpoint is rejected when origin is absent', async (t) => {
   assert.equal(invalidTokenResponse.status, 403);
   assert.deepEqual(await invalidTokenResponse.json(), {
     status: 'error',
-    message: 'Missing origin',
+    message: 'Invalid pairing token',
   });
 
+  // No origin + valid token -> 200 (this is the same-origin console case).
   const validTokenResponse = await fetch(`${handle.url}/health/private`, {
     headers: {
       [PAIRING_TOKEN_HEADER]: handle.pairingToken,
     },
   });
-  assert.equal(validTokenResponse.status, 403);
-  assert.deepEqual(await validTokenResponse.json(), {
-    status: 'error',
-    message: 'Missing origin',
-  });
+  assert.equal(validTokenResponse.status, 200);
 });
 
 test('private health endpoint requires allowed origin before pairing token', async (t) => {
@@ -277,7 +279,7 @@ test('private health endpoint requires allowed origin before pairing token', asy
   assert.equal(allowedOriginValidTokenResponse.status, 200);
 });
 
-test('private health endpoint without origin is rejected outside explicit test allowance', async (t) => {
+test('private health endpoint with valid token and no origin succeeds (same-origin console)', async (t) => {
   const handle = await startLocalServer(0);
 
   t.after(async () => {
@@ -299,11 +301,7 @@ test('private health endpoint without origin is rejected outside explicit test a
     },
   });
 
-  assert.equal(noOriginResponse.status, 403);
-  assert.deepEqual(await noOriginResponse.json(), {
-    status: 'error',
-    message: 'Missing origin',
-  });
+  assert.equal(noOriginResponse.status, 200);
 });
 
 test('extension background health helpers handle public success, protected success, and explicit failures', async (t) => {

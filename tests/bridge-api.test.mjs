@@ -28,10 +28,18 @@ test('bridge endpoints require origin and pairing token like protected health', 
   const handle = await startLocalServer(0);
   t.after(closer(handle));
 
+  // No Origin header cannot be a cross-site request on a loopback-bound server,
+  // so the pairing token is the gate: no-origin + valid token succeeds.
   const noOrigin = await fetch(`${handle.url}/bridge/metrics`, {
     headers: { [PAIRING_TOKEN_HEADER]: handle.pairingToken },
   });
-  assert.equal(noOrigin.status, 403);
+  assert.equal(noOrigin.status, 200);
+
+  // A cross-origin (non-allowlisted) request is still blocked even with a token.
+  const crossOrigin = await fetch(`${handle.url}/bridge/metrics`, {
+    headers: { origin: 'https://evil.example', [PAIRING_TOKEN_HEADER]: handle.pairingToken },
+  });
+  assert.equal(crossOrigin.status, 403);
 
   const noToken = await fetch(`${handle.url}/bridge/metrics`, {
     headers: { origin: ALLOWED_EXTENSION_ORIGIN },
