@@ -32,8 +32,14 @@ export function getRequestOrigin(
 }
 
 export function isAllowedOrigin(origin: string | null, isTestEnvironment = false): boolean {
+  // A missing Origin header is allowed: browsers always attach Origin to
+  // cross-origin requests (which the allowlist below blocks), so an absent
+  // Origin can only come from a same-origin page (the local console) or a
+  // non-browser client (curl) — neither of which is a cross-site attack, and
+  // the pairing token remains the real gate. The server binds loopback only.
+  // `isTestEnvironment` is retained for compatibility but no longer required.
   if (!origin) {
-    return isTestEnvironment && TEST_NO_ORIGIN_ALLOWED;
+    return true;
   }
 
   if (isLoopbackOrigin(origin)) {
