@@ -16,6 +16,7 @@ import {
   DEFAULT_AGENT_ENDPOINTS,
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
+import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
 import {
   buildSnapshot,
@@ -472,7 +473,13 @@ export async function handleBridgeRequest(
       runtime.pendingReviewStore,
       runtime.auditLog,
       adapter,
-      { reviewId, prompt: review.prompt },
+      {
+        reviewId,
+        // Wrap the user-provided content with the review-only instruction
+        // prompt so the CLI is forced to emit ReviewResult-shaped JSON. The raw
+        // content becomes the material under review.
+        prompt: buildClaudeReviewPrompt({ codexOutput: review.prompt }),
+      },
     );
     runtime.persist();
     if (!runResult.ok) {

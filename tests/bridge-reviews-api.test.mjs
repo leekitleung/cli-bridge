@@ -24,10 +24,13 @@ function jsonRequest(body) {
 }
 
 // Fake review adapter so tests never spawn a real CLI.
-function fakeReviewAdapter(reviewResultJson) {
+function fakeReviewAdapter(reviewResultJson, capture) {
   return {
     name: 'fake-review',
     async review(input) {
+      if (capture) {
+        capture.prompt = input.prompt;
+      }
       const parsed = JSON.parse(reviewResultJson);
       return {
         ok: true,
@@ -130,6 +133,28 @@ test('a review whose CLI returns execution fields fails and creates no prompt', 
   assert.equal(run.statusCode, 409);
   assert.equal(runtime.pendingReviewStore.get(reviewId).status, 'failed');
   assert.equal(runtime.pendingPromptStore.listPrompts().length, 0);
+});
+
+test('dispatch wraps the user content with review-only instructions before running', async () => {
+  const capture = {};
+  const runtime = createBridgeRuntime({
+    reviewAdapterFor: () => fakeReviewAdapter('{"summary":"ok","findings":[]}', capture),
+  });
+  const create = await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_PATH, jsonRequest({
+    sessionId: 's1',
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'MY RAW CONTENT TO REVIEW',
+  }));
+  const reviewId = create.payload.review.id;
+  await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_CONFIRM_PATH, jsonRequest({ reviewId }));
+  await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_RUN_PATH, jsonRequest({ reviewId }));
+
+  // The prompt sent to the CLI is the review-instruction wrapper containing the
+  // user content, not the raw content alone.
+  assert.match(capture.prompt, /Review Agent/);
+  assert.match(capture.prompt, /ReviewResult-shaped JSON/);
+  assert.match(capture.prompt, /MY RAW CONTENT TO REVIEW/);
 });
 
 test('a review can be cancelled before running', async () => {

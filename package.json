@@ -12,7 +12,8 @@
     "remote-review-gate": "node ./scripts/remote-review-gate.mjs --pretty",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test",
-    "start:local-server": "node --experimental-strip-types apps/local-server/src/server.ts"
+    "start:local-server": "node --experimental-strip-types apps/local-server/src/server.ts",
+    "review": "node --experimental-strip-types apps/local-server/src/cli/review.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
