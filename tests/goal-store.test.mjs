@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { InMemoryGoalStore, isStateMutatingKind } from '../apps/local-server/src/storage/goal-store.ts';
+import { InMemoryGoalStore, isStateMutatingKind, isStepTierPermitted } from '../apps/local-server/src/storage/goal-store.ts';
+import { validatePlan } from '../packages/shared/src/schemas.ts';
 
 const now = 1780000000000;
 
@@ -118,4 +119,71 @@ test('approvePlan only works on an awaiting-approval plan', () => {
   const goal = store.createGoal({ sessionId: 's1', description: 'x', now });
   // No plan yet.
   assert.equal(store.approvePlan(goal.id), undefined);
+});
+
+test('attachPlan defaults permittedTiers to patch-proposal only', () => {
+  const store = setup();
+  const goal = store.createGoal({ sessionId: 's1', description: 'x', now });
+  const plan = store.attachPlan({
+    goalId: goal.id,
+    steps: [{ intent: 'review', kind: 'review', targetEndpointId: 'claude-code-command' }],
+    now: now + 1,
+  });
+  assert.deepEqual(plan.permittedTiers, ['patch-proposal']);
+});
+
+test('isStepTierPermitted gates workspace-write against plan.permittedTiers', () => {
+  const store = setup();
+  const goal = store.createGoal({ sessionId: 's1', description: 'x', now });
+
+  // Plan that only allows patch-proposal.
+  const restricted = store.attachPlan({
+    goalId: goal.id,
+    steps: [
+      { intent: 'propose', kind: 'propose-patch', targetEndpointId: 'codex-command' },
+      { intent: 'write', kind: 'write-file', targetEndpointId: 'codex-command', tier: 'workspace-write' },
+    ],
+    now: now + 1,
+  });
+  const [proposeStep, writeStep] = restricted.steps;
+  assert.equal(isStepTierPermitted(restricted, proposeStep), true);
+  assert.equal(isStepTierPermitted(restricted, writeStep), false);
+
+  // Second goal with explicit workspace-write.
+  const goal2 = store.createGoal({ sessionId: 's2', description: 'y', now });
+  const expanded = store.attachPlan({
+    goalId: goal2.id,
+    steps: [
+      { intent: 'write', kind: 'write-file', targetEndpointId: 'codex-command', tier: 'workspace-write' },
+    ],
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    now: now + 1,
+  });
+  assert.equal(isStepTierPermitted(expanded, expanded.steps[0]), true);
+});
+
+test('validatePlan rejects invalid permittedTiers', () => {
+  const base = {
+    id: 'p1', goalId: 'g1', steps: [], status: 'awaiting-approval',
+    createdAt: now, updatedAt: now,
+  };
+
+  // Empty array rejected.
+  const r1 = validatePlan({ ...base, permittedTiers: [] });
+  assert.equal(r1.ok, false);
+  assert.ok(r1.errors.some((e) => e.includes('permittedTiers')));
+
+  // Missing patch-proposal rejected.
+  const r2 = validatePlan({ ...base, permittedTiers: ['workspace-write'] });
+  assert.equal(r2.ok, false);
+  assert.ok(r2.errors.some((e) => e.includes('patch-proposal')));
+
+  // Invalid tier value rejected.
+  const r3 = validatePlan({ ...base, permittedTiers: ['patch-proposal', 'evil-shell'] });
+  assert.equal(r3.ok, false);
+  assert.ok(r3.errors.some((e) => e.includes('invalid tier')));
+
+  // Valid.
+  const r4 = validatePlan({ ...base, permittedTiers: ['patch-proposal', 'workspace-write'] });
+  assert.equal(r4.ok, true);
 });

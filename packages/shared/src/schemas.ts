@@ -686,6 +686,20 @@ export function validatePlan(value: unknown): SchemaValidationResult {
   }
   requireNumber(value, 'createdAt', errors);
   requireNumber(value, 'updatedAt', errors);
+  // permittedTiers: non-empty array of valid ExecutionTier values that must
+  // always contain 'patch-proposal'.
+  if (!Array.isArray(value.permittedTiers) || value.permittedTiers.length === 0) {
+    errors.push('permittedTiers must be a non-empty array');
+  } else {
+    for (const tier of value.permittedTiers) {
+      if (!isOneOf(tier, EXECUTION_TIERS)) {
+        errors.push(`permittedTiers contains invalid tier: ${String(tier)}`);
+      }
+    }
+    if (!(value.permittedTiers as string[]).includes('patch-proposal')) {
+      errors.push('permittedTiers must include patch-proposal');
+    }
+  }
   if (!Array.isArray(value.steps)) {
     errors.push('steps must be an array');
   } else {

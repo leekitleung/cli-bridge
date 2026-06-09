@@ -58,7 +58,17 @@ export interface AttachPlanInput {
   id?: string;
   goalId: string;
   steps: PlanStepInput[];
+  // Defaults to ['patch-proposal']. To allow workspace-write steps, explicitly
+  // include 'workspace-write' here. This makes the tier scope visible and
+  // auditable at plan-creation time.
+  permittedTiers?: ExecutionTier[];
   now?: number;
+}
+
+// Data-layer helper: the orchestrator uses this to reject dispatching a step
+// whose tier is not in the plan's approved scope before any process is spawned.
+export function isStepTierPermitted(plan: Plan, step: PlanStep): boolean {
+  return plan.permittedTiers.includes(step.tier);
 }
 
 function clone<T>(value: T): T {
@@ -110,6 +120,7 @@ export class InMemoryGoalStore {
       goalId: goal.id,
       steps,
       status: 'awaiting-approval',
+      permittedTiers: input.permittedTiers ?? ['patch-proposal'],
       createdAt: now,
       updatedAt: now,
     };

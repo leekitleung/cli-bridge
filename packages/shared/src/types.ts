@@ -485,6 +485,11 @@ export interface Plan {
   goalId: string;
   steps: PlanStep[];
   status: PlanStatus;
+  // Explicit set of execution tiers permitted within this plan. Default is
+  // ['patch-proposal']. workspace-write must be listed here before any step
+  // carrying that tier can be dispatched (enforced by the orchestrator, and
+  // verifiable from the data model). patch-proposal is always required.
+  permittedTiers: ExecutionTier[];
   createdAt: number;
   updatedAt: number;
   approvedAt?: number;
