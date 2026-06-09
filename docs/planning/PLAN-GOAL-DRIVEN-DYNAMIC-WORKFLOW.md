@@ -11,9 +11,11 @@ Status: PLAN（构想记录，非活跃切片）。
 
 后续 AgentTeam、单 provider 多槽位、WorkBuddy/qclaw/openclaw/hermes 执行端点、
 中间层模型 API、harness、memory、项目级控制台等扩展，必须同时参考
-`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`。该规划的原始讨论记录保存在
-`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`，两者均为 lint 必检 canonical/context
-文档，后续开发不得遗漏。
+`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`、其原始讨论记录
+`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`、以及方向性评审
+`CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md`。AgentTeam 规划当前状态为
+FUTURE / NOT BASELINE；中间层模型 API 需要独立 ADR；v2.1+ 不得在 v2.0 真实使用验证
+前作为实现基线推进。
 
 当前活跃推进不变：安全地基（已完成）-> 轨道 A（command transport review-only）。
 web-dom 自动发送/提取（曾称"轨道 B"）已由 ADR-0002 标记为 superseded/deferred，除非
@@ -25,8 +27,9 @@ web-dom 自动发送/提取（曾称"轨道 B"）已由 ADR-0002 标记为 super
 
 - 规划由上层（高等级模型）完成；
 - **执行不由规划者自己做**，而是派发给执行层（低等级模型 / WorkBuddy / CLI 等）；
-- 目的：token 与上下文经济性 —— 让昂贵的脑子只做少量高价值的"想"，把大量重复的
-  "做"压到便宜模型上。
+- 主要目的：长会话项目级可观测性、上下文路由、受控执行和审计；
+- 次要优化：token 与上下文经济性。让昂贵模型少做重复工作可以是路由策略，但不应成为
+  本中间层的唯一产品理由。
 
 ## 2. 双轴模型：tier（等级） × role（能力）
 
@@ -53,13 +56,16 @@ web-dom 自动发送/提取（曾称"轨道 B"）已由 ADR-0002 标记为 super
 
 - 每个注册 endpoint 同时声明 `tier` 与 `capabilities`。
 - 一个**编排路由策略**把每个计划步骤映射到"能做这步的最便宜 tier"，失败时按策略升级。
-- token 经济性成为**默认行为**，而非不可逾越的约束。
+- token 经济性是**可选优化策略**，不得覆盖可观测性、审计、上下文完整性和安全边界。
 
-### 2.1 额外的上下文经济性
+### 2.1 额外的上下文经济性（可选优化）
 
 - 上层持有完整 goal 与大上下文；
 - 执行层每步只接收**被裁剪过的该步上下文**；
-- 因此执行调用不仅单价便宜，**单次还更小** —— 双重节省 token。
+- 因此执行调用可能不仅单价便宜，**单次还更小**。
+
+注意：这只是优化策略，不是核心产品假设。过度裁剪上下文可能导致执行 agent 反复失败，
+最终更贵也更慢。核心价值仍是项目控制面、可观测性、审计和安全边界。
 
 ## 3. 安全模型：人类闸门上移到计划层（已决策）
 

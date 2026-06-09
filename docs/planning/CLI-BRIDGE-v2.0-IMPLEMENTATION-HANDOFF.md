@@ -121,14 +121,19 @@ GET  /bridge/goals                 列表 + 状态
 ## 8. 立即下一步
 
 审本 handoff。审通过后从 §7.1（数据模型）开始实现，保持每步门禁绿、独立 commit。
-v2.1+ 继续推进前，必须先读取并核对：
+v2.1+ 继续推进前，必须先完成 v2.0 的真实使用验证，并读取核对：
 
 - `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`
 - `CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`
+- `CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md`
 
-这两份文档记录 WorkBuddy/qclaw/openclaw/hermes 可作为受治理执行端点、AgentTeam 默认
-单 provider 多槽位、执行层能力检测、中间层模型 API、harness、memory、project control
-plane UI 等后续边界。旧的 "WorkBuddy task/result 接入" 只能视为其中一个最小身份，不得
-覆盖 AgentTeam 规划。
+这些文档记录 WorkBuddy/qclaw/openclaw/hermes 可作为受治理执行端点、AgentTeam future
+single-provider multi-slot、执行层能力检测、中间层模型 API、harness、memory、project
+control plane UI 等后续边界。旧的 "WorkBuddy task/result 接入" 只能视为其中一个最小
+身份，不得覆盖 AgentTeam 规划；但 AgentTeam 当前仍是 FUTURE / NOT BASELINE。
+
+v2.1 的近端范围应收缩为只读 observability（ConversationTimeline、派生 memory、audit
+view、harness verification records）。AgentTeam、多槽位执行和中间层模型 API 不属于
+v2.1 baseline：AgentTeam 需要 feasibility spike；中间层模型 API 需要独立 ADR。
 
 未审通过前不写执行代码。

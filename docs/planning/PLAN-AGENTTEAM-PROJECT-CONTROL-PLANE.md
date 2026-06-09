@@ -2,12 +2,17 @@
 
 ## 0. Status
 
-Status: PLAN.
+Status: FUTURE / NOT BASELINE.
 
 This document organizes the AgentTeam, memory, harness, model API, execution
 provider, and project-management UI direction without changing the meaning of
 the discussion recorded in
 `CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`.
+
+This plan is intentionally **not** a v2.1 implementation baseline. v2.0 must
+first run real Goal -> Plan -> approve -> bounded step progression -> gate ->
+audit flows. Only after that evidence exists may any v2.1+ implementation
+handoff decide which parts of this future plan are still worth carrying forward.
 
 It extends, but does not replace:
 
@@ -17,9 +22,15 @@ It extends, but does not replace:
 - `PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md`
 - `PLAN-PROJECT-CONVERSATION-TIMELINE.md`
 - `CLI-BRIDGE-v2.1-AGENTTEAM-PLANNING-REVIEW.md`
+- `CLI-BRIDGE-v2.1-AGENTTEAM-DIRECTIONAL-REVIEW.md`
 
 This is not an implementation handoff. Code changes that add new execution
 authority still require their own ADR or approved implementation handoff.
+
+Relationship to `PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md`: this document is a
+future extension of the goal-driven control-plane idea, not a replacement for
+v2.0. If this document conflicts with ADR-0003 or the v2.0 handoff, ADR-0003
+and v2.0 win.
 
 ## 1. Product Goal
 
@@ -40,13 +51,31 @@ The control plane should manage:
 The middle layer owns state, policy, orchestration, and visibility. External
 tools and models are workers or advisors governed by that layer.
 
+### 1.1 Differentiation
+
+This is not trying to become Cursor, Aider, Roo/Cline, Goose, Continue,
+OpenDevin, or Claude Code itself.
+
+The defensible differentiation is:
+
+- The bridge orchestrates existing local CLI/browser surfaces instead of
+  replacing them.
+- In CLI/browser-mediated modes, the bridge does not need to hold model API keys
+  or become the primary source-code host.
+- The bridge's product value is local observability, explicit policy, visible
+  gates, interruptibility, and audit.
+
+If a later slice requires the bridge itself to call model APIs or to hold broader
+execution authority, that slice must justify why this differentiation still
+holds.
+
 ## 2. Core Architecture
 
 ```text
 Project Control Plane
   -> GoalStore / PlanStore / StepStore
   -> AgentTeam Orchestrator
-  -> ModelProvider Registry
+  -> ModelProvider Registry (deferred; ADR required)
   -> ExecutionProvider Registry
   -> PolicyEngine
   -> MemoryStore
@@ -62,6 +91,7 @@ The central split is:
 ```text
 ModelProvider
   thinks, plans, critiques, ranks, merges, summarizes, audits
+  deferred until a dedicated ADR accepts middle-layer model API
   canExecute=false by default
 
 ExecutionProvider
@@ -83,7 +113,8 @@ Responsibility boundaries:
 ## 3. AgentTeam Definition
 
 AgentTeam does not require multiple external tools. The first-class concept is
-multiple agent slots.
+multiple agent slots. This remains a future concept until a feasibility spike
+proves the target execution provider can support it safely.
 
 ```text
 ToolProvider
@@ -103,7 +134,8 @@ ToolProvider is a registration namespace, not a permission carrier. Authority
 comes from the concrete endpoint/execution-object capability declaration in §4
 and from PolicyEngine checks.
 
-The default AgentTeam mode should be single-provider, multi-slot:
+The preferred future AgentTeam shape is single-provider, multi-slot, but this is
+not yet a baseline:
 
 ```text
 CodexTeam
@@ -121,6 +153,10 @@ Claude reviewer
 Hermes verifier
 WorkBuddy task manager
 ```
+
+Before v2.3 or any AgentTeam implementation handoff, run a feasibility spike for
+the selected provider. The spike must confirm whether parallel slots are real
+provider capability, multiple independent CLI processes, or unavailable.
 
 ## 4. Capability Model
 
@@ -310,8 +346,31 @@ workspace writes are high-risk and should require explicit approval.
 
 ## 9. Model API In The Middle Layer
 
-The middle layer should support a control-plane model API, but not a free-form
-unbounded model chat loop.
+Model API in the middle layer is deferred and not part of the current planning
+baseline. It changes the product shape from transport/policy/audit to a model
+caller, with API key management, billing, vendor dependency, prompt-injection,
+and offline-mode implications.
+
+Before implementation, create a dedicated ADR-0004-style decision:
+
+```text
+model API in middle layer: yes/no, scope, provider/key handling, billing,
+prompt-injection controls, offline behavior, and non-goals
+```
+
+If accepted later, the first allowed scope should be minimal and explicit:
+
+```text
+PlannerModel only
+user-provided key
+opt-in per project/run
+canExecute=false
+no gate bypass
+```
+
+The broader roles below are future candidates, not approved baseline. The middle
+layer should support structured model APIs only if a future ADR accepts them; it
+must not introduce a free-form unbounded model chat loop.
 
 Recommended structured model roles:
 
@@ -464,7 +523,8 @@ This turns scattered CLI work into a managed project workflow.
 
 ## 13. Suggested Delivery Sequence
 
-Do not implement the full vision in one slice.
+Do not implement the full vision in one slice. Do not treat this sequence as a
+commitment before v2.0 real-use validation.
 
 Recommended sequence:
 
@@ -477,13 +537,20 @@ v2.0
   gate
 
 v2.1
+  read-only project observability
   project conversation timeline
-  memory store
+  derived memory only
+  audit view
   harness verification records
 
 v2.2
   WorkBuddy task source/result sink
   task dashboard
+
+v2.3-spike
+  single-provider multi-slot feasibility
+  Codex worktree/patch isolation feasibility
+  Claude/Codex external orchestration limits
 
 v2.3
   AgentTeam TeamSpec
@@ -491,7 +558,7 @@ v2.3
   slot capability detection
   patch-proposal fanout
 
-v2.4a
+v2.4a (requires ADR for model API)
   model API planner/critic/arbiter
   bounded replan and self-iteration
 
@@ -508,6 +575,18 @@ v2.5+
 Each v2.x slice needs its own ADR or implementation handoff before code. The
 thresholds from ADR-0003 remain binding unless a later ADR changes them: step
 ceiling default 1, hard ceiling 10, consecutive-failure stop threshold 2.
+
+Kill gates:
+
+- After v2.0, if real usage shows Goal/Plan/Step is awkward or low-value, freeze
+  v2.1+ and re-plan.
+- After v2.1 observability, if users do not rely on the project timeline/audit
+  view, do not continue into AgentTeam.
+- After v2.3-spike, if provider-level multi-slot is not feasible without large
+  workspace orchestration, keep AgentTeam deferred.
+- If the bridge must hold broad API keys/source state to compete with full IDE
+  agents, re-evaluate whether the project should return to review gateway and
+  safety-foundation scope.
 
 ## 14. Non-Goals Until Separately Approved
 
@@ -535,6 +614,13 @@ tool as verifier
 ```
 
 Each identity must be registered separately with capabilities and policy.
+
+Near-term baseline:
+
+- v2.0 remains the active controlled-execution MVP.
+- v2.1, if started, should be read-only observability first.
+- AgentTeam, model API, and multi-slot execution are future options gated by
+  v2.0 evidence, feasibility, and separate ADR/handoff approval.
 
 Synchronized upstream documents as of this plan:
 
