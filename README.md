@@ -104,6 +104,11 @@ request requires an allowed `origin` and a valid pairing-token header
 | `GET /bridge/outbound/next` | Claim the next queued outbound prompt for extension fill |
 | `POST /bridge/outbound/ack` | Acknowledge composer fill `{ outboundPromptId, ok, failureReason? }` |
 | `GET /bridge/outbound` | List outbound prompts |
+| `GET /bridge/reviews` | List review requests |
+| `POST /bridge/reviews` | Create a review `{ sessionId, sourceEndpointId, targetEndpointId, prompt }` (status `previewed`) |
+| `POST /bridge/reviews/confirm` | Confirm a previewed review `{ reviewId }` (human gate) |
+| `POST /bridge/reviews/dispatch` | Run a **confirmed** review via the local review-only CLI `{ reviewId }` |
+| `POST /bridge/reviews/cancel` | Cancel a review `{ reviewId }` |
 | `GET /bridge/metrics` | Current metrics summary |
 
 Notes:
@@ -112,6 +117,11 @@ Notes:
   invoked, and a prompt must already be `confirmed`.
 - Outbound prompt queue delivery only fills the ChatGPT composer. It does not
   click send, submit forms, or simulate keyboard input.
+- Review run (`/bridge/reviews/dispatch`) invokes a local, already-authorized
+  review-only CLI (Codex / Claude Code) through the fixed allowlist runner
+  (`shell: false`, no tools / read-only). It requires a **confirmed** review,
+  never executes a follow-up automatically, and keeps any `nextPromptDraft` as a
+  draft pending prompt requiring separate confirmation.
 - Responses expose redacted `processedContent` only; raw content stays
   memory-only and is never serialized.
 - The endpoint registry, agent-to-agent review lifecycle, and WorkBuddy state

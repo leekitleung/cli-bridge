@@ -89,12 +89,16 @@ test('local server source does not contain forbidden endpoint patterns', async (
     sourceFiles.map(async (path) => [path, await readFile(resolve(root, path), 'utf8')]),
   );
 
+  // Match forbidden shell-style ENDPOINT ROUTE LITERALS only: a `/exec`,
+  // `/command`, `/shell`, or `/run` segment that ends a route (followed by a
+  // quote, another slash, or end of line). This intentionally does NOT flag
+  // source filenames like `command-review-adapter.ts` (where `/command` is
+  // followed by `-`), which are not HTTP endpoints.
+  const forbiddenRoute = /\/(exec|command|shell|run)(['"`/]|$)/m;
+
   for (const [path, text] of content) {
     assert.ok(!text.includes('0.0.0.0'), `${path} must not contain 0.0.0.0`);
-    assert.ok(!text.includes('/exec'), `${path} must not contain /exec`);
-    assert.ok(!text.includes('/command'), `${path} must not contain /command`);
-    assert.ok(!text.includes('/shell'), `${path} must not contain /shell`);
-    assert.ok(!text.includes('/run'), `${path} must not contain /run`);
+    assert.ok(!forbiddenRoute.test(text), `${path} must not expose a shell-style endpoint route`);
   }
 });
 

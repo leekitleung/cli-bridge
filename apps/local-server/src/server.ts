@@ -178,4 +178,5 @@ export async function startLocalServer(
 if (isMainModule()) {
   const handle = await startLocalServer();
   console.log(`CLI Bridge local server listening on ${handle.url}`);
+  console.log(`Pairing token: ${handle.pairingToken}`);
 }

@@ -4,6 +4,18 @@ import type {
 } from 'node:http';
 
 import { MockAgentAdapter } from '../adapters/MockAgentAdapter.ts';
+import {
+  createClaudeReviewCommandAdapter,
+  createCodexReviewCommandAdapter,
+  type CommandReviewAdapter,
+} from '../adapters/command-review-adapter.ts';
+import { InMemoryEndpointRegistry } from '../endpoints/endpoint-registry.ts';
+import {
+  CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
+  CODEX_REVIEW_COMMAND_ENDPOINT,
+  DEFAULT_AGENT_ENDPOINTS,
+} from '../endpoints/mock-endpoints.ts';
+import { runCommandReview } from '../review/command-review-runner.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
 import {
   buildSnapshot,
@@ -13,14 +25,28 @@ import { createMetricsSummary } from '../storage/metrics-summary.ts';
 import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts';
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
+import { InMemoryPendingReviewStore } from '../storage/pending-review-store.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
+
+// Maps a review target endpoint id to its command adapter factory. Only
+// review-only command endpoints are runnable; anything else is rejected by
+// capability gating before reaching here.
+const REVIEW_COMMAND_ADAPTERS: Record<string, () => CommandReviewAdapter> = {
+  'claude-code-command': createClaudeReviewCommandAdapter,
+  'codex-command': createCodexReviewCommandAdapter,
+};
 
 export interface BridgeRuntime {
   packetStore: InMemoryPacketStore;
   auditLog: InMemoryAuditLog;
   pendingPromptStore: InMemoryPendingPromptStore;
   outboundPromptStore: InMemoryOutboundPromptStore;
+  endpointRegistry: InMemoryEndpointRegistry;
+  pendingReviewStore: InMemoryPendingReviewStore;
+  // Resolves a review target endpoint id to its command adapter. Tests inject a
+  // fake here so they never spawn a real CLI; production uses the default map.
+  reviewAdapterFor: (targetEndpointId: string) => CommandReviewAdapter | undefined;
   agent: MockAgentAdapter;
   persist: () => void;
 }
@@ -29,6 +55,9 @@ export interface BridgeRuntimeOptions {
   // When set, the runtime hydrates from and persists to a JSON snapshot in this
   // directory. When omitted, the runtime stays fully in-memory.
   dataDir?: string;
+  // Override the review command adapter resolution (used by tests to avoid
+  // spawning real CLIs). When omitted, the default real adapters are used.
+  reviewAdapterFor?: (targetEndpointId: string) => CommandReviewAdapter | undefined;
 }
 
 export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeRuntime {
@@ -36,6 +65,17 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const auditLog = new InMemoryAuditLog();
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
   const outboundPromptStore = new InMemoryOutboundPromptStore(packetStore, auditLog);
+  const endpointRegistry = new InMemoryEndpointRegistry([
+    ...DEFAULT_AGENT_ENDPOINTS,
+    CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
+    CODEX_REVIEW_COMMAND_ENDPOINT,
+  ]);
+  const pendingReviewStore = new InMemoryPendingReviewStore(
+    endpointRegistry,
+    packetStore,
+    auditLog,
+    pendingPromptStore,
+  );
   const agent = new MockAgentAdapter();
 
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
@@ -70,6 +110,13 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     auditLog,
     pendingPromptStore,
     outboundPromptStore,
+    endpointRegistry,
+    pendingReviewStore,
+    reviewAdapterFor: options.reviewAdapterFor
+      ?? ((targetEndpointId: string) => {
+        const factory = REVIEW_COMMAND_ADAPTERS[targetEndpointId];
+        return factory ? factory() : undefined;
+      }),
     agent,
     persist,
   };
@@ -149,6 +196,10 @@ export const BRIDGE_PENDING_PROMPTS_CANCEL_PATH = '/bridge/pending-prompts/cance
 export const BRIDGE_OUTBOUND_PATH = '/bridge/outbound';
 export const BRIDGE_OUTBOUND_NEXT_PATH = '/bridge/outbound/next';
 export const BRIDGE_OUTBOUND_ACK_PATH = '/bridge/outbound/ack';
+export const BRIDGE_REVIEWS_PATH = '/bridge/reviews';
+export const BRIDGE_REVIEWS_CONFIRM_PATH = '/bridge/reviews/confirm';
+export const BRIDGE_REVIEWS_RUN_PATH = '/bridge/reviews/dispatch';
+export const BRIDGE_REVIEWS_CANCEL_PATH = '/bridge/reviews/cancel';
 export const BRIDGE_METRICS_PATH = '/bridge/metrics';
 
 export function isBridgePath(pathname: string): boolean {
@@ -160,6 +211,10 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_OUTBOUND_PATH ||
     pathname === BRIDGE_OUTBOUND_NEXT_PATH ||
     pathname === BRIDGE_OUTBOUND_ACK_PATH ||
+    pathname === BRIDGE_REVIEWS_PATH ||
+    pathname === BRIDGE_REVIEWS_CONFIRM_PATH ||
+    pathname === BRIDGE_REVIEWS_RUN_PATH ||
+    pathname === BRIDGE_REVIEWS_CANCEL_PATH ||
     pathname === BRIDGE_METRICS_PATH;
 }
 
@@ -326,6 +381,125 @@ export async function handleBridgeRequest(
     }
     runtime.persist();
     return ok({ pendingPrompt: cancelled });
+  }
+
+  if (pathname === BRIDGE_REVIEWS_PATH && method === 'GET') {
+    return ok({ reviews: runtime.pendingReviewStore.list() });
+  }
+
+  // Create a review request and immediately move it to `previewed`. The human
+  // confirmation gate is the separate /confirm step; no CLI runs here.
+  if (pathname === BRIDGE_REVIEWS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const sourceEndpointId = requireString(parsed.body, 'sourceEndpointId');
+    const targetEndpointId = requireString(parsed.body, 'targetEndpointId');
+    const prompt = requireString(parsed.body, 'prompt');
+    if (!sessionId || !sourceEndpointId || !targetEndpointId || !prompt) {
+      return error(400, 'sessionId, sourceEndpointId, targetEndpointId and prompt are required');
+    }
+    // Only review-only command endpoints can be run through this HTTP path.
+    if (!(targetEndpointId in REVIEW_COMMAND_ADAPTERS)) {
+      return error(400, 'targetEndpointId is not a runnable review command endpoint');
+    }
+    if (!runtime.endpointRegistry.can(targetEndpointId, 'review')) {
+      return error(409, 'Target endpoint cannot review');
+    }
+    let review;
+    try {
+      review = runtime.pendingReviewStore.createDraft({
+        sessionId,
+        sourceEndpointId,
+        targetEndpointId,
+        prompt,
+      });
+    } catch {
+      return error(400, 'Unable to create review for the given endpoints');
+    }
+    const previewed = runtime.pendingReviewStore.preview(review.id);
+    runtime.persist();
+    return created({ review: previewed ?? review });
+  }
+
+  // Human confirmation gate. A review must be `previewed` to be confirmed; only
+  // a confirmed review can be run.
+  if (pathname === BRIDGE_REVIEWS_CONFIRM_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const reviewId = requireString(parsed.body, 'reviewId');
+    if (!reviewId) {
+      return error(400, 'reviewId is required');
+    }
+    const confirmed = runtime.pendingReviewStore.confirm(reviewId);
+    if (!confirmed) {
+      return error(409, 'Review cannot be confirmed');
+    }
+    runtime.persist();
+    return ok({ review: confirmed });
+  }
+
+  // Run the confirmed review through the real review-only CLI. Sends (marks the
+  // review `sent`) then invokes the command adapter; a successful ReviewResult
+  // moves the review to `returned` and any nextPromptDraft stays a draft.
+  if (pathname === BRIDGE_REVIEWS_RUN_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const reviewId = requireString(parsed.body, 'reviewId');
+    if (!reviewId) {
+      return error(400, 'reviewId is required');
+    }
+    const review = runtime.pendingReviewStore.get(reviewId);
+    if (!review) {
+      return error(409, 'Review not found');
+    }
+    const adapter = runtime.reviewAdapterFor(review.targetEndpointId);
+    if (!adapter) {
+      return error(409, 'Review target is not a runnable command endpoint');
+    }
+    // Move confirmed -> sent before running. Only a confirmed review sends.
+    const sent = runtime.pendingReviewStore.sendConfirmed(reviewId);
+    if (!sent.ok) {
+      return error(409, sent.failureReason ?? 'Review cannot be sent');
+    }
+    const runResult = await runCommandReview(
+      runtime.pendingReviewStore,
+      runtime.auditLog,
+      adapter,
+      { reviewId, prompt: review.prompt },
+    );
+    runtime.persist();
+    if (!runResult.ok) {
+      return error(409, runResult.failureReason ?? 'Review run failed');
+    }
+    return ok({
+      review: runtime.pendingReviewStore.get(reviewId),
+      result: runResult.returned?.result,
+      nextPrompt: runResult.returned?.nextPrompt,
+    });
+  }
+
+  if (pathname === BRIDGE_REVIEWS_CANCEL_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const reviewId = requireString(parsed.body, 'reviewId');
+    if (!reviewId) {
+      return error(400, 'reviewId is required');
+    }
+    const cancelled = runtime.pendingReviewStore.cancel(reviewId);
+    if (!cancelled) {
+      return error(409, 'Review cannot be cancelled');
+    }
+    runtime.persist();
+    return ok({ review: cancelled });
   }
 
   if (pathname === BRIDGE_METRICS_PATH && method === 'GET') {
