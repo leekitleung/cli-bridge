@@ -61,6 +61,7 @@ const requiredPaths = [
   'docs/planning/ADR-0002-v1.5b-command-transport.md',
   'docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.5b-VALIDATION-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.6-VALIDATION-HANDOFF.md',
   'docs/planning/PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md',
   'docs/planning/PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md'
 ];
