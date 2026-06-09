@@ -206,3 +206,67 @@ test('bridge does not expose any shell-style endpoint', async (t) => {
     assert.equal(response.status, 404, `${path} must not exist`);
   }
 });
+
+// §7.4 Goal endpoints — gate tests
+
+test('/bridge/goals endpoints require origin + pairing token', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const paths = [
+    '/bridge/goals',
+    '/bridge/goals/plan',
+    '/bridge/goals/approve',
+    '/bridge/goals/step',
+    '/bridge/goals/gate',
+    '/bridge/goals/cancel',
+  ];
+
+  for (const path of paths) {
+    // No auth at all.
+    const noAuth = await fetch(`${handle.url}${path}`);
+    assert.ok(
+      noAuth.status === 401 || noAuth.status === 403,
+      `${path} without auth: expected 401/403, got ${noAuth.status}`,
+    );
+
+    // Wrong token.
+    const badToken = await fetch(`${handle.url}${path}`, {
+      headers: { origin: ALLOWED_EXTENSION_ORIGIN, [PAIRING_TOKEN_HEADER]: 'wrong' },
+    });
+    assert.equal(badToken.status, 403, `${path} with bad token`);
+  }
+});
+
+test('/bridge/run is NOT exposed as a goal endpoint', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const res = await fetch(`${handle.url}/bridge/goals/run`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(res.status, 404, '/bridge/goals/run must not exist');
+});
+
+test('/bridge/goals basic create → list flow over HTTP', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const create = await fetch(`${handle.url}/bridge/goals`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ sessionId: 's-gate', description: 'Server integration test' }),
+  });
+  assert.equal(create.status, 201);
+  const createBody = await create.json();
+  assert.ok(createBody.goal.id);
+  assert.equal(createBody.goal.status, 'draft');
+
+  const list = await fetch(`${handle.url}/bridge/goals`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(list.status, 200);
+  const listBody = await list.json();
+  assert.equal(listBody.goals.length, 1);
+  assert.equal(listBody.goals[0].goal.id, createBody.goal.id);
+});

@@ -17,7 +17,10 @@ import {
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
-import { InMemoryAuditLog } from '../storage/audit-log.ts';
+import { InMemoryGoalStore } from '../storage/goal-store.ts';
+import { generatePlan } from '../goal/goal-plan-generator.ts';
+import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
+import type { CommandRunOptions } from '../adapters/command-runner.ts';
 import {
   buildSnapshot,
   JsonSnapshotStore,
@@ -27,6 +30,7 @@ import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
 import { InMemoryPendingReviewStore } from '../storage/pending-review-store.ts';
+import { InMemoryAuditLog } from '../storage/audit-log.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -36,6 +40,15 @@ const MAX_BODY_BYTES = 1_000_000;
 const REVIEW_COMMAND_ADAPTERS: Record<string, () => CommandReviewAdapter> = {
   'claude-code-command': createClaudeReviewCommandAdapter,
   'codex-command': createCodexReviewCommandAdapter,
+};
+
+// Default command config for goal→plan generation. Production routes
+// through the same review-only CLI that the review endpoints use; tests
+// override it via BridgeRuntimeOptions.goalPlanCommandOptions.
+const DEFAULT_GOAL_PLAN_COMMAND_CONFIG: GeneratePlanInput['commandConfig'] = {
+  adapterName: 'goal-plan-generator',
+  command: 'claude',
+  argv: ['-p', '--output-format', 'json'],
 };
 
 export interface BridgeRuntime {
@@ -50,6 +63,11 @@ export interface BridgeRuntime {
   reviewAdapterFor: (targetEndpointId: string) => CommandReviewAdapter | undefined;
   agent: MockAgentAdapter;
   persist: () => void;
+  // v2.0 Goal-driven execution (ADR-0003). In-memory only — goal data is not
+  // included in the JSON snapshot at this time.
+  goalStore: InMemoryGoalStore;
+  /** Command runner override for goal→plan generation (test injection). */
+  goalPlanCommandOptions?: CommandRunOptions;
 }
 
 export interface BridgeRuntimeOptions {
@@ -59,6 +77,9 @@ export interface BridgeRuntimeOptions {
   // Override the review command adapter resolution (used by tests to avoid
   // spawning real CLIs). When omitted, the default real adapters are used.
   reviewAdapterFor?: (targetEndpointId: string) => CommandReviewAdapter | undefined;
+  // Override the command runner used by goal→plan generation (used by tests to
+  // avoid spawning a real CLI). When omitted, the default runner is used.
+  goalPlanCommandOptions?: CommandRunOptions;
 }
 
 export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeRuntime {
@@ -78,6 +99,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     pendingPromptStore,
   );
   const agent = new MockAgentAdapter();
+  const goalStore = new InMemoryGoalStore();
 
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
   const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
@@ -120,6 +142,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       }),
     agent,
     persist,
+    goalStore,
+    goalPlanCommandOptions: options.goalPlanCommandOptions,
   };
 }
 
@@ -203,6 +227,14 @@ export const BRIDGE_REVIEWS_RUN_PATH = '/bridge/reviews/dispatch';
 export const BRIDGE_REVIEWS_CANCEL_PATH = '/bridge/reviews/cancel';
 export const BRIDGE_METRICS_PATH = '/bridge/metrics';
 
+// v2.0 Goal-driven execution endpoints (ADR-0003 §7.4).
+export const BRIDGE_GOALS_PATH = '/bridge/goals';
+export const BRIDGE_GOALS_PLAN_PATH = '/bridge/goals/plan';
+export const BRIDGE_GOALS_APPROVE_PATH = '/bridge/goals/approve';
+export const BRIDGE_GOALS_STEP_PATH = '/bridge/goals/step';
+export const BRIDGE_GOALS_GATE_PATH = '/bridge/goals/gate';
+export const BRIDGE_GOALS_CANCEL_PATH = '/bridge/goals/cancel';
+
 export function isBridgePath(pathname: string): boolean {
   return pathname === BRIDGE_PACKETS_PATH ||
     pathname === BRIDGE_PENDING_PROMPTS_PATH ||
@@ -216,7 +248,13 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_REVIEWS_CONFIRM_PATH ||
     pathname === BRIDGE_REVIEWS_RUN_PATH ||
     pathname === BRIDGE_REVIEWS_CANCEL_PATH ||
-    pathname === BRIDGE_METRICS_PATH;
+    pathname === BRIDGE_METRICS_PATH ||
+    pathname === BRIDGE_GOALS_PLAN_PATH ||
+    pathname === BRIDGE_GOALS_APPROVE_PATH ||
+    pathname === BRIDGE_GOALS_STEP_PATH ||
+    pathname === BRIDGE_GOALS_GATE_PATH ||
+    pathname === BRIDGE_GOALS_CANCEL_PATH ||
+    pathname === BRIDGE_GOALS_PATH;
 }
 
 export async function handleBridgeRequest(
@@ -517,6 +555,143 @@ export async function handleBridgeRequest(
         pendingPromptStore: runtime.pendingPromptStore,
       }),
     });
+  }
+
+  // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
+
+  if (pathname === BRIDGE_GOALS_PATH && method === 'GET') {
+    const goals = runtime.goalStore.listGoals();
+    const enriched = goals.map((goal) => {
+      const plan = runtime.goalStore.getPlanByGoal(goal.id);
+      return { goal, plan: plan ?? null };
+    });
+    return ok({ goals: enriched });
+  }
+
+  if (pathname === BRIDGE_GOALS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const description = requireString(parsed.body, 'description');
+    if (!sessionId || !description) {
+      return error(400, 'sessionId and description are required');
+    }
+    const goal = runtime.goalStore.createGoal({ sessionId, description });
+    runtime.persist();
+    return created({ goal });
+  }
+
+  if (pathname === BRIDGE_GOALS_PLAN_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    if (!goalId) {
+      return error(400, 'goalId is required');
+    }
+    const cwd = requireString(parsed.body, 'cwd');
+    const availableEndpoints = Array.isArray(parsed.body.availableEndpoints)
+      ? (parsed.body.availableEndpoints as string[]).filter(
+        (v: unknown) => typeof v === 'string' && v.length > 0,
+      )
+      : undefined;
+    const permittedTiers = Array.isArray(parsed.body.permittedTiers)
+      ? (parsed.body.permittedTiers as string[])
+        .filter((v: unknown) => v === 'patch-proposal' || v === 'workspace-write')
+      : undefined;
+
+    const result = await generatePlan(
+      runtime.goalStore,
+      runtime.auditLog,
+      {
+        goalId,
+        commandConfig: DEFAULT_GOAL_PLAN_COMMAND_CONFIG,
+        cwd: cwd ?? undefined,
+        availableEndpoints,
+        permittedTiers: permittedTiers as GeneratePlanInput['permittedTiers'],
+        commandOptions: runtime.goalPlanCommandOptions,
+      },
+    );
+    runtime.persist();
+
+    if (!result.ok) {
+      return error(409, result.failureReason ?? 'plan generation failed');
+    }
+    return created({ plan: result.plan, meta: result.meta, downgrades: result.downgrades });
+  }
+
+  if (pathname === BRIDGE_GOALS_APPROVE_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    if (!goalId) {
+      return error(400, 'goalId is required');
+    }
+    const plan = runtime.goalStore.approvePlan(goalId);
+    if (!plan) {
+      return error(409, 'Goal not found or plan cannot be approved');
+    }
+    runtime.persist();
+    return ok({ goal: runtime.goalStore.getGoal(goalId), plan });
+  }
+
+  if (pathname === BRIDGE_GOALS_STEP_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    if (!goalId) {
+      return error(400, 'goalId is required');
+    }
+    // The /bridge/goals/step endpoint uses a fresh orchestrator per call so the
+    // step ceiling is not accumulated across HTTP requests. Each call gets a
+    // single advance.
+    const { GoalOrchestrator } = await import('../goal/goal-orchestrator.ts');
+    const orch = new GoalOrchestrator(runtime.goalStore);
+    const result = orch.advance(goalId, { output: typeof parsed.body.output === 'string' ? parsed.body.output : undefined });
+    runtime.persist();
+    return ok({ result, stepsAdvanced: orch.stepsAdvanced });
+  }
+
+  if (pathname === BRIDGE_GOALS_GATE_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    const stepId = requireString(parsed.body, 'stepId');
+    if (!goalId || !stepId) {
+      return error(400, 'goalId and stepId are required');
+    }
+    const step = runtime.goalStore.approveStepGate(goalId, stepId);
+    if (!step) {
+      return error(409, 'Step not found or cannot be gate-approved');
+    }
+    runtime.persist();
+    return ok({ step, plan: runtime.goalStore.getPlanByGoal(goalId) });
+  }
+
+  if (pathname === BRIDGE_GOALS_CANCEL_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    if (!goalId) {
+      return error(400, 'goalId is required');
+    }
+    const goal = runtime.goalStore.cancelGoal(goalId);
+    if (!goal) {
+      return error(409, 'Goal not found or cannot be cancelled');
+    }
+    runtime.persist();
+    return ok({ goal, plan: runtime.goalStore.getPlanByGoal(goalId) });
   }
 
   return error(405, 'Method not allowed');
