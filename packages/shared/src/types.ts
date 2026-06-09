@@ -44,6 +44,8 @@ export const AUDIT_EVENT_TYPES = [
   'read_cli_output',
   'process_content',
   'redact_sensitive',
+  'create_outbound_prompt',
+  'claim_outbound_prompt',
   'fill_chatgpt',
   'extract_chatgpt',
   'create_pending_prompt',
@@ -89,6 +91,16 @@ export type AuditEventType = typeof AUDIT_EVENT_TYPES[number];
 export type AuditRiskLevel = typeof AUDIT_RISK_LEVELS[number];
 
 export type PendingPromptStatus = typeof PENDING_PROMPT_STATUSES[number];
+
+export const OUTBOUND_PROMPT_STATUSES = [
+  'queued',
+  'claimed',
+  'delivered',
+  'failed',
+  'cancelled',
+] as const;
+
+export type OutboundPromptStatus = typeof OUTBOUND_PROMPT_STATUSES[number];
 
 export const AGENT_REVIEW_STATUSES = [
   'draft',
@@ -185,6 +197,22 @@ export interface PendingPrompt {
   sentAt?: number;
   cancelledAt?: number;
   failedAt?: number;
+  failureReason?: string;
+}
+
+export interface OutboundPrompt {
+  id: string;
+  sessionId: string;
+  packetId: string;
+  prompt: string;
+  status: OutboundPromptStatus;
+  target: 'chatgpt-web';
+  createdAt: number;
+  updatedAt: number;
+  claimedAt?: number;
+  deliveredAt?: number;
+  failedAt?: number;
+  cancelledAt?: number;
   failureReason?: string;
 }
 

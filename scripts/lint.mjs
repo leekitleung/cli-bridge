@@ -14,6 +14,7 @@ const requiredPaths = [
   'apps/extension/src/content/clipboard.ts',
   'apps/extension/src/content/extraction.ts',
   'apps/extension/src/content/bridge-client.ts',
+  'apps/extension/src/content/outbound-poller.ts',
   'apps/extension/src/ui/bridge-panel.tsx',
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
@@ -24,6 +25,8 @@ const requiredPaths = [
   'apps/local-server/src/adapters/AgentAdapter.ts',
   'apps/local-server/src/adapters/MockAgentAdapter.ts',
   'apps/local-server/src/adapters/CodexManagedPtyAdapter.ts',
+  'apps/local-server/src/adapters/command-runner.ts',
+  'apps/local-server/src/adapters/command-review-adapter.ts',
   'apps/local-server/src/security/pairing.ts',
   'apps/local-server/src/security/origin-guard.ts',
   'apps/local-server/src/security/redaction.ts',
@@ -32,8 +35,10 @@ const requiredPaths = [
   'apps/local-server/src/review/codex-feasibility-prompt.ts',
   'apps/local-server/src/review/codex-feasibility-handoff.ts',
   'apps/local-server/src/review/review-result-parser.ts',
+  'apps/local-server/src/review/command-review-runner.ts',
   'apps/local-server/src/workbuddy/workbuddy-state-store.ts',
   'apps/local-server/src/storage/packet-store.ts',
+  'apps/local-server/src/storage/outbound-prompt-store.ts',
   'apps/local-server/src/storage/audit-log.ts',
   'apps/local-server/src/storage/json-snapshot-store.ts',
   'apps/local-server/src/storage/pending-prompt-store.ts',
@@ -46,10 +51,17 @@ const requiredPaths = [
   'scripts/build-extension.mjs',
   'scripts/remote-review-gate.mjs',
   'README.md',
+  'docs/planning/ADR-0001-v1.5-automation-boundary.md',
   'docs/planning/CLI-BRIDGE-v1.1-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.2-PLANNING-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.3-PLANNING-HANDOFF.md',
-  'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md'
+  'docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.5-AUTOMATION-PLANNING-HANDOFF.md',
+  'docs/planning/ADR-0002-v1.5b-command-transport.md',
+  'docs/planning/CLI-BRIDGE-v1.5b-IMPLEMENTATION-HANDOFF.md',
+  'docs/planning/CLI-BRIDGE-v1.5b-VALIDATION-HANDOFF.md',
+  'docs/planning/PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md',
+  'docs/planning/PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md'
 ];
 
 const forbiddenPaths = [

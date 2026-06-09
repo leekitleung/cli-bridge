@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type {
   AuditEvent,
   BridgePacket,
+  OutboundPrompt,
   PendingPrompt,
 } from '../../../../packages/shared/src/types.ts';
 
@@ -15,6 +16,7 @@ export interface BridgeSnapshot {
   packets: BridgePacket[];
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
+  outboundPrompts: OutboundPrompt[];
 }
 
 export interface SnapshotWriteResult {
@@ -82,6 +84,7 @@ export class JsonSnapshotStore {
         packets: Array.isArray(parsed.packets) ? parsed.packets : [],
         auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
         pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
+        outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
       };
       return { ok: true, snapshot };
     } catch {
@@ -94,11 +97,13 @@ export function buildSnapshot(
   packets: BridgePacket[],
   auditEvents: AuditEvent[],
   pendingPrompts: PendingPrompt[],
+  outboundPrompts: OutboundPrompt[] = [],
 ): BridgeSnapshot {
   return {
     version: SNAPSHOT_VERSION,
     packets,
     auditEvents,
     pendingPrompts,
+    outboundPrompts,
   };
 }

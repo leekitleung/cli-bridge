@@ -143,6 +143,50 @@ test('bridge send of unknown prompt does not crash and returns 409', async (t) =
   assert.equal(response.status, 409);
 });
 
+test('bridge outbound queue claims redacted prompts and records fill acknowledgements', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const createOutbound = await fetch(`${handle.url}/bridge/outbound`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      sessionId: 's-out',
+      prompt: 'OPENAI=sk-abcdefghijklmnopqrstuvwxyz123456 review this output',
+    }),
+  });
+  assert.equal(createOutbound.status, 201);
+  const createBody = await createOutbound.json();
+  assert.equal(createBody.outboundPrompt.status, 'queued');
+  assert.match(createBody.outboundPrompt.prompt, /\[REDACTED_OPENAI_KEY\]/);
+  assert.equal(JSON.stringify(createBody).includes('sk-abcdefghijklmnopqrstuvwxyz123456'), false);
+
+  const claimed = await fetch(`${handle.url}/bridge/outbound/next`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(claimed.status, 200);
+  const claimedBody = await claimed.json();
+  assert.equal(claimedBody.outboundPrompt.id, createBody.outboundPrompt.id);
+  assert.equal(claimedBody.outboundPrompt.status, 'claimed');
+
+  const ack = await fetch(`${handle.url}/bridge/outbound/ack`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      outboundPromptId: createBody.outboundPrompt.id,
+      ok: true,
+    }),
+  });
+  assert.equal(ack.status, 200);
+  assert.equal((await ack.json()).outboundPrompt.status, 'delivered');
+
+  const emptyClaim = await fetch(`${handle.url}/bridge/outbound/next`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(emptyClaim.status, 200);
+  assert.equal((await emptyClaim.json()).outboundPrompt, null);
+});
+
 test('bridge does not expose any shell-style endpoint', async (t) => {
   const handle = await startLocalServer(0);
   t.after(closer(handle));

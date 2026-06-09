@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   createPacket,
+  claimNextOutboundPrompt,
   createPendingPrompt,
   getBridgeClientConfig,
   getMetrics,
@@ -62,6 +63,18 @@ test('bridge client uses GET without a body for metrics', async () => {
     await getMetrics();
     const [call] = calls;
     assert.equal(call.url, 'http://127.0.0.1:31337/bridge/metrics');
+    assert.equal(call.init.method, 'GET');
+    assert.equal(call.init.body, undefined);
+  });
+});
+
+test('bridge client can claim next outbound prompt with GET', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+
+  await withStubbedFetch(async (calls) => {
+    await claimNextOutboundPrompt();
+    const [call] = calls;
+    assert.equal(call.url, 'http://127.0.0.1:31337/bridge/outbound/next');
     assert.equal(call.init.method, 'GET');
     assert.equal(call.init.body, undefined);
   });

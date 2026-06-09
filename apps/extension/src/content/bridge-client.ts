@@ -89,6 +89,38 @@ export function cancelPendingPrompt(promptId: string) {
   return bridgeFetch('/bridge/pending-prompts/cancel', 'POST', { promptId });
 }
 
+export interface OutboundPromptPayload {
+  id: string;
+  sessionId: string;
+  packetId: string;
+  prompt: string;
+  status: string;
+  target: 'chatgpt-web';
+}
+
+export function createOutboundPrompt(sessionId: string, prompt: string) {
+  return bridgeFetch('/bridge/outbound', 'POST', { sessionId, prompt });
+}
+
+export function claimNextOutboundPrompt() {
+  return bridgeFetch<{ outboundPrompt: OutboundPromptPayload | null }>(
+    '/bridge/outbound/next',
+    'GET',
+  );
+}
+
+export function acknowledgeOutboundPrompt(
+  outboundPromptId: string,
+  ok: boolean,
+  failureReason?: string | null,
+) {
+  return bridgeFetch('/bridge/outbound/ack', 'POST', {
+    outboundPromptId,
+    ok,
+    ...(failureReason ? { failureReason } : {}),
+  });
+}
+
 export function getMetrics() {
   return bridgeFetch<{ metrics: Record<string, number> }>('/bridge/metrics', 'GET');
 }
