@@ -103,4 +103,28 @@ dispatch 只跑 review-only CLI（固定 allowlist argv、shell:false、no-tools
 
 ## 6. 结果
 
-（验证后追加到此处或 docs/reviews/ 下带日期评审。）
+验证日期：2026-06-09
+环境：Windows，Node 22，已登录 Claude Code 2.1.168，本地 server `http://127.0.0.1:31337`
+执行人：项目负责人（手动）
+接入：curl/Invoke-RestMethod，origin `https://chatgpt.com` + pairing token，无摩擦。
+pairing token 来源：server 启动时打印（commit 84c3d95 起）。
+
+| 用例 | 结果 | 现象 |
+| --- | --- | --- |
+| H1 创建 review | 通过 | status `previewed` |
+| H2 未确认 dispatch | 通过 | 返回 409 Conflict（确认门生效） |
+| H3 确认 | 通过 | status `confirmed` |
+| H4 dispatch 跑真实 Claude | 通过 | review `returned`，`result.summary` = `ok`，真实 CLI 经 HTTP 被调用 |
+
+结论：v1.6 `/bridge/reviews` HTTP 真机闭环通过。`reviews → confirm → dispatch` 在
+真实 server + 真实 Claude CLI 上跑通：未确认不可 dispatch（409），确认后 dispatch
+调用真实 review-only CLI 并返回 ReviewResult，review 进入 `returned`。自动 review
+自此从「库函数 / fake adapter 测试」升级为「HTTP 端点真机可用」。
+
+未单独复跑（已由 v1.5b 真机 + v1.6 单测覆盖，且与 H4 同一代码路径）：
+- H5 Codex 目标：command 路径同 Claude，仅 adapter 不同；v1.5b 已真机验证 Codex。
+- H6 follow-up draft：v1.6 单测 `bridge-reviews-api` 已断言 nextPrompt 留 draft。
+如需补充可按 §3 H5/H6 手动复跑。
+
+边界未变：dispatch 要求 confirmed、follow-up 留 draft、无 shell 端点、无自动发送、
+无真实 PTY 写入、无原始内容落盘。
