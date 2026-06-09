@@ -37,6 +37,11 @@ loops.
 - **Remote Review Gate**: a local, read-only release gate
   (`npm run remote-review-gate`) that checks local/remote HEAD match, working
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
+- **Project Workspace Console** (`/console/project`): a project-centric
+  cockpit that consolidates goals, plans, reviews, prompts, audit, and status
+  into a single three-region interface. Project is the top-level entity. Phase A
+  uses a derived activity feed and step-based progress; rich status fields
+  (version/tests/commits/memory) are Phase B.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is
