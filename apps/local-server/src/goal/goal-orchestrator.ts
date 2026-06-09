@@ -35,11 +35,13 @@ import type { InMemoryGoalStore } from '../storage/goal-store.ts';
 // ---- Public types ----
 
 export interface GoalOrchestratorOptions {
-  /** Maximum number of steps the orchestrator will advance in a single
-   *  runAll() call before halting. Default: 20.
+  /** Maximum number of steps this orchestrator instance will advance
+   *  across all advance() / runAll() calls. Once reached, all further
+   *  advance calls return ceiling-reached. Default: 20.
    *
-   *  This is a hard ceiling: the orchestrator will not advance past it,
-   *  regardless of how many steps remain in the plan. */
+   *  This is a hard, instance-scoped ceiling: the counter is cumulative
+   *  across multiple calls, not per-invocation. Create a fresh instance
+   *  to reset the counter. */
   stepCeiling?: number;
 }
 
