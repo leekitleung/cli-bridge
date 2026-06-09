@@ -3,3 +3,9 @@ node_modules/
 apps/extension/dist/
 .cli-bridge-data/
 *.cli-bridge-runtime/
+
+# WorkBuddy agent state (memory, session files) — local only
+.workbuddy/
+
+# Local reference docs — not part of the codebase
+docs/参考/

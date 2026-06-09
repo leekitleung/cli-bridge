@@ -381,16 +381,16 @@ test('parseGoalPlanResult fail-closed on workspace-write step without permittedT
   assert.ok(result.failureReason.includes('workspace-write'));
 });
 
-test('parseGoalPlanResult downgrade mode swaps workspace-write to patch-proposal', () => {
+test('parseGoalPlanResult downgrade mode swaps non-mutating workspace-write to patch-proposal', () => {
   const json = validPlanJson({
     permittedTiers: ['patch-proposal'],
     steps: [{
       id: 's1', planId: 'plan-test-1', index: 0,
-      intent: 'Write config file',
-      kind: 'write-file',
-      targetEndpointId: 'codex-command',
+      intent: 'Review config file',
+      kind: 'review',
+      targetEndpointId: 'claude-code-command',
       tier: 'workspace-write',
-      isStateMutating: true,
+      isStateMutating: false,
       status: 'pending',
     }],
   });
@@ -403,6 +403,7 @@ test('parseGoalPlanResult downgrade mode swaps workspace-write to patch-proposal
   assert.equal(result.ok, true);
   assert.ok(result.plan);
   assert.equal(result.plan.steps[0].tier, 'patch-proposal');
+  assert.equal(result.plan.steps[0].isStateMutating, false);
   assert.ok(result.downgrades);
   assert.equal(result.downgrades.length, 1);
   assert.equal(result.downgrades[0].stepIndex, 0);
@@ -691,11 +692,11 @@ test('generatePlan fail-closed on workspace-write violation in strict mode', asy
   assert.ok(result.failureReason.includes('plan-tier-violation'));
 });
 
-test('generatePlan downgrades workspace-write steps in downgrade mode', async () => {
+test('generatePlan downgrades non-mutating workspace-write steps in downgrade mode', async () => {
   const { store, auditLog } = setup();
   const goal = store.createGoal({
     sessionId: 'session-1',
-    description: 'Add git push step',
+    description: 'Review a config file',
     now,
   });
 
@@ -705,11 +706,11 @@ test('generatePlan downgrades workspace-write steps in downgrade mode', async ()
     permittedTiers: ['patch-proposal'],
     steps: [{
       id: 's1', planId: 'downgrade-plan', index: 0,
-      intent: 'Push to git',
-      kind: 'git-push',
-      targetEndpointId: 'codex-command',
+      intent: 'Review the config',
+      kind: 'review',
+      targetEndpointId: 'claude-code-command',
       tier: 'workspace-write',
-      isStateMutating: true,
+      isStateMutating: false,
       status: 'pending',
     }],
   });
@@ -728,6 +729,7 @@ test('generatePlan downgrades workspace-write steps in downgrade mode', async ()
   assert.equal(result.ok, true);
   assert.ok(result.plan);
   assert.equal(result.plan.steps[0].tier, 'patch-proposal');
+  assert.equal(result.plan.steps[0].isStateMutating, false);
   assert.ok(result.downgrades);
   assert.equal(result.downgrades.length, 1);
 });
@@ -881,4 +883,310 @@ test('validatePlan rejects plan without permittedTiers', () => {
   const result = validatePlan(plan);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((e) => e.includes('permittedTiers')));
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §8  kind / tier consistency invariant (§7.2 P1 security fix)
+//
+// A step's kind is the canonical authority on whether it is state-mutating.
+// The tier must agree. These tests cover the four cross-product cases:
+//
+//   Case 1  mutating kind + patch-proposal tier    → violation (Rule A)
+//   Case 2  non-mutating kind + workspace-write    → violation (Rule B)
+//   Case 3  mutating kind + workspace-write + caller-permitted → OK
+//   Case 4  downgrade mode corrects both Rule-A and Rule-B mismatches
+// ════════════════════════════════════════════════════════════════════
+
+test('[§8 Case 1] write-file + patch-proposal tier fails in strict mode (Rule A)', () => {
+  // Model outputs mutating kind with wrong (too-low) tier.
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    steps: [{
+      id: 's1',
+      planId: 'plan-test-1',
+      index: 0,
+      intent: 'Write the config',
+      kind: 'write-file',
+      targetEndpointId: 'codex-command',
+      tier: 'patch-proposal',      // ← wrong: mutating kind needs workspace-write
+      isStateMutating: true,
+      status: 'pending',
+    }],
+  });
+
+  const result = parseGoalPlanResult(
+    {
+      text: json,
+      goalId: 'goal-test-1',
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      now,
+    },
+    { tierEnforcement: 'strict' },
+  );
+
+  assert.equal(result.ok, false, 'should be rejected');
+  assert.ok(
+    result.failureReason.includes('plan-kind-tier-mismatch'),
+    `expected plan-kind-tier-mismatch, got: ${result.failureReason}`,
+  );
+  assert.ok(result.failureReason.includes('write-file'));
+});
+
+test('[§8 Case 1 variants] all mutating kinds with patch-proposal tier fail in strict mode (Rule A)', () => {
+  const mutatingKinds = ['apply-patch', 'run-command', 'write-file', 'delete-file', 'git-commit', 'git-push'];
+
+  for (const kind of mutatingKinds) {
+    const json = validPlanJson({
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      steps: [{
+        id: 's1',
+        planId: 'plan-test-1',
+        index: 0,
+        intent: `Do ${kind}`,
+        kind,
+        targetEndpointId: 'ep',
+        tier: 'patch-proposal',  // ← wrong tier for mutating kind
+        isStateMutating: true,
+        status: 'pending',
+      }],
+    });
+
+    const result = parseGoalPlanResult(
+      {
+        text: json,
+        goalId: 'goal-test-1',
+        permittedTiers: ['patch-proposal', 'workspace-write'],
+        now,
+      },
+      { tierEnforcement: 'strict' },
+    );
+
+    assert.equal(result.ok, false, `kind="${kind}" should be rejected`);
+    assert.ok(
+      result.failureReason.includes('plan-kind-tier-mismatch'),
+      `kind="${kind}": expected plan-kind-tier-mismatch, got: ${result.failureReason}`,
+    );
+  }
+});
+
+test('[§8 Case 2] review + workspace-write tier fails in strict mode (Rule B)', () => {
+  // Model outputs non-mutating kind with elevated tier — potentially dangerous.
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    steps: [{
+      id: 's1',
+      planId: 'plan-test-1',
+      index: 0,
+      intent: 'Review the diff',
+      kind: 'review',              // ← non-mutating
+      targetEndpointId: 'claude-command',
+      tier: 'workspace-write',     // ← wrong: non-mutating kind must not be workspace-write
+      isStateMutating: false,
+      status: 'pending',
+    }],
+  });
+
+  const result = parseGoalPlanResult(
+    {
+      text: json,
+      goalId: 'goal-test-1',
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      now,
+    },
+    { tierEnforcement: 'strict' },
+  );
+
+  assert.equal(result.ok, false, 'should be rejected');
+  assert.ok(
+    result.failureReason.includes('plan-kind-tier-mismatch'),
+    `expected plan-kind-tier-mismatch, got: ${result.failureReason}`,
+  );
+  assert.ok(result.failureReason.includes('review'));
+});
+
+test('[§8 Case 2 variants] all non-mutating kinds with workspace-write tier fail in strict mode (Rule B)', () => {
+  const nonMutatingKinds = ['review', 'summarize', 'propose-patch'];
+
+  for (const kind of nonMutatingKinds) {
+    const json = validPlanJson({
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      steps: [{
+        id: 's1',
+        planId: 'plan-test-1',
+        index: 0,
+        intent: `Do ${kind}`,
+        kind,
+        targetEndpointId: 'ep',
+        tier: 'workspace-write',  // ← wrong tier for non-mutating kind
+        isStateMutating: false,
+        status: 'pending',
+      }],
+    });
+
+    const result = parseGoalPlanResult(
+      {
+        text: json,
+        goalId: 'goal-test-1',
+        permittedTiers: ['patch-proposal', 'workspace-write'],
+        now,
+      },
+      { tierEnforcement: 'strict' },
+    );
+
+    assert.equal(result.ok, false, `kind="${kind}" should be rejected`);
+    assert.ok(
+      result.failureReason.includes('plan-kind-tier-mismatch'),
+      `kind="${kind}": expected plan-kind-tier-mismatch, got: ${result.failureReason}`,
+    );
+  }
+});
+
+test('[§8 Case 3] mutating kind + workspace-write + caller-permitted → accepted', () => {
+  // The happy path: model correctly classifies a mutating step, caller allows it.
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    steps: [{
+      id: 's1',
+      planId: 'plan-test-1',
+      index: 0,
+      intent: 'Apply the patch',
+      kind: 'apply-patch',
+      targetEndpointId: 'codex-command',
+      tier: 'workspace-write',    // ← correct for mutating kind
+      isStateMutating: true,
+      status: 'pending',
+    }],
+  });
+
+  const result = parseGoalPlanResult(
+    {
+      text: json,
+      goalId: 'goal-test-1',
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      now,
+    },
+    { tierEnforcement: 'strict' },
+  );
+
+  assert.equal(result.ok, true, `should be accepted; reason: ${result.failureReason}`);
+  assert.equal(result.plan.steps[0].tier, 'workspace-write');
+  assert.equal(result.plan.steps[0].isStateMutating, true);
+  assert.equal(result.downgrades, undefined);
+});
+
+test('[§8 Case 4a] downgrade mode: write-file+patch-proposal still fails when caller lacks workspace-write (Rule A → C)', () => {
+  // Rule A fires: mutating kind had wrong tier, corrected to workspace-write.
+  // Rule C then fires: caller doesn't permit workspace-write. Even in downgrade
+  // mode, this must fail closed because mutating kinds cannot become patch-proposal.
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal'],  // caller does NOT permit workspace-write
+    steps: [{
+      id: 's1',
+      planId: 'plan-test-1',
+      index: 0,
+      intent: 'Write the config',
+      kind: 'write-file',
+      targetEndpointId: 'codex-command',
+      tier: 'patch-proposal',    // ← wrong: mutating kind
+      isStateMutating: true,
+      status: 'pending',
+    }],
+  });
+
+  const result = parseGoalPlanResult(
+    { text: json, goalId: 'goal-test-1', now },
+    { tierEnforcement: 'downgrade' },
+  );
+
+  assert.equal(result.ok, false, 'mutating step without workspace-write permission should fail closed');
+  assert.ok(
+    result.failureReason.includes('plan-tier-violation'),
+    `expected plan-tier-violation, got: ${result.failureReason}`,
+  );
+  assert.ok(
+    result.failureReason.includes('cannot be downgraded'),
+    `expected no-downgrade explanation, got: ${result.failureReason}`,
+  );
+});
+
+test('[§8 Case 4b] downgrade mode: review+workspace-write → corrected to patch-proposal (Rule B)', () => {
+  // Rule B fires: non-mutating kind had elevated tier, corrected downward.
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    steps: [{
+      id: 's1',
+      planId: 'plan-test-1',
+      index: 0,
+      intent: 'Review the output',
+      kind: 'review',
+      targetEndpointId: 'claude-command',
+      tier: 'workspace-write',   // ← wrong: non-mutating
+      isStateMutating: false,
+      status: 'pending',
+    }],
+  });
+
+  const result = parseGoalPlanResult(
+    {
+      text: json,
+      goalId: 'goal-test-1',
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      now,
+    },
+    { tierEnforcement: 'downgrade' },
+  );
+
+  assert.equal(result.ok, true, `should succeed in downgrade mode; reason: ${result.failureReason}`);
+  assert.equal(result.plan.steps[0].tier, 'patch-proposal');
+  assert.equal(result.plan.steps[0].isStateMutating, false);
+  assert.ok(result.downgrades && result.downgrades.length === 1,
+    `expected exactly 1 downgrade record, got ${result.downgrades?.length}`);
+  assert.ok(
+    result.downgrades[0].reason.includes('non-mutating'),
+    `expected Rule-B reason; got: ${result.downgrades[0].reason}`,
+  );
+});
+
+test('[§8] mixed steps: one coherent, one mismatch — strict mode fails on the bad step', () => {
+  const json = validPlanJson({
+    permittedTiers: ['patch-proposal', 'workspace-write'],
+    steps: [
+      {
+        id: 's1',
+        planId: 'plan-test-1',
+        index: 0,
+        intent: 'Review the diff (ok)',
+        kind: 'review',
+        targetEndpointId: 'claude-command',
+        tier: 'patch-proposal',   // ← correct
+        isStateMutating: false,
+        status: 'pending',
+      },
+      {
+        id: 's2',
+        planId: 'plan-test-1',
+        index: 1,
+        intent: 'Write the file (bad tier)',
+        kind: 'write-file',
+        targetEndpointId: 'codex-command',
+        tier: 'patch-proposal',   // ← wrong: mutating kind
+        isStateMutating: true,
+        status: 'pending',
+      },
+    ],
+  });
+
+  const result = parseGoalPlanResult(
+    {
+      text: json,
+      goalId: 'goal-test-1',
+      permittedTiers: ['patch-proposal', 'workspace-write'],
+      now,
+    },
+    { tierEnforcement: 'strict' },
+  );
+
+  assert.equal(result.ok, false);
+  assert.ok(result.failureReason.includes('plan-kind-tier-mismatch'));
+  assert.ok(result.failureReason.includes('write-file'));
 });

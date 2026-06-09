@@ -78,6 +78,23 @@ const FORBIDDEN_EXECUTION_FIELDS = [
 
 const DEFAULT_PERMITTED_TIERS: ExecutionTier[] = ['patch-proposal'];
 
+// Canonical set of state-mutating step kinds (mirrors goal-store STATE_MUTATING_KINDS).
+// Any step whose kind is in this set MUST carry tier='workspace-write' and the
+// caller's permittedTiers MUST include 'workspace-write'. Conversely, a step
+// whose kind is NOT in this set MUST NOT carry tier='workspace-write'.
+//
+// This is the structural enforcement of ADR-0003 §2 / §4:
+//   "mutating kind ↔ workspace-write tier" is a hard invariant; a mismatch
+//   means the model output is incoherent and must be rejected or corrected.
+const MUTATING_KINDS: ReadonlySet<string> = new Set([
+  'apply-patch',
+  'run-command',
+  'write-file',
+  'delete-file',
+  'git-commit',
+  'git-push',
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -267,10 +284,85 @@ export function parseGoalPlanResult(
   }
   const permittedTiers = callerTiers.tiers;
 
-  // ── 4. Workspace-write tier enforcement ────────────────────────────
+  // ── 4. kind / tier consistency invariant ──────────────────────────
+  //
+  // The model may produce incoherent output where a mutating kind is paired
+  // with the wrong tier, or a non-mutating kind is given workspace-write.
+  // We enforce the invariant here before any downstream consumer (goal-store,
+  // orchestrator) ever sees the steps, so the inconsistency can never propagate.
+  //
+  //   Rule A — mutating kind + non-workspace-write tier:
+  //     The kind declares the intent to mutate state; the tier must follow.
+  //     In strict mode → fail-closed.
+  //     In downgrade mode → upgrade tier to workspace-write (see Rule C below
+  //     for what happens next if permittedTiers doesn't cover it).
+  //
+  //   Rule B — non-mutating kind + workspace-write tier:
+  //     workspace-write on a read-only kind is incoherent and potentially
+  //     dangerous (an orchestrator might dispatch it with elevated authority).
+  //     In strict mode → fail-closed.
+  //     In downgrade mode → downgrade tier to patch-proposal.
+  //
+  // Rule A and B run first; then Rule C (the existing permittedTiers check)
+  // catches any remaining workspace-write steps that the caller hasn't allowed.
+
   const downgrades: PlanTierDowngrade[] = [];
   const hasWorkspaceWriteInPermitted = permittedTiers.includes('workspace-write');
 
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i];
+    const kindIsMutating = MUTATING_KINDS.has(step.kind);
+
+    // ── Rule A: mutating kind without workspace-write tier ─────────
+    if (kindIsMutating && step.tier !== 'workspace-write') {
+      if (tierEnforcement === 'strict') {
+        return {
+          ok: false,
+          failureReason:
+            `plan-kind-tier-mismatch: step ${i} ("${step.intent || step.id}") has` +
+            ` mutating kind="${step.kind}" but tier="${step.tier}".` +
+            ` Mutating kinds require tier=workspace-write.`,
+        };
+      }
+      // Downgrade mode: correct the tier upward so kind and tier agree, then
+      // let Rule C decide whether the caller has actually permitted it.
+      downgrades.push({
+        stepIndex: i,
+        stepId: step.id,
+        originalTier: step.tier,
+        downgradedTo: 'workspace-write',
+        reason: `mutating kind="${step.kind}" had mismatched tier="${step.tier}"; corrected to workspace-write`,
+      });
+      step.tier = 'workspace-write';
+    }
+
+    // ── Rule B: non-mutating kind with workspace-write tier ────────
+    if (!kindIsMutating && step.tier === 'workspace-write') {
+      if (tierEnforcement === 'strict') {
+        return {
+          ok: false,
+          failureReason:
+            `plan-kind-tier-mismatch: step ${i} ("${step.intent || step.id}") has` +
+            ` non-mutating kind="${step.kind}" but tier="workspace-write".` +
+            ` Non-mutating kinds must not use workspace-write tier.`,
+        };
+      }
+      // Downgrade mode: correct tier downward.
+      downgrades.push({
+        stepIndex: i,
+        stepId: step.id,
+        originalTier: 'workspace-write',
+        downgradedTo: 'patch-proposal',
+        reason: `non-mutating kind="${step.kind}" had incoherent tier="workspace-write"; corrected to patch-proposal`,
+      });
+      step.tier = 'patch-proposal';
+    }
+  }
+
+  // ── 4b. Workspace-write tier permission enforcement ────────────────
+  //
+  // At this point every step's tier is coherent with its kind. Now enforce
+  // that workspace-write steps are within the caller's permitted scope.
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
     if (step.tier === 'workspace-write') {
@@ -278,9 +370,27 @@ export function parseGoalPlanResult(
         if (tierEnforcement === 'strict') {
           return {
             ok: false,
-            failureReason: `plan-tier-violation: step ${i} ("${step.intent || step.id}") has tier=workspace-write but permittedTiers does not include workspace-write. Either remove the workspace-write steps or explicitly add "workspace-write" to permittedTiers.`,
+            failureReason:
+              `plan-tier-violation: step ${i} ("${step.intent || step.id}") has` +
+              ` tier=workspace-write but permittedTiers does not include workspace-write.` +
+              ` Either remove the workspace-write steps or explicitly add "workspace-write" to permittedTiers.`,
           };
         }
+        // Downgrade mode is allowed to remove elevated authority from
+        // non-mutating steps, but it must never turn a mutating step into
+        // patch-proposal. That would violate the hard kind/tier invariant
+        // this parser just established.
+        if (MUTATING_KINDS.has(step.kind)) {
+          return {
+            ok: false,
+            failureReason:
+              `plan-tier-violation: step ${i} ("${step.intent || step.id}") has` +
+              ` mutating kind="${step.kind}" and tier=workspace-write, but` +
+              ` permittedTiers does not include workspace-write. Mutating steps` +
+              ` cannot be downgraded to patch-proposal.`,
+          };
+        }
+
         // Downgrade mode: swap tier and record the downgrade.
         downgrades.push({
           stepIndex: i,
@@ -290,10 +400,6 @@ export function parseGoalPlanResult(
           reason: 'plan permittedTiers does not include workspace-write; step downgraded to patch-proposal',
         });
         step.tier = 'patch-proposal';
-        // Non-mutating steps with workspace-write were likely misclassified;
-        // we correct isStateMutating based on kind, which is the canonical source.
-        // The store also re-derives isStateMutating from kind on attach, so this
-        // is a belt-and-suspenders fix.
       }
     }
   }
