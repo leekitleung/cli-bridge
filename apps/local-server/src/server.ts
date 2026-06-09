@@ -22,6 +22,10 @@ import {
   renderGoalConsoleHtml,
 } from './routes/console-goals.ts';
 import {
+  CONSOLE_PROJECT_PATH,
+  renderProjectConsoleHtml,
+} from './routes/project-console.ts';
+import {
   createBridgeRuntime,
   handleBridgeRequest,
   isBridgePath,
@@ -144,6 +148,13 @@ export async function startLocalServer(
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === CONSOLE_PROJECT_PATH) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(renderProjectConsoleHtml());
+      return;
+    }
+
     if (isBridgePath(url.pathname)) {
       if (!checkAuth(request, response)) {
         return;
@@ -202,5 +213,6 @@ if (isMainModule()) {
   console.log(`CLI Bridge local server listening on ${handle.url}`);
   console.log(`Console UI: ${handle.url}/console`);
   console.log(`Goal Console UI: ${handle.url}/console/goals`);
+  console.log(`Project Workspace: ${handle.url}/console/project`);
   console.log(`Pairing token: ${handle.pairingToken}`);
 }
