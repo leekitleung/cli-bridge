@@ -102,6 +102,15 @@ raw CLI output are never persisted; only redacted summaries.
 - WorkBuddy MUST NOT trigger execution, MUST NOT bypass plan approval or the
   state-changing gate, and MUST NOT become a controller (unchanged v0.8 boundary).
 
+Clarification added after the AgentTeam planning discussion: this section
+describes WorkBuddy's current task-system identity, not a permanent product
+limit. WorkBuddy, qclaw, openclaw, hermes, and similar tools may later be
+introduced as separate execution endpoint identities if an implementation
+handoff explicitly registers their capabilities, scope, isolation mode, gates,
+and audit requirements. The task-system identity still must not trigger
+execution by itself. See `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md` and
+`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`.
+
 ## Risk Acceptance (requires sign-off)
 
 - The working tree can be modified by an agent. Mitigations: patch-proposal
@@ -124,7 +133,10 @@ raw CLI output are never persisted; only redacted summaries.
 - Sequencing after this ADR is accepted:
   - **v2.0 Goal-driven Console MVP** — Goal input, Plan approval, auto-run with
     visible per-step state, state-changing gate, stop button, result audit.
-  - **v2.1 WorkBuddy task/result integration** — as source/sink only.
+  - **v2.1+ AgentTeam / Project Control Plane planning** — WorkBuddy task/result
+    integration, project timeline, memory, harness, model API, and governed
+    execution endpoints for tools such as WorkBuddy/qclaw/openclaw/hermes must
+    be reconciled with `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`.
 - Each of v2.0 / v2.1 needs its own implementation handoff before code.
 
 ## Resolved Decisions (2026-06-09 sign-off)

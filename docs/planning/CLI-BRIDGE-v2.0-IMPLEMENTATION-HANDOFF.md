@@ -41,7 +41,8 @@ Goal -> Plan -> Approve Plan -> Auto-run non-mutating steps
   gate，但**实际写盘的实现**留待显式后续切片，本切片 gate 通过后只“标记已批准应用”
   并展示 diff，不自动 `git apply`）。
 - 不接 Claude 执行（Claude 仍 review-only）。
-- 不接 WorkBuddy（v2.1）。
+- 不接 WorkBuddy / qclaw / openclaw / hermes 执行端点；这些属于后续 AgentTeam /
+  project-control-plane 规划，详见 `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`。
 - 无 headless HTTP gate。
 - 无自动 commit/push/merge/PR、无 shell 端点、无 attach 终端、无 dangerous bypass。
 - 不做无界 agent loop（步数硬顶 10）。
@@ -120,6 +121,14 @@ GET  /bridge/goals                 列表 + 状态
 ## 8. 立即下一步
 
 审本 handoff。审通过后从 §7.1（数据模型）开始实现，保持每步门禁绿、独立 commit。
-v2.1 WorkBuddy task/result 接入在 v2.0 跑顺后再单独起。
+v2.1+ 继续推进前，必须先读取并核对：
+
+- `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`
+- `CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`
+
+这两份文档记录 WorkBuddy/qclaw/openclaw/hermes 可作为受治理执行端点、AgentTeam 默认
+单 provider 多槽位、执行层能力检测、中间层模型 API、harness、memory、project control
+plane UI 等后续边界。旧的 "WorkBuddy task/result 接入" 只能视为其中一个最小身份，不得
+覆盖 AgentTeam 规划。
 
 未审通过前不写执行代码。

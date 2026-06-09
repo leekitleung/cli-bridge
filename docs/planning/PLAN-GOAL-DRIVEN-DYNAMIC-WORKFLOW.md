@@ -9,6 +9,12 @@ Status: PLAN（构想记录，非活跃切片）。
 `PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md` 互补：那份定义分层与控制台视图，本份
 定义 goal → plan → step 的执行引擎。
 
+后续 AgentTeam、单 provider 多槽位、WorkBuddy/qclaw/openclaw/hermes 执行端点、
+中间层模型 API、harness、memory、项目级控制台等扩展，必须同时参考
+`PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`。该规划的原始讨论记录保存在
+`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`，两者均为 lint 必检 canonical/context
+文档，后续开发不得遗漏。
+
 当前活跃推进不变：安全地基（已完成）-> 轨道 A（command transport review-only）。
 web-dom 自动发送/提取（曾称"轨道 B"）已由 ADR-0002 标记为 superseded/deferred，除非
 后续 ADR 重新批准，否则不作为活跃路线。本引擎在轨道 A 机制验证后才考虑转为实现切片。
@@ -128,6 +134,10 @@ Step:  pending -> assigned -> running -> done | failed | blocked-needs-gate
 - PendingReview / PendingPrompt（已存在）：计划级审批与 gate 步骤复用其确认机制。
 - WorkBuddy（v0.8 库契约）：作为执行层的 task source / result sink，**不得**成为在
   回路内自行触发执行的控制器。
+- `PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md`：修正并扩展本条边界。WorkBuddy 当前实现
+  身份仍是 task source / result sink；但 WorkBuddy、qclaw、openclaw、hermes 等工具
+  可在后续以**单独注册的执行端点身份**进入 AgentTeam，前提是声明 capability、scope、
+  isolation、gate、audit，并不得由任务状态变化绕过中间层触发执行。
 - 控制台 UI（见 console plan）：goal/plan 审批与中断的天然界面归宿。
 
 ## 7. 为什么现在不实现
