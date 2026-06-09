@@ -18,6 +18,8 @@ const requiredPaths = [
   'apps/extension/src/ui/bridge-panel.tsx',
   'apps/extension/src/ui/state.ts',
   'apps/local-server/src/server.ts',
+  'apps/local-server/src/cli/review.ts',
+  'apps/local-server/src/cli/review-workflow.ts',
   'apps/local-server/src/routes/health.ts',
   'apps/local-server/src/routes/bridge-api.ts',
   'apps/local-server/src/routes/pending-prompts.ts',
