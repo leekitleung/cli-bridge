@@ -250,6 +250,12 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 <!-- Right Status Panel -->
 <aside aria-label="Project status">
   <div>
+    <h2>Summary</h2>
+    <div class="status-card" id="status-summary">
+      <span class="unavailable">unavailable</span>
+    </div>
+  </div>
+  <div>
     <h2>Progress</h2>
     <div class="status-card" id="status-progress">
       <span class="unavailable">unavailable</span>
@@ -393,6 +399,19 @@ function renderStatusPanel() {
   const detail = store.cache.detail;
   const status = detail ? detail.status : null;
 
+  // Summary — project-level stats from /bridge/projects/:key
+  if (detail && detail.summary) {
+    const s = detail.summary;
+    const parts = [];
+    parts.push('<span class="pill ' + (s.status === 'active' ? '' : '') + '">' + escapeHtml(s.status || 'idle') + '</span>');
+    parts.push('<span>' + s.goalCount + ' goals (' + s.activeGoalCount + ' active)</span>');
+    if (s.reviewCount > 0) parts.push('<span>' + s.reviewCount + ' reviews</span>');
+    if (s.promptCount > 0) parts.push('<span>' + s.promptCount + ' prompts</span>');
+    $('status-summary').innerHTML = parts.join(' · ');
+  } else {
+    $('status-summary').innerHTML = '<span class="unavailable">not yet available</span>';
+  }
+
   // Progress
   if (status && status.progress) {
     const pct = status.progress.total > 0 ? Math.round((status.progress.completed / status.progress.total) * 100) : 0;
@@ -412,9 +431,21 @@ function renderStatusPanel() {
     $('status-active-goal').innerHTML = '<span class="unavailable">no active goal</span>';
   }
 
-  // Goals summary
+  // Goals summary — grouped: active first, then done/cancelled/failed
   if (status && status.goalsSummary.length) {
-    const goalsHtml = status.goalsSummary.map(g => '<div><span class="pill ' + (g.status === 'done' ? 'done' : '') + '">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>').join('');
+    const terminalStatuses = ['done', 'cancelled', 'failed'];
+    const active = status.goalsSummary.filter(g => !terminalStatuses.includes(g.status));
+    const terminal = status.goalsSummary.filter(g => terminalStatuses.includes(g.status));
+    let goalsHtml = '';
+    active.forEach(g => {
+      goalsHtml += '<div><span class="pill">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
+    });
+    if (terminal.length) {
+      goalsHtml += '<div style="font-size:11px;color:var(--muted);margin-top:4px;">completed</div>';
+      terminal.forEach(g => {
+        goalsHtml += '<div><span class="pill done">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
+      });
+    }
     $('status-goals').innerHTML = goalsHtml;
   } else {
     $('status-goals').innerHTML = '<span class="unavailable">no goals</span>';
