@@ -5,13 +5,11 @@
 
 ## Git State
 
-```
-Branch:    feat/v2.0-goal-data-model
-Ahead:     12 commits (of origin/feat/v2.0-goal-data-model)
-Remote:    origin/feat/v2.0-goal-data-model (behind local — unpushed)
-Working:   clean
-HEAD:      30d00ca docs: v2.0 final merge gate evidence package
-```
+Branch: `feat/v2.0-goal-data-model` (clean working tree, unpushed).
+
+Verification was run against commit `4e3e50f`. Because this final-gate
+document is itself a commit, exact HEAD may advance by one at review
+time. Run `git log --oneline -1` to confirm current HEAD.
 
 ## Changed Area Summary
 
@@ -51,21 +49,14 @@ No code-quality blocking issues. Merge is blocked only by the need to push befor
 
 ```
 grep "shell|exec|spawn|daemon|provider|auto-run|dangerous|DELETE /bridge/projects"
-  CHANGELOG.md → 0 matches
-  README.md → 0 matches
-  docs/planning/phase-b-features.md → 0 matches
-  docs/contracts/bridge-projects-api.md → 0 matches
-  docs/reviews/ → 0 matches
-  apps/local-server/src/routes/project-console.ts → 0 matches
-  tests/project-console-ui.test.mjs → 0 matches
-  tests/project-console-behavior.test.mjs → 0 matches
 ```
 
-**Result**: Zero hits in closeout/docs/console files (scoped scan). Broader
-scan of implementation store/routes may match expected non-goal text
-(e.g. `dangerouslyDisableSandbox` in server.ts, `DELETE /bridge/projects`
-in phase-b docs as a known non-goal). No new execution abilities,
-shell/exec/spawn exposure, or DELETE endpoints detected.
+**Result**: Expected non-goal/security-boundary text matches only (e.g.
+README mentions "shell", phase-b docs mention DELETE as a non-goal,
+console comments reference allowlisted paths, test assertions check for
+absence of exec/spawn). **No new endpoint or capability matches.**
+No `DELETE /bridge/projects` endpoint, no `auto-run`, no `dangerously*`
+in console code, no `spawn/provider/daemon` in any new code paths.
 
 ## Known Non-Goals (v2.0 / Phase B boundary)
 
