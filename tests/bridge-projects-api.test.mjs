@@ -449,6 +449,46 @@ test('projectId-match audit filtering isolates events by projectId', async () =>
   assert.ok(betaEvents.every(e => e.projectId === 'beta'));
 });
 
+test('audit event with mismatched projectId is excluded even if packetId matches', async () => {
+  const runtime = createBridgeRuntime();
+  // Create a prompt scoped to 'beta'.
+  runtime.pendingPromptStore.createPendingPrompt({
+    sessionId: 's1', prompt: 'beta prompt', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'beta',
+  });
+  // Manually forge an audit event with projectId='alpha' but packetId of a beta-scoped record.
+  const betaEvents = runtime.auditLog.listEvents();
+  const betaPromptEvent = betaEvents.find(e => e.projectId === 'beta');
+  runtime.auditLog.append({
+    ...betaPromptEvent,
+    id: 'forged-alpha',
+    projectId: 'alpha', // mismatched!
+    // packetId stays the same (beta-scoped)
+  });
+
+  // Fetch alpha project detail — the forged event must NOT appear.
+  const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const alphaDetail = await handleBridgeRequest(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha`, {});
+  const alphaAuditEvents = alphaDetail.payload.auditEvents || [];
+  assert.ok(!alphaAuditEvents.some(e => e.id === 'forged-alpha'),
+    'mismatched projectId event must be excluded from alpha detail');
+});
+
+test('/bridge/projects/:key includes events by projectId-first matching', async () => {
+  const runtime = createBridgeRuntime();
+  // Create alpha-scoped prompt.
+  runtime.pendingPromptStore.createPendingPrompt({
+    sessionId: 's1', prompt: 'alpha prompt', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'alpha',
+  });
+
+  const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const detail = await handleBridgeRequest(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha`, {});
+  const events = detail.payload.auditEvents || [];
+  assert.ok(events.length > 0, 'alpha detail must include projectId-matched audit events');
+  assert.ok(events.every(e => e.projectId === 'alpha'), 'all events must be alpha-scoped');
+});
+
 test('encoded traversal-like project key in archive path is rejected', async () => {
   const runtime = createBridgeRuntime();
   const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/%2e%2e/archive`);

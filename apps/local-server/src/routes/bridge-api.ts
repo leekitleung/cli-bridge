@@ -312,9 +312,7 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
   for (const prompt of pendingPrompts) scopedRecordIds.add(prompt.packetId);
   const auditEvents = runtime.auditLog.listEvents()
     .filter((event) => {
-      // Prefer projectId match (v2 audit events carry project scope).
-      if (event.projectId && event.projectId === projectKey) return true;
-      // Fallback: match by scoped record packetId (v1 / legacy events).
+      if (event.projectId) return event.projectId === projectKey;
       return event.packetId ? scopedRecordIds.has(event.packetId) : false;
     });
 
