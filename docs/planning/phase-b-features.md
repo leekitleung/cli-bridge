@@ -19,8 +19,8 @@ implementation constraints.
 ### Current state
 
 Projects are created implicitly on first record reference.
-The only way to set a `label` or `description` is via `store.upsert()`,
-which has no HTTP endpoint or console UI.
+Label and description can be updated via `PATCH /bridge/projects/:key`.
+Console inline edit UI is implemented (click project label in top bar).
 
 ### Target
 

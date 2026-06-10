@@ -279,3 +279,123 @@ test('clicking the already-active project does not trigger a fetch', async () =>
   const countAfter = fetchCalls.length;
   assert.equal(countAfter, countBefore, 'same-project click must not trigger fetches');
 });
+
+// ════════════════════════════════════════════════════════════════════
+// §5  Project management — archive/unarchive, includeArchived, inline edit
+// ════════════════════════════════════════════════════════════════════
+
+test('archiving a project hides it from default list', async () => {
+  const { window, document, fetchCalls, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', {
+    ok: true,
+    payload: {
+      projects: [
+        {
+          project: { key: 'cli-bridge', label: 'CLI Bridge', createdAt: 1 },
+          goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0, status: 'unknown',
+        },
+        {
+          project: { key: 'alpha', label: 'Alpha', createdAt: 1 },
+          goalCount: 1, activeGoalCount: 0, reviewCount: 0, promptCount: 0, status: 'idle',
+        },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/alpha/archive', { ok: true, status: 200, payload: { project: { key: 'alpha', label: 'Alpha', archivedAt: Date.now() } } });
+
+  // Connect.
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 50));
+
+  // Alpha should be visible in the list.
+  let items = document.querySelectorAll('.project-item');
+  assert.ok(Array.from(items).some(el => el.dataset.key === 'alpha'), 'alpha must be visible before archive');
+
+  // Archive alpha via the archive button.
+  const archiveBtn = document.querySelector('.archive-btn[data-key="alpha"]');
+  assert.ok(archiveBtn, 'archive button must exist for non-default project');
+  archiveBtn.click();
+  await new Promise(r => setTimeout(r, 50));
+
+  // After archive, the project list should no longer show alpha.
+  const archiveCall = fetchCalls.find(c => c.path === '/bridge/projects/alpha/archive');
+  assert.ok(archiveCall, 'must POST to archive endpoint');
+});
+
+test('includeArchived toggle fetches projects with query param', async () => {
+  const { window, document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+
+  await waitFor(() => document.getElementById('toggle-archived') !== null, 1000);
+  await new Promise(r => setTimeout(r, 50));
+
+  const beforeCount = fetchCalls.length;
+
+  // Simulate toggle checked + refresh via global refreshAll.
+  document.getElementById('toggle-archived').checked = true;
+  await window.refreshAll();
+
+  assert.ok(fetchCalls.length > beforeCount, 'toggle checked + refreshAll triggers additional fetches');
+});
+
+test('inline edit sends PATCH to update project label', async () => {
+  const { window, document, fetchCalls, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge', {
+    ok: true,
+    payload: {
+      project: { key: 'cli-bridge', label: 'Updated Bridge', createdAt: 1 },
+      summary: { project: { key: 'cli-bridge', label: 'Updated Bridge' }, goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0, status: 'unknown' },
+      goals: [], reviews: [], pendingPrompts: [], auditEvents: [],
+      status: { progress: null, activeGoal: null, goalsSummary: [], blockedGate: null, memory: [] },
+    },
+  });
+  // PATCH endpoint fixture.
+  window.fetch = async (url, init = {}) => {
+    const path = typeof url === 'string' ? new URL(url).pathname : url;
+    const body = init.body ? JSON.parse(init.body) : null;
+    fetchCalls.push({ path, method: init.method || 'GET', body });
+    if (path === '/bridge/projects/cli-bridge' && init.method === 'PATCH') {
+      return { ok: true, status: 200, json: async () => ({ project: { key: 'cli-bridge', label: body?.label || 'CLI Bridge', createdAt: 1 } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 50));
+
+  // Click top bar to start inline edit.
+  const topProject = document.getElementById('top-project');
+  assert.ok(topProject, 'top-project must exist');
+  topProject.click();
+  await new Promise(r => setTimeout(r, 20));
+
+  // An input field should appear.
+  const input = document.getElementById('inline-edit-input');
+  assert.ok(input, 'inline edit input must appear');
+  input.value = 'Updated Bridge';
+
+  // Click save.
+  const save = document.getElementById('inline-edit-save');
+  assert.ok(save, 'save button must exist');
+  save.click();
+  await new Promise(r => setTimeout(r, 50));
+
+  // Check PATCH call.
+  const patchCall = fetchCalls.find(c => c.method === 'PATCH');
+  assert.ok(patchCall, 'must send PATCH request');
+  assert.equal(patchCall.body.label, 'Updated Bridge');
+});
