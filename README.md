@@ -48,7 +48,10 @@ loops.
     where `ProjectSummary = { project, goalCount, activeGoalCount, reviewCount, promptCount, status }`.
   - `GET /bridge/projects/:key` → `{ project, summary, goals, reviews, pendingPrompts, auditEvents, status }`.
     The `status` field is a server-computed `ProjectDerivedStatus` with progress, activeGoal, goalsSummary, blockedGate.
-  - Both are read-only; no POST/PUT/DELETE. Records without explicit `projectId` are backfilled to the default `"cli-bridge"` project.
+    Audit events are filtered by scoped record packetIds (not sessionId), preventing cross-project leakage.
+  - Both are read-only; no POST/PUT/DELETE.
+  - `projectId` validation: 1–64 chars, `a-z0-9-_` only, no slashes/spaces. Invalid values → 400.
+  - Records without explicit `projectId` are backfilled to the default `"cli-bridge"` project at query time.
   - Detailed contract: see `docs/contracts/bridge-projects-api.md`.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /

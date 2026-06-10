@@ -18,6 +18,67 @@ create no new execution paths, and never bypass existing gates.
 
 ---
 
+## projectId — key rules and validation
+
+Any record (Goal, AgentReviewRequest, PendingPrompt) may carry an optional
+`projectId` (provided in the request body of the respective POST endpoint).
+
+### Validation rules
+
+`projectId` values are validated by `validateProjectKey()`:
+
+| Rule | Detail |
+|------|--------|
+| Length | 1–64 characters |
+| First character | Must be `a-z` or `0-9` |
+| Allowed characters | `a-z`, `0-9`, `-`, `_` only |
+| Forbidden | No slashes, spaces, control characters, upper-case, or leading hyphens |
+
+### Error responses
+
+- `projectId` absent, null, or empty → records get no explicit `projectId`
+  and are backfilled to `"cli-bridge"` at query time.
+- `projectId` present but fails validation → **400** `"projectId is invalid"`.
+- `projectId` passes validation → the value is trimmed and stored as the
+  record's `projectId`.
+
+### URL path keys (`:key` in `/bridge/projects/:key`)
+
+The `:key` segment is validated identically:
+- Invalid keys (slash, space, too long) → **404** or **405**
+- URL-encoded keys are decoded before validation
+
+### Implicit project discovery
+
+Projects are created implicitly when a record first references a new
+`projectId` key. The `buildAllSummaries()` method discovers projects from
+both the explicitly-registered store and from record `projectId` fields.
+An implicit project has `project.label = key` and `project.createdAt = 0`
+until explicitly registered via `store.upsert()`.
+
+### Default project backfill
+
+Records without `projectId` are assigned to `"cli-bridge"` by
+`resolveProjectKey()`. This means all existing data without explicit project
+scoping is automatically visible under the default project.
+
+### Audit event filtering
+
+Audit events in `/bridge/projects/:key` are filtered by scoped record
+identifiers (not by sessionId):
+
+- Goal → `goal.id` (used as `packetId` in goal-related audit events)
+- AgentReviewRequest → `review.packetId`
+- PendingPrompt → `prompt.packetId`
+
+This prevents cross-project audit leakage when two projects share a
+sessionId (e.g. the same console session creates records in both projects).
+
+Events without a `packetId` field, or whose `packetId` does not match any
+scoped record, are excluded (fail-closed).
+
+---
+
 ## GET /bridge/projects
 
 Lists all known projects with summary statistics.
@@ -56,12 +117,6 @@ Lists all known projects with summary statistics.
 | `reviewCount` | number | Review requests scoped to this project. |
 | `promptCount` | number | Pending prompts scoped to this project. |
 | `status` | enum | Derived status: `"active"` (has active goals), `"idle"` (has goals, all done), `"unknown"` (no goals). |
-
-### Backfill rule
-
-Records without `projectId` are assigned to `"cli-bridge"` at query time.
-This means all existing data without explicit project scoping is automatically
-visible under the default project.
 
 ---
 
@@ -116,21 +171,20 @@ Returned when the project key is unknown AND no records reference it.
 | `goals` | GoalWithPlan[] | All goals scoped to this project, each with its plan (or null). |
 | `reviews` | AgentReviewRequest[] | Reviews scoped to this project. |
 | `pendingPrompts` | PendingPrompt[] | Pending prompts scoped to this project. |
-| `auditEvents` | AuditEvent[] | Audit events from sessions associated with this project's records. |
-| `status.progress` | object? | Step completion ratio for the active plan (completed / total). Null if no active plan. |
+| `auditEvents` | AuditEvent[] | Filtered by packetIds of all scoped records. Events without a matching `packetId` are excluded. |
+| `status.progress` | object? | Step completion ratio (completed / total). Null if no active plan. |
 | `status.activeGoal` | object? | The first active goal (not done/cancelled/failed). Null if none. |
-| `status.goalsSummary` | object[] | All goals with id, description, status (for the status panel). |
-| `status.blockedGate` | object? | First blocked-needs-gate step across all goals in this project. Null if none. |
-| `status.latestAudit` | null | Reserved. Always null in current implementation. |
-| `status.memory` | [] | Reserved. Always empty in current implementation. |
+| `status.goalsSummary` | object[] | All goals with id, description, status. |
+| `status.blockedGate` | object? | First blocked-needs-gate step across all goals. Null if none. |
+| `status.latestAudit` | null | Reserved. |
+| `status.memory` | [] | Reserved. |
 
 ---
 
 ## Auth
 
-All `/bridge/projects*` paths are registered in `isBridgePath()` and
-require origin + pairing token authentication (same as all other `/bridge/*`
-endpoints). Unauthenticated requests return 401 or 403.
+All `/bridge/projects*` paths require origin + pairing token authentication
+(same as all other `/bridge/*` endpoints). Unauthenticated → 401 or 403.
 
 ---
 
@@ -139,7 +193,6 @@ endpoints). Unauthenticated requests return 401 or 403.
 These endpoints do **not**:
 
 - Accept POST, PUT, PATCH, or DELETE (only GET; any other method → 405)
-- Accept a `:key` of `"run"`, `"exec"`, `"shell"`, `"command"` — those paths return 404
 - Modify any store, spawn any process, or bypass any gate
 - Auto-execute, auto-approve, or auto-send anything
 
@@ -148,12 +201,14 @@ These endpoints do **not**:
 ## Testing
 
 - `tests/bridge-projects-api.test.mjs` — endpoint contract tests
-  - Default project exists even with no records
-  - Explicit project grouping and unscoped record backfill
-  - `/bridge/projects/:key` returns scoped data and derived status
-  - Project detail scopes audit events
-  - Unknown project returns 404
-  - POST /bridge/projects returns 405
+  - Default project exists with no records
+  - Explicit grouping and unscoped backfill
+  - Project detail with scoped data and derived status
+  - Audit isolation via packetId (including same-session cross-project)
+  - Unknown project → 404
+  - Invalid project key → 404/405
+  - POST → 405; invalid projectId → 400
 - `tests/project-store.test.mjs` — store unit tests
   - upsert, get, list, buildSummary, buildAllSummaries
   - resolveProjectKey backfill
+  - validateProjectKey accept/reject rules
