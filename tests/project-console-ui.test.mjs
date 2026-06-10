@@ -146,3 +146,41 @@ test('project console bridge calls still require the pairing token', async (t) =
   });
   assert.equal(ok.status, 200);
 });
+
+// Task 16 regression: project switch must show loading state.
+test('project console includes loading state for project switching', () => {
+  const html = renderProjectConsoleHtml();
+
+  // The loading text must be present in the JS source.
+  assert.match(html, /Loading project detail/);
+
+  // switchingProject flag must exist in the store.
+  assert.match(html, /switchingProject/);
+  assert.match(html, /switchingProject = true/);
+  assert.match(html, /switchingProject = false/);
+
+  // Still no new shell/exec paths.
+  assert.equal(/\/(exec|shell|run)['"`]/.test(html), false);
+});
+
+// Task 16 regression: project switch fetch paths unchanged.
+test('project switch loading still only fetches /bridge/projects*', () => {
+  const html = renderProjectConsoleHtml();
+  const paths = new Set(extractBridgePaths(html));
+
+  // Same allowed set as Task 15 closeout; no new endpoints introduced.
+  assert.deepEqual(paths, new Set([
+    '/bridge/metrics',
+    '/bridge/projects',
+    '/bridge/projects/',
+    '/bridge/goals/approve',
+    '/bridge/goals/step',
+    '/bridge/goals/cancel',
+    '/bridge/goals/plan',
+    '/bridge/goals/gate',
+    '/bridge/goals',
+    '/bridge/reviews',
+    '/bridge/reviews/confirm',
+    '/bridge/reviews/dispatch',
+  ]));
+});

@@ -296,6 +296,7 @@ const store = {
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
   view: 'workspace',
   cache: { projects: [], detail: null, metrics: null },
+  switchingProject: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -366,9 +367,15 @@ function renderProjectList() {
   // Bind project switching
   list.querySelectorAll('.project-item').forEach(li => {
     li.addEventListener('click', async () => {
+      if (li.dataset.key === store.activeProjectKey) return;
       store.activeProjectKey = li.dataset.key;
       localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
+      // Show loading indicator before the async fetch.
+      store.switchingProject = true;
+      store.cache.detail = null;
+      renderWorkspace();
       await refreshAll();
+      store.switchingProject = false;
     });
   });
 }
@@ -420,6 +427,12 @@ function renderStatusPanel() {
 }
 
 function renderWorkspace() {
+  if (store.switchingProject) {
+    $('goal-card').style.display = '';
+    $('goal-content').innerHTML = '<div class="loading">Loading project detail…</div>';
+    $('timeline-container').style.display = 'none';
+    return;
+  }
   if (store.view === 'workspace') {
     renderGoalCard();
     renderTimeline();
