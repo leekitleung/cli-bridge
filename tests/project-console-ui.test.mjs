@@ -91,12 +91,12 @@ test('project console keeps token in memory and persists only the active project
   assert.match(html, /token: ''/);
 });
 
-test('project console is honest about Phase A unavailable data', () => {
+test('project console is honest about data that is not yet available', () => {
   const html = renderProjectConsoleHtml();
 
-  assert.match(html, /unavailable \(Phase B\)/);
-  assert.match(html, /No memory store in Phase A/);
-  assert.match(html, /derived from metrics and events/);
+  assert.match(html, /not yet available/);
+  assert.match(html, /No audit events recorded yet/);
+  assert.match(html, /Not yet available\. This section will show project knowledge/);
 
   assert.equal(html.includes('tests 297/297'), false);
   assert.equal(html.includes('ahead 4 commits'), false);

@@ -264,19 +264,19 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <div>
     <h2>Goals</h2>
     <div class="status-card" id="status-goals">
-      <span class="unavailable">unavailable</span>
+      <span class="unavailable">not yet available</span>
     </div>
   </div>
   <div>
     <h2>Latest Audit</h2>
     <div class="status-card" id="status-audit">
-      <span class="unavailable">unavailable (Phase B)</span>
+      <span class="unavailable">not yet available</span>
     </div>
   </div>
   <div>
     <h2>Memory</h2>
     <div class="status-card" id="status-memory">
-      <span class="unavailable">unavailable (Phase B)</span>
+      <span class="unavailable">not yet available</span>
     </div>
   </div>
 </aside>
@@ -426,7 +426,7 @@ function renderStatusPanel() {
   }
 
   // Memory
-  $('status-memory').innerHTML = '<span class="unavailable">unavailable (Phase B)</span>';
+  $('status-memory').innerHTML = '<span class="unavailable">not yet available</span>';
 }
 
 function renderWorkspace() {
@@ -559,7 +559,7 @@ function renderSectionView() {
     html += '</div>';
     html += '<div class="card" style="margin-top:16px;"><h3>Reviews</h3>';
     const reviews = detail ? (detail.reviews || []) : [];
-    if (!reviews.length) html += '<span class="unavailable">no reviews</span>';
+    if (!reviews.length) html += '<span class="unavailable">No reviews in this project</span>';
     else {
       html += '<table><thead><tr><th>id</th><th>target</th><th>status</th></tr></thead><tbody>';
       reviews.forEach(r => { html += '<tr><td>' + r.id.slice(0,8) + '</td><td>' + r.targetEndpointId + '</td><td><span class="pill">' + r.status + '</span></td></tr>'; });
@@ -569,7 +569,7 @@ function renderSectionView() {
   } else if (store.view === 'prompts') {
     html = '<div class="card"><h3>Pending Prompts</h3><p style="font-size:11px;color:var(--muted)">Drafts require explicit confirm — never auto-sent.</p>';
     const prompts = detail ? (detail.pendingPrompts || []) : [];
-    if (!prompts.length) html += '<span class="unavailable">no pending prompts</span>';
+    if (!prompts.length) html += '<span class="unavailable">No pending prompts in this project</span>';
     else {
       html += '<table><thead><tr><th>id</th><th>status</th><th>transport</th></tr></thead><tbody>';
       prompts.forEach(p => { html += '<tr><td>' + p.id.slice(0,8) + '</td><td><span class="pill">' + p.status + '</span></td><td>' + p.transport + '</td></tr>'; });
@@ -582,11 +582,11 @@ function renderSectionView() {
     if (auditEvents.length) {
       html += '<pre id="audit-pre">' + escapeHtml(JSON.stringify(auditEvents.slice(0, 20), null, 2)) + '</pre>';
     } else {
-      html += '<span class="unavailable">Activity audit — derived from metrics and events.</span><pre id="audit-pre">—</pre>';
+      html += '<span class="unavailable">No audit events recorded yet.</span><pre id="audit-pre">—</pre>';
     }
     html += '</div>';
   } else if (store.view === 'memory') {
-    html = '<div class="card"><h3>Memory</h3><span class="unavailable">No memory store in Phase A. This section will show project long-term facts once a backend memory source is added (Phase B).</span></div>';
+    html = '<div class="card"><h3>Memory</h3><span class="unavailable">Not yet available. This section will show project knowledge once a backend memory store is added.</span></div>';
   }
   const existing = document.getElementById('section-panel');
   if (existing) existing.remove();
@@ -607,7 +607,7 @@ async function runReviewFlow() {
   const target = document.getElementById('review-target');
   const statusEl = document.getElementById('review-action-status');
   const resultEl = document.getElementById('review-result');
-  if (!content || !content.value.trim()) { if (statusEl) { statusEl.textContent = 'enter content first'; statusEl.style.color = '#f87171'; } return; }
+  if (!content || !content.value.trim()) { if (statusEl) { statusEl.textContent = 'Enter content to review'; statusEl.style.color = '#f87171'; } return; }
   const btn = document.getElementById('btn-run-review');
   if (btn) btn.disabled = true;
   if (resultEl) resultEl.textContent = '';
