@@ -186,6 +186,10 @@ export function validateAuditEvent(value: unknown): SchemaValidationResult {
     errors.push('approvalId must be a string');
   }
 
+  if (value.projectId !== undefined && typeof value.projectId !== 'string') {
+    errors.push('projectId must be a string');
+  }
+
   if (!isOneOf(value.type, AUDIT_EVENT_TYPES)) {
     errors.push('type is invalid');
   }

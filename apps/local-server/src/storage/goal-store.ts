@@ -279,9 +279,7 @@ export class InMemoryGoalStore {
     try {
       assertPlan(plan);
       this.plans.set(plan.id, clone(plan));
-      if (plan.goalId) {
-        this.plansByGoal.set(plan.goalId, plan.id);
-      }
+      this.plansByGoal.set(plan.goalId, plan.id);
       return true;
     } catch {
       return false;

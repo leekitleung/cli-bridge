@@ -78,8 +78,8 @@ export interface BridgeRuntime {
   reviewAdapterFor: (targetEndpointId: string) => CommandReviewAdapter | undefined;
   agent: MockAgentAdapter;
   persist: () => void;
-  // v2.0 Goal-driven execution (ADR-0003). In-memory only — goal data is not
-  // included in the JSON snapshot at this time.
+  // v2.0 Goal-driven execution (ADR-0003). Goal/plan/project data is
+  // persisted in the JSON snapshot (v2).
   goalStore: InMemoryGoalStore;
   // Phase B Project grouping. Read-only aggregation only; no mutation authority.
   projectStore: InMemoryProjectStore;
@@ -218,7 +218,7 @@ interface ProjectDerivedStatus {
   activeGoal: { id: string; description: string; status: Goal['status'] } | null;
   goalsSummary: Array<{ id: string; description: string; status: Goal['status'] }>;
   blockedGate: { goalId: string; stepId: string; stepIndex: number } | null;
-  latestAudit: null;
+  latestAudit: AuditEvent | null;
   memory: [];
 }
 
@@ -241,7 +241,7 @@ function buildProjectSummaries(runtime: BridgeRuntime): ProjectSummary[] {
   });
 }
 
-function buildProjectStatus(goals: GoalWithPlan[]): ProjectDerivedStatus {
+function buildProjectStatus(goals: GoalWithPlan[], auditEvents: AuditEvent[] = []): ProjectDerivedStatus {
   const activeEntry = goals.find(({ goal }) =>
     goal.status !== 'done' &&
     goal.status !== 'cancelled' &&
@@ -275,8 +275,9 @@ function buildProjectStatus(goals: GoalWithPlan[]): ProjectDerivedStatus {
         stepIndex: blocked.step.index,
       }
       : null,
-    // These sources are introduced by later Phase B slices (task 17).
-    latestAudit: null,
+    latestAudit: auditEvents.length > 0
+      ? auditEvents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
+      : null,
     memory: [],
   };
 }
@@ -323,7 +324,7 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
     reviews,
     pendingPrompts,
     auditEvents,
-    status: buildProjectStatus(goals),
+    status: buildProjectStatus(goals, auditEvents),
   };
 }
 
@@ -528,6 +529,12 @@ export async function handleBridgeRequest(
     if (projectId === null) {
       return error(400, 'projectId is invalid');
     }
+    if (projectId) {
+      const project = runtime.projectStore.get(projectId);
+      if (project && project.archivedAt) {
+        return error(409, 'Cannot create prompt in archived project');
+      }
+    }
     const pendingPrompt = runtime.pendingPromptStore.createPendingPrompt({
       sessionId,
       prompt,
@@ -626,6 +633,12 @@ export async function handleBridgeRequest(
       const projectId = parseProjectIdField(parsed.body.projectId);
       if (projectId === null) {
         return error(400, 'projectId is invalid');
+      }
+      if (projectId) {
+        const project = runtime.projectStore.get(projectId);
+        if (project && project.archivedAt) {
+          return error(409, 'Cannot create review in archived project');
+        }
       }
       review = runtime.pendingReviewStore.createDraft({
         sessionId,
@@ -739,7 +752,10 @@ export async function handleBridgeRequest(
   // ── Phase B Project aggregation (read-only; no new mutation authority) ──
 
   if (pathname === BRIDGE_PROJECTS_PATH && method === 'GET') {
-    return ok({ projects: buildProjectSummaries(runtime) });
+    // Filter archived projects from default listing.
+    const projects = buildProjectSummaries(runtime)
+      .filter((p) => !runtime.projectStore.get(p.project.key)?.archivedAt);
+    return ok({ projects });
   }
 
   const projectKey = projectDetailPathKey(pathname);

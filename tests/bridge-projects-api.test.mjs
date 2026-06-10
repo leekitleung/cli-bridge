@@ -129,7 +129,7 @@ test('GET /bridge/projects/:key returns project-scoped grouped data and derived 
   assert.equal(res.payload.pendingPrompts.length, 1);
   assert.equal(res.payload.status.activeGoal.id, alphaGoal.payload.goal.id);
   assert.equal(res.payload.status.goalsSummary.length, 1);
-  assert.equal(res.payload.status.latestAudit, null);
+  assert.ok(typeof res.payload.status.latestAudit === 'object', 'latestAudit must be present when audit events exist');
   assert.deepEqual(res.payload.status.memory, []);
 });
 

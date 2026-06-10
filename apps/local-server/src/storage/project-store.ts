@@ -150,17 +150,19 @@ export class InMemoryProjectStore {
   archive(key: string): Project | undefined {
     const project = this.projects.get(key);
     if (!project || project.archivedAt) return undefined;
-    project.archivedAt = Date.now();
-    this.projects.set(key, clone(project));
-    return clone(project);
+    const updated = clone(project);
+    updated.archivedAt = Date.now();
+    this.projects.set(key, updated);
+    return clone(updated);
   }
 
   unarchive(key: string): Project | undefined {
     const project = this.projects.get(key);
     if (!project || !project.archivedAt) return undefined;
-    delete project.archivedAt;
-    this.projects.set(key, clone(project));
-    return clone(project);
+    const updated = clone(project);
+    delete updated.archivedAt;
+    this.projects.set(key, updated);
+    return clone(updated);
   }
 
   /** Export explicit projects for snapshot persistence. */
