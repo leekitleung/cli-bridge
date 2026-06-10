@@ -201,3 +201,52 @@ test('project switch loading state uses try/finally to prevent stuck state', () 
   const allFalseMatches = html.match(/switchingProject\s*=\s*false/g) || [];
   assert.equal(allFalseMatches.length, 1, 'switchingProject = false must appear exactly once (inside finally)');
 });
+
+// Task 21 regression: console uses project summary data from /bridge/projects/:key response.
+test('console renders project summary from server-computed data', () => {
+  const html = renderProjectConsoleHtml();
+  assert.match(html, /id="status-summary"/, 'Summary section must exist');
+  assert.match(html, /detail\.summary/, 'Uses detail.summary from response');
+  assert.match(html, /status-summary/);
+});
+
+// Task 21 regression: goals are grouped by lifecycle phase (active vs completed).
+test('console groups goals by active vs completed in status panel', () => {
+  const html = renderProjectConsoleHtml();
+  // Must reference terminal status classification logic.
+  assert.match(html, /terminalStatuses/, 'goals grouping logic must exist');
+  // Active-first grouping.
+  assert.match(html, /completed/, 'completed section header must exist');
+});
+
+// Task 21 regression: no internal labels ("Phase A/B") leak into user-facing text.
+test('console does not expose internal roadmap labels to users', () => {
+  const html = renderProjectConsoleHtml();
+  assert.equal(html.includes('Phase A'), false, 'Phase A must not appear in HTML');
+  assert.equal(html.includes('Phase B'), false, 'Phase B must not appear in HTML');
+});
+
+// Task 21 security: bridge paths used are strictly a subset of the allowlist.
+test('all bridge paths in console are within the allowed set', () => {
+  const html = renderProjectConsoleHtml();
+  const allowed = new Set([
+    '/bridge/metrics',
+    '/bridge/projects',
+    '/bridge/projects/',
+    '/bridge/goals/approve',
+    '/bridge/goals/step',
+    '/bridge/goals/cancel',
+    '/bridge/goals/plan',
+    '/bridge/goals/gate',
+    '/bridge/goals',
+    '/bridge/reviews',
+    '/bridge/reviews/confirm',
+    '/bridge/reviews/dispatch',
+  ]);
+  const paths = extractBridgePaths(html);
+  const outside = paths.filter(p => !allowed.has(p));
+  assert.deepEqual(outside, [], 'all bridge paths must be in the allowlist');
+
+  // Still no shell/exec/run/command paths anywhere.
+  assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
+});
