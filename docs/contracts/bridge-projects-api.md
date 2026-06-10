@@ -8,13 +8,15 @@
 
 ## Overview
 
-The `/bridge/projects*` endpoints provide read-only project aggregation views
-over the existing bridge stores (goals, reviews, pending prompts, audit events).
-They group records by `projectId`, backfill records without an explicit
-`projectId` to the default `"cli-bridge"` project, and compute derived status.
+The `/bridge/projects*` endpoints provide project aggregation views and limited
+project metadata/archive controls over the existing bridge stores (goals,
+reviews, pending prompts, audit events). Aggregation views group records by
+`projectId`, backfill records without an explicit `projectId` to the default
+`"cli-bridge"` project, and compute derived status.
 
-These endpoints are **read-only projections** — they add no mutation authority,
-create no new execution paths, and never bypass existing gates.
+Project mutations are limited to documented metadata updates and
+archive/unarchive state changes. These endpoints create no new execution paths
+and never bypass existing gates.
 
 ---
 
@@ -45,7 +47,8 @@ Any record (Goal, AgentReviewRequest, PendingPrompt) may carry an optional
 ### URL path keys (`:key` in `/bridge/projects/:key`)
 
 The `:key` segment is validated identically:
-- Invalid keys (slash, space, too long) → **404** or **405**
+- Invalid detail keys (slash, space, too long) → **404** or **405**
+- Malformed or invalid archive/unarchive keys → **400**
 - URL-encoded keys are decoded before validation
 
 ### Implicit project discovery
@@ -176,7 +179,7 @@ Returned when the project key is unknown AND no records reference it.
 | `status.activeGoal` | object? | The first active goal (not done/cancelled/failed). Null if none. |
 | `status.goalsSummary` | object[] | All goals with id, description, status. |
 | `status.blockedGate` | object? | First blocked-needs-gate step across all goals. Null if none. |
-| `status.latestAudit` | AuditEvent? | Most recent audit event within project scope. Null if no events. |
+| `status.latestAudit` | AuditEvent \| null | Most recent audit event within project scope. Null if no events. |
 | `status.memory` | [] | Reserved. |
 
 ---
@@ -272,7 +275,7 @@ These endpoints do **not**:
 
 - Accept mutations beyond the documented PATCH (metadata), POST .../archive,
   and POST .../unarchive. Unlisted mutation paths return 405.
-- Modify any store, spawn any process, or bypass any gate
+- Modify goal/review/prompt records, spawn any process, or bypass any gate
 - Auto-execute, auto-approve, or auto-send anything
 
 ---

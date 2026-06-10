@@ -81,7 +81,7 @@ export interface BridgeRuntime {
   // v2.0 Goal-driven execution (ADR-0003). Goal/plan/project data is
   // persisted in the JSON snapshot (v2).
   goalStore: InMemoryGoalStore;
-  // Phase B Project grouping. Read-only aggregation only; no mutation authority.
+  // Phase B project grouping plus limited metadata/archive state.
   projectStore: InMemoryProjectStore;
   /** Command runner override for goal→plan generation (test injection). */
   goalPlanCommandOptions?: CommandRunOptions;
@@ -755,10 +755,9 @@ export async function handleBridgeRequest(
     });
   }
 
-  // ── Phase B Project aggregation (read-only; no new mutation authority) ──
+  // ── Phase B Project aggregation and metadata/archive controls ──
 
   if (pathname === BRIDGE_PROJECTS_PATH && method === 'GET') {
-    // Filter archived projects from default listing.
     // Filter archived projects from default listing unless ?includeArchived=true.
     const includeArchived = query?.get('includeArchived') === 'true';
     const projects = buildProjectSummaries(runtime)
@@ -822,9 +821,9 @@ export async function handleBridgeRequest(
     const existing = runtime.projectStore.get(key);
     if (!existing) return error(404, 'Project not found');
     if (existing.archivedAt) return error(409, 'Project is already archived');
-    runtime.projectStore.archive(key);
+    const archived = runtime.projectStore.archive(key);
     runtime.persist();
-    return ok({ project: runtime.projectStore.get(key) });
+    return ok({ project: archived });
   }
 
   // POST /bridge/projects/:key/unarchive
@@ -837,9 +836,9 @@ export async function handleBridgeRequest(
     const existing = runtime.projectStore.get(key);
     if (!existing) return error(404, 'Project not found');
     if (!existing.archivedAt) return error(409, 'Project is not archived');
-    runtime.projectStore.unarchive(key);
+    const unarchived = runtime.projectStore.unarchive(key);
     runtime.persist();
-    return ok({ project: runtime.projectStore.get(key) });
+    return ok({ project: unarchived });
   }
 
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────

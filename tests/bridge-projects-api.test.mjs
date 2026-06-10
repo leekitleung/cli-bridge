@@ -1,8 +1,8 @@
 // Phase B Project aggregation endpoint tests (Task 14).
 //
-// These endpoints are read-only projections over existing stores. They must
-// group records by projectId/default-project backfill without adding mutation
-// authority or weakening existing gates.
+// Project aggregation views group records by projectId/default-project backfill.
+// Metadata/archive controls are limited to documented project-store mutations
+// and must not add execution authority or weaken existing gates.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -391,4 +391,10 @@ test('malformed percent-encoding in unarchive path does not crash', async () => 
   const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha%ZZ/unarchive`);
   assert.ok(res.statusCode === 400 || res.statusCode === 404,
     `malformed encoding must return 400/404, got ${res.statusCode}`);
+});
+
+test('encoded traversal-like project key in archive path is rejected', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/%2e%2e/archive`);
+  assert.equal(res.statusCode, 400);
 });

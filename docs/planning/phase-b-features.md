@@ -24,19 +24,19 @@ which has no HTTP endpoint or console UI.
 
 ### Target
 
-- `PUT /bridge/projects/:key` — update `label` and/or `description`
+- `PATCH /bridge/projects/:key` — update `label` and/or `description`
 - Console UI: inline edit of project label in left nav
 - Validation: same `validateProjectKey()` rules for the URL segment
 
 ### Constraints
 
 - Requires snapshot persistence to survive restarts
-- Read-only — does not delete records or move them between projects
+- Metadata-only — does not delete records or move them between projects
 - Does not modify `project.key` (key is immutable after creation)
 
 ### Implementation order
 
-1. Add `PUT /bridge/projects/:key` endpoint (with auth gate)
+1. Add `PATCH /bridge/projects/:key` endpoint (with auth gate)
 2. Add inline edit affordance in console left nav
 3. Persist via snapshot
 
@@ -67,12 +67,18 @@ and `POST /bridge/projects/:key/unarchive`. Archived projects:
 - Archived projects still appear in record-level queries
   (goals/reviews/prompts still carry their `projectId`)
 
-### Implementation order
+### Completed implementation
 
-1. Design archive/delete semantics and confirmation UX
-2. Add `archived` field to `Project` type
-3. Add `DELETE /bridge/projects/:key` and `POST /bridge/projects/:key/archive`
-4. Console UI: archive/delete affordance with confirmation
+1. Add archive state to `Project`
+2. Add `POST /bridge/projects/:key/archive` and `/unarchive`
+3. Hide archived projects by default and expose `?includeArchived=true`
+4. Block new goal/review/prompt creation in archived projects
+
+### Remaining implementation order
+
+1. Design delete semantics and confirmation UX
+2. Add `DELETE /bridge/projects/:key`
+3. Console UI: archive/delete affordance with confirmation
 
 ---
 
