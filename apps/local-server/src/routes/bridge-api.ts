@@ -432,6 +432,7 @@ export async function handleBridgeRequest(
   method: string,
   pathname: string,
   request: IncomingMessage,
+  query?: URLSearchParams,
 ): Promise<BridgeResult> {
   if (pathname === BRIDGE_PACKETS_PATH && method === 'GET') {
     return ok({ packets: runtime.packetStore.listPackets() });
@@ -753,8 +754,10 @@ export async function handleBridgeRequest(
 
   if (pathname === BRIDGE_PROJECTS_PATH && method === 'GET') {
     // Filter archived projects from default listing.
+    // Filter archived projects from default listing unless ?includeArchived=true.
+    const includeArchived = query?.get('includeArchived') === 'true';
     const projects = buildProjectSummaries(runtime)
-      .filter((p) => !runtime.projectStore.get(p.project.key)?.archivedAt);
+      .filter((p) => !p.project.archivedAt || includeArchived);
     return ok({ projects });
   }
 

@@ -160,7 +160,7 @@ export async function startLocalServer(
         return;
       }
 
-      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request)
+      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams)
         .then((result) => {
           writeBridgeResult(result, response);
         })

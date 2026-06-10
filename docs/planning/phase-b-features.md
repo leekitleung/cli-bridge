@@ -119,7 +119,7 @@ The right status panel in the Project Workspace Console shows:
 - **Audit**: count of audit events (or "No audit events recorded yet")
 - **Memory**: "not yet available"
 
-The `ProjectDerivedStatus.latestAudit` and `.memory` fields are `null`/`[]`.
+The `ProjectDerivedStatus.latestAudit` returns the most recent project audit event. The `memory` field remains `[]`.
 
 ### Target
 
@@ -145,10 +145,10 @@ The `ProjectDerivedStatus.latestAudit` and `.memory` fields are `null`/`[]`.
 
 ## Implementation priority
 
-| Priority | Feature | Depends on |
-|----------|---------|------------|
-| P1 | Snapshot persistence | ADR approved |
-| P2 | Project metadata editing | Snapshot persistence |
-| P2 | Archive / delete | Snapshot persistence |
-| P3 | Audit event projectId | None (standalone) |
-| P3 | Status panel real sources | Individual source integrations |
+| Priority | Feature | Status |
+|----------|---------|--------|
+| P1 | Snapshot persistence | ✅ Implemented (goals/plans/projects in v2 snapshot) |
+| P2 | Project metadata editing | ✅ Implemented (PATCH /bridge/projects/:key) |
+| P2 | Archive / unarchive | ✅ Implemented (archive/unarchive + guards + includeArchived) |
+| P3 | Audit event projectId | ✅ Foundation (type + schema); call-site propagation remains |
+| P3 | Status panel real sources | ⬜ Pending individual source integrations |

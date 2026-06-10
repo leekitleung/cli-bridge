@@ -181,6 +181,84 @@ Returned when the project key is unknown AND no records reference it.
 
 ---
 
+## PATCH /bridge/projects/:key
+
+Update a project's `label` and/or `description`.
+
+### Request body
+```json
+{ "label": "New Label", "description": "Updated description" }
+```
+
+### Response (200)
+```json
+{ "project": { "key": "...", "label": "New Label", ... } }
+```
+
+### Constraints
+- Only `label` and `description` are writable.
+- Fields `key`, `createdAt`, `archivedAt` are rejected with 400.
+- Repeated PATCH with the same body is idempotent.
+
+---
+
+## POST /bridge/projects/:key/archive
+
+Soft-archives a project. Archived projects are excluded from
+default listing and block new record creation.
+
+### Response (200)
+```json
+{ "project": { "key": "...", "archivedAt": 1793000000000, ... } }
+```
+
+### Constraints
+- Default project `"cli-bridge"` cannot be archived (409).
+- Already-archived projects return 409.
+- Archived projects still appear in `GET /bridge/projects/:key`.
+
+---
+
+## POST /bridge/projects/:key/unarchive
+
+Restores an archived project.
+
+### Response (200)
+```json
+{ "project": { "key": "...", "archivedAt": undefined, ... } }
+```
+
+### Constraints
+- Non-archived projects return 409.
+
+---
+
+## includeArchived query parameter
+
+The default project listing `GET /bridge/projects` hides archived
+projects. To include them:
+
+```
+GET /bridge/projects?includeArchived=true
+```
+
+Filters archived projects when the parameter is absent or any value
+other than `"true"`.
+
+---
+
+## Archived project creation guard
+
+POST to `/bridge/goals`, `/bridge/reviews`, or `/bridge/pending-prompts`
+with a `projectId` pointing to an archived project returns **409**
+`"Cannot create ... in archived project"`.
+
+This guard applies only when a `projectId` is explicitly provided.
+Records without `projectId` (backfilled to `"cli-bridge"`) are never
+blocked because the default project cannot be archived.
+
+---
+
 ## Auth
 
 All `/bridge/projects*` paths require origin + pairing token authentication

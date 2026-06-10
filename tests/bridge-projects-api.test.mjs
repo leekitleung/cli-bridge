@@ -28,8 +28,8 @@ function jsonRequest(body) {
   return gen();
 }
 
-async function call(runtime, method, path, body) {
-  return handleBridgeRequest(runtime, method, path, jsonRequest(body));
+async function call(runtime, method, path, body, queryParams) {
+  return handleBridgeRequest(runtime, method, path, jsonRequest(body), queryParams);
 }
 
 test('project paths are recognized bridge paths', () => {
@@ -274,4 +274,106 @@ test('GET /bridge/projects/:key rejects invalid URL keys', async () => {
       `${path} must return 404/405, got ${res.statusCode}`,
     );
   }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Archive / unarchive behavior tests
+// ════════════════════════════════════════════════════════════════════
+
+test('POST /bridge/projects/:key/archive sets archivedAt', async () => {
+  const runtime = createBridgeRuntime();
+  // Create a project explicitly so it has a label.
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.persist();
+
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha/archive`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(typeof res.payload.project.archivedAt, 'number');
+});
+
+test('POST /bridge/projects/:key/unarchive clears archivedAt', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha/unarchive`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.archivedAt, undefined);
+});
+
+test('archived project blocks goal creation with 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  const res = await call(runtime, 'POST', BRIDGE_GOALS_PATH, {
+    sessionId: 's-archived',
+    description: 'should fail',
+    projectId: 'alpha',
+  });
+  assert.equal(res.statusCode, 409);
+});
+
+test('archived project blocks review creation with 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  const res = await call(runtime, 'POST', BRIDGE_REVIEWS_PATH, {
+    sessionId: 's-archived',
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'review this',
+    projectId: 'alpha',
+  });
+  assert.equal(res.statusCode, 409);
+});
+
+test('archived project blocks prompt creation with 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  const res = await call(runtime, 'POST', BRIDGE_PENDING_PROMPTS_PATH, {
+    sessionId: 's-archived',
+    prompt: 'should fail',
+    projectId: 'alpha',
+  });
+  assert.equal(res.statusCode, 409);
+});
+
+test('GET /bridge/projects hides archived projects by default', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH);
+  assert.equal(res.statusCode, 200);
+  const archived = res.payload.projects.find(p => p.project.key === 'alpha');
+  assert.equal(archived, undefined, 'archived project must not appear in default listing');
+});
+
+test('GET /bridge/projects?includeArchived=true includes archived projects', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime.projectStore.archive('alpha');
+  runtime.persist();
+
+  // Use query param via call helper.
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH, undefined,
+    new URLSearchParams('includeArchived=true'));
+  assert.equal(res.statusCode, 200);
+  const archived = res.payload.projects.find(p => p.project.key === 'alpha');
+  assert.ok(archived, 'archived project must appear with includeArchived=true');
+});
+
+test('default project cannot be archived', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/archive`);
+  assert.equal(res.statusCode, 409);
 });

@@ -733,6 +733,10 @@ export function validateProject(value: unknown): SchemaValidationResult {
   requireString(value, 'key', errors);
   requireString(value, 'label', errors);
   requireNumber(value, 'createdAt', errors);
+  if ('archivedAt' in value && value.archivedAt !== undefined
+    && (typeof value.archivedAt !== 'number' || !Number.isFinite(value.archivedAt))) {
+    errors.push('archivedAt must be a finite number');
+  }
   return { ok: errors.length === 0, errors };
 }
 
