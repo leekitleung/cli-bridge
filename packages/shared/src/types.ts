@@ -515,6 +515,9 @@ export interface Project {
   description?: string;
   /** Created timestamp. */
   createdAt: number;
+  /** Optional archive timestamp. When set, the project is excluded from
+   *  default listing and blocks new record creation. */
+  archivedAt?: number;
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */

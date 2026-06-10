@@ -142,6 +142,27 @@ export class InMemoryProjectStore {
     return Array.from(this.projects.values(), clone);
   }
 
+  /** List non-archived projects only. */
+  listActive(): Project[] {
+    return this.list().filter((p) => !p.archivedAt);
+  }
+
+  archive(key: string): Project | undefined {
+    const project = this.projects.get(key);
+    if (!project || project.archivedAt) return undefined;
+    project.archivedAt = Date.now();
+    this.projects.set(key, clone(project));
+    return clone(project);
+  }
+
+  unarchive(key: string): Project | undefined {
+    const project = this.projects.get(key);
+    if (!project || !project.archivedAt) return undefined;
+    delete project.archivedAt;
+    this.projects.set(key, clone(project));
+    return clone(project);
+  }
+
   /** Export explicit projects for snapshot persistence. */
   exportProjects(): Project[] {
     return this.list();

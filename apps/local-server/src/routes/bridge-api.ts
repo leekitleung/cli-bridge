@@ -45,6 +45,7 @@ import type {
   Plan,
   ProjectSummary,
 } from '../../../../packages/shared/src/types.ts';
+import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -758,6 +759,61 @@ export async function handleBridgeRequest(
     });
   }
 
+  // PATCH /bridge/projects/:key — update project metadata
+  if (projectKey && method === 'PATCH') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const existing = runtime.projectStore.get(projectKey);
+    if (!existing) {
+      return error(404, 'Project not found');
+    }
+    // Only label and description are writable.
+    const label = typeof parsed.body.label === 'string' && parsed.body.label.trim().length > 0
+      ? parsed.body.label.trim() : undefined;
+    const description = typeof parsed.body.description === 'string'
+      ? parsed.body.description : undefined;
+    // Reject disallowed fields.
+    if ('key' in parsed.body || 'createdAt' in parsed.body || 'archivedAt' in parsed.body) {
+      return error(400, 'Only label and description can be updated');
+    }
+    const updated = runtime.projectStore.upsert({
+      key: projectKey,
+      label,
+      description,
+    });
+    runtime.persist();
+    return ok({ project: updated });
+  }
+
+  // POST /bridge/projects/:key/archive
+  const archiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/archive$/);
+  if (archiveMatch && method === 'POST') {
+    const key = validateProjectKey(decodeURIComponent(archiveMatch[1]));
+    if (!key) return error(400, 'Invalid project key');
+    if (key === DEFAULT_PROJECT_KEY) return error(409, 'Cannot archive the default project');
+    const existing = runtime.projectStore.get(key);
+    if (!existing) return error(404, 'Project not found');
+    if (existing.archivedAt) return error(409, 'Project is already archived');
+    runtime.projectStore.archive(key);
+    runtime.persist();
+    return ok({ project: runtime.projectStore.get(key) });
+  }
+
+  // POST /bridge/projects/:key/unarchive
+  const unarchiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/unarchive$/);
+  if (unarchiveMatch && method === 'POST') {
+    const key = validateProjectKey(decodeURIComponent(unarchiveMatch[1]));
+    if (!key) return error(400, 'Invalid project key');
+    const existing = runtime.projectStore.get(key);
+    if (!existing) return error(404, 'Project not found');
+    if (!existing.archivedAt) return error(409, 'Project is not archived');
+    runtime.projectStore.unarchive(key);
+    runtime.persist();
+    return ok({ project: runtime.projectStore.get(key) });
+  }
+
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
 
   if (pathname === BRIDGE_GOALS_PATH && method === 'GET') {
@@ -782,6 +838,13 @@ export async function handleBridgeRequest(
     const projectId = parseProjectIdField(parsed.body.projectId);
     if (projectId === null) {
       return error(400, 'projectId is invalid');
+    }
+    // Reject creation in archived projects.
+    if (projectId) {
+      const project = runtime.projectStore.get(projectId);
+      if (project && project.archivedAt) {
+        return error(409, 'Cannot create goal in archived project');
+      }
     }
     const goal = runtime.goalStore.createGoal({ sessionId, description, projectId: projectId ?? undefined });
     runtime.persist();
