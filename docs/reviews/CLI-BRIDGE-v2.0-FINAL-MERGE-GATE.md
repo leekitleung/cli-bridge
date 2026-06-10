@@ -7,10 +7,10 @@
 
 ```
 Branch:    feat/v2.0-goal-data-model
-Ahead:     11 commits (of origin/feat/v2.0-goal-data-model)
+Ahead:     12 commits (of origin/feat/v2.0-goal-data-model)
 Remote:    origin/feat/v2.0-goal-data-model (behind local — unpushed)
 Working:   clean
-HEAD:      35b4e92 docs: remove stale archive 'Remaining implementation order' block
+HEAD:      30d00ca docs: v2.0 final merge gate evidence package
 ```
 
 ## Changed Area Summary
@@ -39,7 +39,7 @@ HEAD:      35b4e92 docs: remove stale archive 'Remaining implementation order' b
 
 ```
 npm run remote-review-gate → fail
-  - remote-head-mismatch: local ahead of origin by 11 commits
+  - remote-head-mismatch: local ahead of origin by 12 commits
   - pr-unavailable: gh CLI not configured
   - ci-unavailable: gh CLI not configured
 ```
@@ -61,8 +61,11 @@ grep "shell|exec|spawn|daemon|provider|auto-run|dangerous|DELETE /bridge/project
   tests/project-console-behavior.test.mjs → 0 matches
 ```
 
-Zero hits across all scanned files. No new execution abilities, shell/exec/spawn exposure,
-DELETE endpoints, or auto-run paths.
+**Result**: Zero hits in closeout/docs/console files (scoped scan). Broader
+scan of implementation store/routes may match expected non-goal text
+(e.g. `dangerouslyDisableSandbox` in server.ts, `DELETE /bridge/projects`
+in phase-b docs as a known non-goal). No new execution abilities,
+shell/exec/spawn exposure, or DELETE endpoints detected.
 
 ## Known Non-Goals (v2.0 / Phase B boundary)
 
