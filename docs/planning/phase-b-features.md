@@ -75,12 +75,6 @@ and `POST /bridge/projects/:key/unarchive`. Archived projects:
 3. Hide archived projects by default and expose `?includeArchived=true`
 4. Block new goal/review/prompt creation in archived projects
 
-### Remaining implementation order
-
-1. Design delete semantics and confirmation UX
-2. Add `DELETE /bridge/projects/:key`
-3. Console UI: archive/delete affordance with confirmation
-
 ---
 
 ## 3. Audit event with projectId (implemented)
