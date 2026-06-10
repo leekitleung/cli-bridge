@@ -150,7 +150,7 @@ Returns detailed data for a single project.
     "activeGoal": { "id": "...", "description": "...", "status": "executing" } | null,
     "goalsSummary": [{ "id": "...", "description": "...", "status": "done" }],
     "blockedGate": { "goalId": "...", "stepId": "...", "stepIndex": 2 } | null,
-    "latestAudit": null,
+    "latestAudit": { "id": "...", "type": "create_pending_review", "timestamp": ... } | null,
     "memory": []
   }
 }
@@ -176,7 +176,7 @@ Returned when the project key is unknown AND no records reference it.
 | `status.activeGoal` | object? | The first active goal (not done/cancelled/failed). Null if none. |
 | `status.goalsSummary` | object[] | All goals with id, description, status. |
 | `status.blockedGate` | object? | First blocked-needs-gate step across all goals. Null if none. |
-| `status.latestAudit` | null | Reserved. |
+| `status.latestAudit` | AuditEvent? | Most recent audit event within project scope. Null if no events. |
 | `status.memory` | [] | Reserved. |
 
 ---
@@ -270,7 +270,8 @@ All `/bridge/projects*` paths require origin + pairing token authentication
 
 These endpoints do **not**:
 
-- Accept POST, PUT, PATCH, or DELETE (only GET; any other method → 405)
+- Accept mutations beyond the documented PATCH (metadata), POST .../archive,
+  and POST .../unarchive. Unlisted mutation paths return 405.
 - Modify any store, spawn any process, or bypass any gate
 - Auto-execute, auto-approve, or auto-send anything
 

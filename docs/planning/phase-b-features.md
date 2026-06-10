@@ -42,20 +42,23 @@ which has no HTTP endpoint or console UI.
 
 ---
 
-## 2. Archive / delete strategy
+## 2. Archive / unarchive (partial implementation)
 
-### Current state
+### Current state (implemented 2026-06-10)
 
-No archive or delete mechanism exists. Records are in-memory and
-lost on restart (until persistence is implemented).
+Archive is implemented as soft-delete via `POST /bridge/projects/:key/archive`
+and `POST /bridge/projects/:key/unarchive`. Archived projects:
+- Are excluded from `GET /bridge/projects` by default
+- Can be included with `?includeArchived=true`
+- Block new goal/review/prompt creation (409)
+- Remain readable via `GET /bridge/projects/:key`
+- Persist across restarts via v2 snapshot
 
-### Target
+### Remaining work
 
-- **Archive**: soft-delete a project. Records remain but the project
-  is excluded from `/bridge/projects` listing. A `GET /bridge/projects?showArchived=true`
-  flag exposes archived projects.
 - **Delete**: hard-delete a project and all its records. Requires
   explicit confirmation gate (console UI with double-confirm).
+- **Console UI**: archive/unarchive affordance and filtered views.
 
 ### Constraints
 

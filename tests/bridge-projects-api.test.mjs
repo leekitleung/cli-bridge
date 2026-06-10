@@ -377,3 +377,18 @@ test('default project cannot be archived', async () => {
   const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/archive`);
   assert.equal(res.statusCode, 409);
 });
+
+test('malformed percent-encoding in archive path does not crash', async () => {
+  const runtime = createBridgeRuntime();
+  // %ZZ is invalid percent-encoding — must NOT throw (500), but return 400.
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha%ZZ/archive`);
+  assert.ok(res.statusCode === 400 || res.statusCode === 404,
+    `malformed encoding must return 400/404, got ${res.statusCode}`);
+});
+
+test('malformed percent-encoding in unarchive path does not crash', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha%ZZ/unarchive`);
+  assert.ok(res.statusCode === 400 || res.statusCode === 404,
+    `malformed encoding must return 400/404, got ${res.statusCode}`);
+});

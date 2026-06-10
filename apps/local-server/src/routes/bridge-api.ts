@@ -328,6 +328,15 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
   };
 }
 
+/** Safely decode a project path segment. Returns undefined on malformed encoding. */
+function decodeProjectPathSegment(raw: string): string | undefined {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 function projectDetailPathKey(pathname: string): string | undefined {
   const prefix = `${BRIDGE_PROJECTS_PATH}/`;
   if (!pathname.startsWith(prefix)) {
@@ -337,12 +346,8 @@ function projectDetailPathKey(pathname: string): string | undefined {
   if (raw.length === 0 || raw.includes('/')) {
     return undefined;
   }
-  try {
-    const decoded = decodeURIComponent(raw);
-    return validateProjectKey(decoded) ?? undefined;
-  } catch {
-    return undefined;
-  }
+  const decoded = decodeProjectPathSegment(raw);
+  return decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
 }
 
 export async function readJsonBody(request: IncomingMessage): Promise<
@@ -809,7 +814,9 @@ export async function handleBridgeRequest(
   // POST /bridge/projects/:key/archive
   const archiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/archive$/);
   if (archiveMatch && method === 'POST') {
-    const key = validateProjectKey(decodeURIComponent(archiveMatch[1]));
+    const decoded = decodeProjectPathSegment(archiveMatch[1]);
+    if (!decoded) return error(400, 'Invalid project key');
+    const key = validateProjectKey(decoded);
     if (!key) return error(400, 'Invalid project key');
     if (key === DEFAULT_PROJECT_KEY) return error(409, 'Cannot archive the default project');
     const existing = runtime.projectStore.get(key);
@@ -823,7 +830,9 @@ export async function handleBridgeRequest(
   // POST /bridge/projects/:key/unarchive
   const unarchiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/unarchive$/);
   if (unarchiveMatch && method === 'POST') {
-    const key = validateProjectKey(decodeURIComponent(unarchiveMatch[1]));
+    const decoded = decodeProjectPathSegment(unarchiveMatch[1]);
+    if (!decoded) return error(400, 'Invalid project key');
+    const key = validateProjectKey(decoded);
     if (!key) return error(400, 'Invalid project key');
     const existing = runtime.projectStore.get(key);
     if (!existing) return error(404, 'Project not found');
