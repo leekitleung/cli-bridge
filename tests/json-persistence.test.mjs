@@ -125,3 +125,83 @@ test('hydration skips invalid records without throwing', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ════════════════════════════════════════════════════════════════════
+// Phase B closeout — snapshot persistence regression
+// ════════════════════════════════════════════════════════════════════
+
+test('project metadata persists and rehydrates across restarts', () => {
+  const dir = tempDir();
+  let runtime1 = createBridgeRuntime({ dataDir: dir });
+  runtime1.projectStore.upsert({ key: 'alpha', label: 'Alpha', description: 'Test project' });
+  runtime1.persist();
+
+  let runtime2 = createBridgeRuntime({ dataDir: dir });
+  const project = runtime2.projectStore.get('alpha');
+  assert.ok(project, 'project must persist across restart');
+  assert.equal(project.label, 'Alpha');
+  assert.equal(project.description, 'Test project');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('project archivedAt persists and rehydrates across restarts', () => {
+  const dir = tempDir();
+  let runtime1 = createBridgeRuntime({ dataDir: dir });
+  runtime1.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  runtime1.projectStore.archive('alpha');
+  runtime1.persist();
+
+  let runtime2 = createBridgeRuntime({ dataDir: dir });
+  const project = runtime2.projectStore.get('alpha');
+  assert.ok(project, 'archived project must persist');
+  assert.equal(typeof project.archivedAt, 'number');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('AuditEvent.projectId persists and rehydrates across restarts', () => {
+  const dir = tempDir();
+  let runtime1 = createBridgeRuntime({ dataDir: dir });
+  runtime1.pendingPromptStore.createPendingPrompt({
+    sessionId: 's1', prompt: 'test', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'alpha',
+  });
+  runtime1.persist();
+
+  let runtime2 = createBridgeRuntime({ dataDir: dir });
+  const events = runtime2.auditLog.listEvents();
+  const promptEvent = events.find(e => e.type === 'create_pending_prompt');
+  assert.ok(promptEvent, 'audit event must persist');
+  assert.equal(promptEvent.projectId, 'alpha', 'projectId must survive round-trip');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('legacy audit event without projectId hydrates and is available via packetId fallback', () => {
+  const dir = tempDir();
+  const legacyEvent = {
+    id: 'legacy-1', sessionId: 's1', packetId: 'pkt-legacy',
+    type: 'create_pending_prompt', source: 'cli', target: 'agent',
+    result: { ok: true }, timestamp: 1, snapshot: {}, safety: {},
+  };
+  const snapshot = {
+    version: 2,
+    packets: [{ id: 'pkt-legacy', sessionId: 's1', source: 'cli', target: 'agent',
+      kind: 'cli-message', rawContent: '', safety: { contentHash: '' },
+      persistedAt: 1 }],
+    auditEvents: [legacyEvent],
+    pendingPrompts: [{ id: 'prompt-legacy', sessionId: 's1', packetId: 'pkt-legacy',
+      source: 'cli', prompt: 'legacy', transport: 'clipboard', status: 'staged',
+      projectId: 'alpha', createdAt: 1, updatedAt: 1 }],
+    outboundPrompts: [],
+    goals: [],
+    plans: [],
+    projects: [{ key: 'alpha', label: 'Alpha', createdAt: 1 }],
+  };
+  writeFileSync(resolve(dir, 'bridge-snapshot.json'), JSON.stringify(snapshot));
+  const runtime = createBridgeRuntime({ dataDir: dir });
+
+  const events = runtime.auditLog.listEvents();
+  const legacy = events.find(e => e.id === 'legacy-1');
+  assert.ok(legacy, 'legacy event must hydrate');
+  assert.equal(legacy.projectId, undefined, 'legacy event must have no projectId');
+  rmSync(dir, { recursive: true, force: true });
+});

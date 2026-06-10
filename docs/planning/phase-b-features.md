@@ -82,26 +82,23 @@ and `POST /bridge/projects/:key/unarchive`. Archived projects:
 
 ---
 
-## 3. Audit event with projectId
+## 3. Audit event with projectId (implemented)
 
 ### Current state
 
-`AuditEvent` has no `projectId` field. Audit events are filtered by
-matching `packetId` against scoped records in `/bridge/projects/:key`.
+`AuditEvent` has an optional `projectId?: string` field, validated by
+`validateAuditEvent()`. All project-scoped records (PendingPrompt,
+PendingReview, goal-plan generation, command review runner) propagate
+their `projectId` to audit events at creation time.
 
-### Target
+In `/bridge/projects/:key`, audit filtering uses a two-tier strategy:
+- **projectId authoritative**: if `event.projectId` is present, match
+  is by exact `projectId === key`. No fallback to packetId.
+- **legacy packetId fallback**: if `event.projectId` is absent, match
+  by scoped record `packetId` (goal.id, review.packetId, prompt.packetId).
 
-Add optional `projectId?: string` to `AuditEvent`. When an audit event
-is created, if the associated record has a `projectId`, copy it to the
-audit event.
-
-### Benefits
-
-- Direct project-scoped audit queries without walking packetId mappings
-- Audit events persist their project scope even after record deletion
-- Simplifies `/bridge/projects/:key` filtering (direct field match)
-
-### Constraints
+Non-project-scoped audit events (bridge-loop, outbound, handoffs)
+remain unchanged and carry no `projectId`.
 
 - Must be backward-compatible (existing `projectId`-less audit events
   still filtered by packetId as today)

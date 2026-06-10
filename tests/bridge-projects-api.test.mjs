@@ -497,3 +497,45 @@ test('encoded traversal-like project key in archive path is rejected', async () 
   const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/%2e%2e/archive`);
   assert.equal(res.statusCode, 400);
 });
+
+// ════════════════════════════════════════════════════════════════════
+// Phase B closeout — PATCH / metadata contract tests
+// ════════════════════════════════════════════════════════════════════
+
+test('PATCH /bridge/projects/:key updates label and description', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, {
+    label: 'New Alpha',
+    description: 'Updated desc',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.label, 'New Alpha');
+  assert.equal(res.payload.project.description, 'Updated desc');
+});
+
+test('PATCH /bridge/projects/:key rejects disallowed fields', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, {
+    key: 'renamed',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('PATCH /bridge/projects/:key rejects unknown project', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/unknown`, {
+    label: 'No one',
+  });
+  assert.equal(res.statusCode, 404);
+});
+
+test('PATCH /bridge/projects/:key is idempotent', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, { label: 'Alpha' });
+  const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, { label: 'Alpha' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.label, 'Alpha');
+});
