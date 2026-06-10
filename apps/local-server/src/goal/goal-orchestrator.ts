@@ -287,7 +287,10 @@ export class GoalOrchestrator {
    */
   runAll(goalId: string, stepOpts?: AdvanceStepOptions): AdvanceResult[] {
     const results: AdvanceResult[] = [];
-    const maxSteps = this.stepCeiling * 2; // safety valve
+    // Allow one loop turn per executable step plus one follow-up observation
+    // per step for gated/noop/terminal outcomes before the persisted ceiling
+    // remains the authoritative stop condition.
+    const maxSteps = this.stepCeiling * 2;
 
     for (let i = 0; i < maxSteps; i += 1) {
       const result = this.advance(goalId, stepOpts);

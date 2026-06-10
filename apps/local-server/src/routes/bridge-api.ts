@@ -350,6 +350,23 @@ function projectDetailPathKey(pathname: string): string | undefined {
   return decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
 }
 
+function projectActionPathKey(
+  pathname: string,
+  action: 'archive' | 'unarchive',
+): { matched: true; key: string | undefined } | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  const suffix = `/${action}`;
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) {
+    return { matched: false };
+  }
+  const raw = pathname.slice(prefix.length, -suffix.length);
+  if (raw.length === 0 || raw.includes('/')) {
+    return { matched: false };
+  }
+  const decoded = decodeProjectPathSegment(raw);
+  return { matched: true, key: decoded ? (validateProjectKey(decoded) ?? undefined) : undefined };
+}
+
 export async function readJsonBody(request: IncomingMessage): Promise<
   { ok: true; body: Record<string, unknown> } | { ok: false; message: string }
 > {
@@ -811,11 +828,9 @@ export async function handleBridgeRequest(
   }
 
   // POST /bridge/projects/:key/archive
-  const archiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/archive$/);
-  if (archiveMatch && method === 'POST') {
-    const decoded = decodeProjectPathSegment(archiveMatch[1]);
-    if (!decoded) return error(400, 'Invalid project key');
-    const key = validateProjectKey(decoded);
+  const archivePath = projectActionPathKey(pathname, 'archive');
+  if (archivePath.matched && method === 'POST') {
+    const key = archivePath.key;
     if (!key) return error(400, 'Invalid project key');
     if (key === DEFAULT_PROJECT_KEY) return error(409, 'Cannot archive the default project');
     const existing = runtime.projectStore.get(key);
@@ -827,11 +842,9 @@ export async function handleBridgeRequest(
   }
 
   // POST /bridge/projects/:key/unarchive
-  const unarchiveMatch = pathname.match(/^\/bridge\/projects\/([^/]+)\/unarchive$/);
-  if (unarchiveMatch && method === 'POST') {
-    const decoded = decodeProjectPathSegment(unarchiveMatch[1]);
-    if (!decoded) return error(400, 'Invalid project key');
-    const key = validateProjectKey(decoded);
+  const unarchivePath = projectActionPathKey(pathname, 'unarchive');
+  if (unarchivePath.matched && method === 'POST') {
+    const key = unarchivePath.key;
     if (!key) return error(400, 'Invalid project key');
     const existing = runtime.projectStore.get(key);
     if (!existing) return error(404, 'Project not found');

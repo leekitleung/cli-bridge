@@ -462,8 +462,12 @@ function renderStatusPanel() {
 
   // Progress
   if (status && status.progress) {
-    const pct = status.progress.total > 0 ? Math.round((status.progress.completed / status.progress.total) * 100) : 0;
-    $('status-progress').innerHTML = '<div>' + status.progress.completed + ' / ' + status.progress.total + ' steps</div><div class="progress-bar"><div class="fill" style="width:' + pct + '%"></div></div>';
+    const completed = Number(status.progress.completed);
+    const total = Number(status.progress.total);
+    const pct = Number.isFinite(total) && total > 0 && Number.isFinite(completed)
+      ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
+      : 0;
+    $('status-progress').innerHTML = '<div>' + escapeHtml(status.progress.completed) + ' / ' + escapeHtml(status.progress.total) + ' steps</div><div class="progress-bar"><div class="fill" style="width:' + pct + '%"></div></div>';
   } else {
     $('status-progress').innerHTML = '<span class="unavailable">no active plan</span>';
   }
@@ -472,7 +476,7 @@ function renderStatusPanel() {
   if (status && status.activeGoal) {
     let nextText = 'next: —';
     if (status.blockedGate) {
-      nextText = 'next: step ' + status.blockedGate.stepIndex + ' <span class="pill gate">blocked-needs-gate</span>';
+      nextText = 'next: step ' + escapeHtml(status.blockedGate.stepIndex) + ' <span class="pill gate">blocked-needs-gate</span>';
     }
     $('status-active-goal').innerHTML = '<div>' + escapeHtml(status.activeGoal.description.slice(0, 60)) + '</div><div style="margin-top:4px;font-size:11px;color:var(--muted)">' + nextText + '</div>';
   } else {
@@ -486,12 +490,12 @@ function renderStatusPanel() {
     const terminal = status.goalsSummary.filter(g => terminalStatuses.includes(g.status));
     let goalsHtml = '';
     active.forEach(g => {
-      goalsHtml += '<div><span class="pill">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
+      goalsHtml += '<div><span class="pill">' + escapeHtml(g.status) + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
     });
     if (terminal.length) {
       goalsHtml += '<div style="font-size:11px;color:var(--muted);margin-top:4px;">completed</div>';
       terminal.forEach(g => {
-        goalsHtml += '<div><span class="pill done">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
+        goalsHtml += '<div><span class="pill done">' + escapeHtml(g.status) + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>';
       });
     }
     $('status-goals').innerHTML = goalsHtml;
@@ -536,17 +540,17 @@ function renderGoalCard() {
   }
   const g = activeGoal.goal;
   let html = '<div style="font-size:14px;font-weight:500;">' + escapeHtml(g.description) + '</div>';
-  html += '<div style="margin-top:6px;"><span class="pill">' + g.status + '</span></div>';
+  html += '<div style="margin-top:6px;"><span class="pill">' + escapeHtml(g.status) + '</span></div>';
   if (activeGoal.plan) {
     html += '<div style="margin-top:12px;"><table><thead><tr><th>#</th><th>intent</th><th>kind</th><th>tier</th><th>status</th><th></th></tr></thead><tbody>';
     (activeGoal.plan.steps || []).forEach(s => {
       const mut = s.isStateMutating ? ' <span class="pill mut">mutating</span>' : '';
-      let statusPill = '<span class="pill">' + s.status + '</span>';
+      let statusPill = '<span class="pill">' + escapeHtml(s.status) + '</span>';
       if (s.status === 'done') statusPill = '<span class="pill done">done</span>';
       if (s.status === 'failed') statusPill = '<span class="pill failed">failed</span>';
       if (s.status === 'blocked-needs-gate') statusPill = '<span class="pill gate">blocked-needs-gate</span>';
-      const gateBtn = s.status === 'blocked-needs-gate' ? '<button class="gate-btn" data-gate="' + s.id + '" data-goal="' + g.id + '">Approve gate</button>' : '';
-      html += '<tr><td>' + s.index + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + s.kind + '</td><td>' + s.tier + '</td><td>' + statusPill + '</td><td>' + gateBtn + '</td></tr>';
+      const gateBtn = s.status === 'blocked-needs-gate' ? '<button class="gate-btn" data-gate="' + escapeHtml(s.id) + '" data-goal="' + escapeHtml(g.id) + '">Approve gate</button>' : '';
+      html += '<tr><td>' + escapeHtml(s.index) + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + escapeHtml(s.kind) + '</td><td>' + escapeHtml(s.tier) + '</td><td>' + statusPill + '</td><td>' + gateBtn + '</td></tr>';
     });
     html += '</tbody></table></div>';
     html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">';
