@@ -72,6 +72,16 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
   assert.equal(/claude\s+-p|spawn\(|execFile\(|child_process/.test(html), false);
 });
 
+// Task 15 regression: console must not fetch /console/project as a data endpoint.
+test('project console does not call /console/project for data loading', () => {
+  const html = renderProjectConsoleHtml();
+  // The only /console/project references are the path constant definition and
+  // the header comment. No fetch() or api() call targets /console/project.
+  assert.equal(html.includes("'/console/project'"), false);
+  assert.equal(html.includes('"/console/project"'), false);
+  assert.equal(html.includes('`/console/project`'), false);
+});
+
 test('project console keeps token in memory and persists only the active project key', () => {
   const html = renderProjectConsoleHtml();
 
