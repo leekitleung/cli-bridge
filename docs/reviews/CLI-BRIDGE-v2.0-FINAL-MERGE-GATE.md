@@ -5,11 +5,11 @@
 
 ## Git State
 
-Branch: `feat/v2.0-goal-data-model` (clean working tree, unpushed).
+Branch: `feat/v2.0-goal-data-model` (pushed to `origin`, clean working tree at verification time).
 
-Verification was run against commit `4e3e50f`. Because this final-gate
-document is itself a commit, exact HEAD may advance by one at review
-time. Run `git log --oneline -1` to confirm current HEAD.
+Verification commands were run during release closeout before this evidence-sync
+doc update. Run `git log --oneline -1` and the gate commands at review time if
+exact HEAD-level evidence is required.
 
 ## Changed Area Summary
 
@@ -36,14 +36,15 @@ time. Run `git log --oneline -1` to confirm current HEAD.
 ## Remote Review Gate
 
 ```
-npm run remote-review-gate → fail
-  - remote-head-mismatch: local branch contains unpushed commits
+npm run remote-review-gate → pass
+  - remoteMatchesLocal: true
+  - pushed: true
   - pr-unavailable: gh CLI not configured
   - ci-unavailable: gh CLI not configured
 ```
 
-**Assessment**: The failure is a release-process issue (unpushed commits, no GitHub CLI).
-No code-quality blocking issues. Merge is blocked only by the need to push before PR review.
+**Assessment**: The branch is pushed and remote matches local. PR/CI checks remain
+manual because GitHub CLI is not installed/configured in this environment.
 
 ## Safety Boundary Scan
 
@@ -70,7 +71,8 @@ in console code, no `spawn/provider/daemon` in any new code paths.
 
 ## Residual Risks
 
-1. **Unpushed commits**: Local branch is ahead of origin. Must push before PR/CI review.
+1. **PR/CI visibility**: GitHub CLI is unavailable in this environment. PR creation
+   and CI observation must be completed manually or from a GitHub-authenticated shell.
 2. **Legacy audit events**: Without projectId, rely on packetId fallback. Tested end-to-end.
 3. **Console inline edit**: Uses `innerHTML` for input replacement — all injected values escapeHtml'd. User input is the only unescaped content (edit input field), as designed.
 4. **jsdom change events**: Checkbox `dispatchEvent('change')` doesn't fire listeners in jsdom test harness. Behavior tests use `window.refreshAll()` workaround. Real browser behavior unaffected.
@@ -78,9 +80,8 @@ in console code, no `spawn/provider/daemon` in any new code paths.
 ## Recommendation
 
 **Merge-ready** pending:
-1. Push `feat/v2.0-goal-data-model` to remote
-2. Open PR against `main`
-3. Run CI (if available)
-4. Senior review agent final approval
+1. Open PR against `main`
+2. Run CI (if available)
+3. Senior review agent final approval
 
 No code changes needed. All verification passes. No new abilities or scope creep detected.
