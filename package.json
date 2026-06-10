@@ -18,6 +18,7 @@
   "devDependencies": {
     "@types/node": "^22.13.0",
     "esbuild": "^0.28.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.8.3"
   }
 }
