@@ -267,18 +267,6 @@ function buildProjectStatus(goals: GoalWithPlan[]): ProjectDerivedStatus {
   };
 }
 
-function collectSessionIds(
-  goals: GoalWithPlan[],
-  reviews: AgentReviewRequest[],
-  prompts: PendingPrompt[],
-): Set<string> {
-  const ids = new Set<string>();
-  for (const { goal } of goals) ids.add(goal.sessionId);
-  for (const review of reviews) ids.add(review.sessionId);
-  for (const prompt of prompts) ids.add(prompt.sessionId);
-  return ids;
-}
-
 function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
   summary: ProjectSummary;
   goals: GoalWithPlan[];
@@ -295,15 +283,20 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
     return undefined;
   }
 
-  // Collect packetIds from all scoped records to filter audit events.
-  // Using packetId avoids cross-project leakage when two projects share
-  // a sessionId (e.g. same session creates goals/reviews in both projects).
-  const recordPacketIds = new Set<string>();
-  for (const { goal } of goals) recordPacketIds.add(goal.id);
-  for (const review of reviews) recordPacketIds.add(review.packetId);
-  for (const prompt of pendingPrompts) recordPacketIds.add(prompt.packetId);
+  // Collect all record identifiers used in audit event filtering.
+  // Both Goal, AgentReviewRequest, and PendingPrompt each have an identifier
+  // that matches audit events' packetId field:
+  //   - Goal.id → used as packetId in goal-related audit events
+  //   - Review.packetId → used as packetId in review-related audit events
+  //   - PendingPrompt.packetId → used as packetId in prompt-related audit events
+  // Using these ids (rather than sessionId) prevents cross-project leakage
+  // when two projects share a sessionId.
+  const scopedRecordIds = new Set<string>();
+  for (const { goal } of goals) scopedRecordIds.add(goal.id);
+  for (const review of reviews) scopedRecordIds.add(review.packetId);
+  for (const prompt of pendingPrompts) scopedRecordIds.add(prompt.packetId);
   const auditEvents = runtime.auditLog.listEvents()
-    .filter((event) => event.packetId ? recordPacketIds.has(event.packetId) : false);
+    .filter((event) => event.packetId ? scopedRecordIds.has(event.packetId) : false);
 
   return {
     summary,

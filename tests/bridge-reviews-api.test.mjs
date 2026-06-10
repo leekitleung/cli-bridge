@@ -178,3 +178,29 @@ test('missing reviewId returns 400 on confirm/run/cancel', async () => {
     assert.equal(res.statusCode, 400);
   }
 });
+
+// P1 regression: nextPrompt must inherit projectId from the review.
+test('review next prompt inherits projectId from the review', async () => {
+  const runtime = runtimeWith(fakeReviewAdapter(JSON.stringify({
+    summary: 'ok',
+    findings: [],
+    nextPromptDraft: 'follow-up action',
+  })));
+
+  const create = await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_PATH, jsonRequest({
+    sessionId: 's-proj',
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'review this',
+    projectId: 'my-project',
+  }));
+  assert.equal(create.statusCode, 201);
+  assert.equal(create.payload.review.projectId, 'my-project');
+
+  await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_CONFIRM_PATH, jsonRequest({ reviewId: create.payload.review.id }));
+  const run = await handleBridgeRequest(runtime, 'POST', BRIDGE_REVIEWS_RUN_PATH, jsonRequest({ reviewId: create.payload.review.id }));
+
+  assert.equal(run.statusCode, 200);
+  assert.equal(run.payload.nextPrompt.projectId, 'my-project',
+    'nextPrompt must inherit review.projectId');
+});
