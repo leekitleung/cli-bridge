@@ -39,9 +39,17 @@ loops.
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
 - **Project Workspace Console** (`/console/project`): a project-centric
   cockpit that consolidates goals, plans, reviews, prompts, audit, and status
-  into a single three-region interface. Project is the top-level entity. Phase A
-  uses a derived activity feed and step-based progress; rich status fields
-  (version/tests/commits/memory) are Phase B.
+  into a single three-region interface. Data is loaded from the `/bridge/projects`
+  aggregation endpoints (read-only projections over existing bridge stores).
+  Project switching with loading state; status panel with server-computed
+  progress, active goal, goals summary, and blocked-gate indicator.
+- **Project aggregation endpoints**:
+  - `GET /bridge/projects` → `{ projects: ProjectSummary[] }`
+    where `ProjectSummary = { project, goalCount, activeGoalCount, reviewCount, promptCount, status }`.
+  - `GET /bridge/projects/:key` → `{ project, summary, goals, reviews, pendingPrompts, auditEvents, status }`.
+    The `status` field is a server-computed `ProjectDerivedStatus` with progress, activeGoal, goalsSummary, blockedGate.
+  - Both are read-only; no POST/PUT/DELETE. Records without explicit `projectId` are backfilled to the default `"cli-bridge"` project.
+  - Detailed contract: see `docs/contracts/bridge-projects-api.md`.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is
