@@ -154,8 +154,57 @@ test('GET /bridge/projects/:key scopes audit events by records in that project',
   assert.equal(beta.statusCode, 200);
   assert.ok(alpha.payload.auditEvents.length >= 1);
   assert.ok(beta.payload.auditEvents.length >= 1);
-  assert.ok(alpha.payload.auditEvents.every((event) => event.sessionId === 's-alpha'));
-  assert.ok(beta.payload.auditEvents.every((event) => event.sessionId === 's-beta'));
+  // Audit events filtered by record packetId — different sessions → isolated.
+  const alphaPacketIds = new Set(
+    alpha.payload.pendingPrompts.map(p => p.packetId)
+  );
+  const betaPacketIds = new Set(
+    beta.payload.pendingPrompts.map(p => p.packetId)
+  );
+  assert.ok(alpha.payload.auditEvents.every(e => alphaPacketIds.has(e.packetId)),
+    'alpha audit events must reference alpha-scoped packetIds');
+  assert.ok(beta.payload.auditEvents.every(e => betaPacketIds.has(e.packetId)),
+    'beta audit events must reference beta-scoped packetIds');
+});
+
+// P1 regression: same session across two projects must NOT cross-leak audit events.
+test('GET /bridge/projects/:key audit isolation when two projects share the same session', async () => {
+  const runtime = createBridgeRuntime();
+  const sharedSession = 'session-shared';
+
+  // Create a review in project-alpha.
+  await call(runtime, 'POST', BRIDGE_REVIEWS_PATH, {
+    sessionId: sharedSession,
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'Alpha review content here',
+    projectId: 'alpha',
+  });
+  // Create a pending prompt in project-beta — same sessionId.
+  await call(runtime, 'POST', BRIDGE_PENDING_PROMPTS_PATH, {
+    sessionId: sharedSession,
+    prompt: 'Beta prompt content here',
+    projectId: 'beta',
+  });
+
+  const alpha = await call(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha`);
+  const beta = await call(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/beta`);
+
+  assert.equal(alpha.statusCode, 200);
+  assert.equal(beta.statusCode, 200);
+  assert.ok(alpha.payload.auditEvents.length >= 1, 'alpha has audit events');
+  assert.ok(beta.payload.auditEvents.length >= 1, 'beta has audit events');
+
+  // Verify no cross-contamination via packetId.
+  const aPacketIds = new Set(alpha.payload.reviews.map(r => r.packetId));
+  const bPacketIds = new Set(beta.payload.pendingPrompts.map(p => p.packetId));
+  assert.ok(alpha.payload.auditEvents.every(e => e.packetId && aPacketIds.has(e.packetId)),
+    'alpha audit must only reference alpha packetIds');
+  assert.ok(beta.payload.auditEvents.every(e => e.packetId && bPacketIds.has(e.packetId)),
+    'beta audit must only reference beta packetIds');
+  // Extra safety: alpha must NOT have beta's packetIds in audit.
+  assert.ok(alpha.payload.auditEvents.every(e => !bPacketIds.has(e.packetId)),
+    'alpha audit must NOT reference beta packetIds');
 });
 
 test('GET /bridge/projects/:key returns 404 for unknown projects with no records', async () => {

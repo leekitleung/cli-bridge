@@ -295,9 +295,15 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
     return undefined;
   }
 
-  const sessionIds = collectSessionIds(goals, reviews, pendingPrompts);
+  // Collect packetIds from all scoped records to filter audit events.
+  // Using packetId avoids cross-project leakage when two projects share
+  // a sessionId (e.g. same session creates goals/reviews in both projects).
+  const recordPacketIds = new Set<string>();
+  for (const { goal } of goals) recordPacketIds.add(goal.id);
+  for (const review of reviews) recordPacketIds.add(review.packetId);
+  for (const prompt of pendingPrompts) recordPacketIds.add(prompt.packetId);
   const auditEvents = runtime.auditLog.listEvents()
-    .filter((event) => sessionIds.has(event.sessionId));
+    .filter((event) => event.packetId ? recordPacketIds.has(event.packetId) : false);
 
   return {
     summary,

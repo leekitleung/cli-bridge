@@ -284,6 +284,7 @@ export class InMemoryPendingReviewStore {
         prompt: result.nextPromptDraft,
         source: 'user-selection',
         transport: 'managed-pty',
+        projectId: review.projectId,
         now,
       })
       : undefined;

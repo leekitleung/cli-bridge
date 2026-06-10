@@ -113,9 +113,15 @@ test('project console command bar routes only to controlled goal workflow action
   assert.match(html, /blocked-needs-gate/);
   assert.match(html, /Approve gate/);
 
+  // P1 fix: goal creation in command bar must pass active projectId.
+  assert.match(html, /projectId:\s*store\.activeProjectKey/,
+    'goal creation must include projectId: store.activeProjectKey');
+
   // Reviews are created in the Reviews section view (Task 8), not from the
   // command bar. The command bar only routes to goal workflow endpoints.
   assert.match(html, /\/bridge\/reviews', 'POST'/);  // present in reviews section, not command bar
+  // P1 fix: review creation must also pass active projectId.
+  assert.match(html, /projectId:\s*store\.activeProjectKey/);
 });
 
 test('project console page is served as HTML at /console/project without a token', async (t) => {

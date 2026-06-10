@@ -384,6 +384,7 @@ function renderProjectList() {
         await refreshAll();
       } finally {
         store.switchingProject = false;
+        renderAll();
       }
     });
   });
@@ -648,6 +649,7 @@ async function runReviewFlow() {
     const created = await api('/bridge/reviews', 'POST', {
       sessionId: 'project-console-' + Date.now(), sourceEndpointId: 'codex-command',
       targetEndpointId: target.value, prompt: content.value.trim(),
+      projectId: store.activeProjectKey,
     });
     if (!created.ok) { if (statusEl) { statusEl.textContent = 'create failed: ' + (created.data?.message || created.status); statusEl.style.color = '#f87171'; } return; }
     const reviewId = created.data.review.id;
@@ -722,7 +724,7 @@ async function handleCommand() {
     return;
   }
   // Default: create a new goal
-  await goalAction('/bridge/goals', { sessionId: 'project-console-' + Date.now(), description: input }, 'creating goal…');
+  await goalAction('/bridge/goals', { sessionId: 'project-console-' + Date.now(), description: input, projectId: store.activeProjectKey }, 'creating goal…');
 }
 
 // ─── Utilities ───
