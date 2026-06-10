@@ -451,27 +451,30 @@ test('projectId-match audit filtering isolates events by projectId', async () =>
 
 test('audit event with mismatched projectId is excluded even if packetId matches', async () => {
   const runtime = createBridgeRuntime();
-  // Create a prompt scoped to 'beta'.
+  // Create alpha-scoped record so /bridge/projects/alpha exists (returns 200).
   runtime.pendingPromptStore.createPendingPrompt({
-    sessionId: 's1', prompt: 'beta prompt', source: 'chatgpt-web',
-    transport: 'clipboard', projectId: 'beta',
+    sessionId: 's1', prompt: 'alpha prompt', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'alpha',
   });
-  // Manually forge an audit event with projectId='alpha' but packetId of a beta-scoped record.
-  const betaEvents = runtime.auditLog.listEvents();
-  const betaPromptEvent = betaEvents.find(e => e.projectId === 'beta');
+  // Manually forge an audit event with projectId='beta', but an alpha-scoped packetId.
+  const alphaEvents = runtime.auditLog.listEvents();
+  const alphaPromptEvent = alphaEvents.find(e => e.projectId === 'alpha');
   runtime.auditLog.append({
-    ...betaPromptEvent,
-    id: 'forged-alpha',
-    projectId: 'alpha', // mismatched!
-    // packetId stays the same (beta-scoped)
+    ...alphaPromptEvent,
+    id: 'forged-beta',
+    projectId: 'beta', // authoritative: 'beta' — mismatched!
+    // packetId stays alpha-scoped
   });
 
-  // Fetch alpha project detail — the forged event must NOT appear.
+  // Fetch alpha project detail — the forged event must NOT appear
+  // because projectId='beta' is authoritative, not packetId.
   const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const alphaDetail = await handleBridgeRequest(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha`, {});
+  assert.equal(alphaDetail.statusCode, 200, 'alpha detail must return 200');
   const alphaAuditEvents = alphaDetail.payload.auditEvents || [];
-  assert.ok(!alphaAuditEvents.some(e => e.id === 'forged-alpha'),
-    'mismatched projectId event must be excluded from alpha detail');
+  assert.ok(alphaAuditEvents.length > 0, 'alpha must have some audit events');
+  assert.ok(!alphaAuditEvents.some(e => e.id === 'forged-beta'),
+    'mismatched projectId (beta) event must be excluded from alpha detail');
 });
 
 test('/bridge/projects/:key includes events by projectId-first matching', async () => {
