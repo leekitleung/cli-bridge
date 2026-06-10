@@ -184,3 +184,20 @@ test('project switch loading still only fetches /bridge/projects*', () => {
     '/bridge/reviews/dispatch',
   ]));
 });
+
+// Task 17 regression: try/finally ensures switchingProject is always reset.
+test('project switch loading state uses try/finally to prevent stuck state', () => {
+  const html = renderProjectConsoleHtml();
+
+  // The try block wrapping refreshAll must be present.
+  assert.match(html, /try\s*\{[^}]*await refreshAll/);
+
+  // The finally block must clear switchingProject.
+  assert.match(html, /finally\s*\{[^}]*switchingProject\s*=\s*false/);
+
+  // switchingProject is set false only inside finally (not duplicated after).
+  const afterFinally = html.split('finally')[1] || '';
+  // The only switchingProject = false should be inside the finally block.
+  const allFalseMatches = html.match(/switchingProject\s*=\s*false/g) || [];
+  assert.equal(allFalseMatches.length, 1, 'switchingProject = false must appear exactly once (inside finally)');
+});

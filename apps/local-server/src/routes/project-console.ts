@@ -374,8 +374,11 @@ function renderProjectList() {
       store.switchingProject = true;
       store.cache.detail = null;
       renderWorkspace();
-      await refreshAll();
-      store.switchingProject = false;
+      try {
+        await refreshAll();
+      } finally {
+        store.switchingProject = false;
+      }
     });
   });
 }
