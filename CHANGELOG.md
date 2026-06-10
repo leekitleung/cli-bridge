@@ -26,9 +26,17 @@ All notable changes to CLI Bridge are documented here.
   requirements, design (with Data Availability table), and implementation tasks.
 - **Review record** (`docs/reviews/PROJECT-WORKSPACE-CONSOLE-SPEC-REVIEW.md`).
 
+### Changed
+
+- **Task 15** — Project Workspace Console data layer migrated to read-only
+  `/bridge/projects` aggregation endpoints (replaces individual GET calls to
+  `/bridge/goals`, `/bridge/reviews`, `/bridge/pending-prompts`). Status panel
+  now uses server-computed `ProjectDerivedStatus`; project list renders real
+  multi-project navigation. All POST action endpoints unchanged.
+
 ### Unchanged
 
 - All existing `/bridge/*` endpoint contracts, security model, gate enforcement,
   and thin-client guarantees are preserved verbatim.
 - Existing console routes (`/console`, `/console/goals`) continue to work.
-- Full test suite passes (311/311).
+- Full test suite passes (330/330).

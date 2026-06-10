@@ -2,11 +2,11 @@
 // consolidates goal/review/prompt/audit/status into a single three-region
 // workspace where Project is the top-level entity.
 //
-// Phase B (Task 15): Data layer migrated from individual /bridge/* GET endpoints
-// to the read-only /bridge/projects aggregation endpoints. The console now:
+// Data source (Task 15): Reads from the read-only /bridge/projects aggregation
+// endpoints:
 //   - Lists projects via GET /bridge/projects
 //   - Loads project detail via GET /bridge/projects/:key
-//   - Derives status from the server-computed ProjectDerivedStatus
+//   - Receives server-computed ProjectDerivedStatus
 //   - Still calls individual POST endpoints for actions (create, approve, etc.)
 //
 // Like the review and goal consoles, this is a THIN CLIENT: it holds NO
@@ -331,7 +331,7 @@ $('connect').addEventListener('click', async () => {
   }
 });
 
-// ─── Refresh — Phase B: uses /bridge/projects aggregation endpoints ───
+// ─── Refresh — uses /bridge/projects aggregation endpoints ───
 async function refreshAll() {
   const [projectsRes, detailRes] = await Promise.all([
     api('/bridge/projects'),
@@ -359,7 +359,7 @@ function renderProjectList() {
   }
   list.innerHTML = projects.map(p => {
     const activeClass = p.project.key === store.activeProjectKey ? ' active' : '';
-    const statusLabel = '<span class="status-label">' + (p.status || 'idle') + ' · ' + p.goalCount + ' goals</span>';
+    const statusLabel = '<span class="status-label">' + escapeHtml(p.status || 'idle') + ' · ' + escapeHtml(String(p.goalCount)) + ' goals</span>';
     return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + '</li>';
   }).join('');
 
@@ -513,7 +513,7 @@ function renderTimeline() {
     }
   });
   (detail.reviews || []).forEach(r => {
-    entries.push({ ts: r.createdAt, origin: 'user', text: 'Review created to' + r.targetEndpointId + ' [' + r.status + ']' });
+    entries.push({ ts: r.createdAt, origin: 'user', text: 'Review created → ' + r.targetEndpointId + ' [' + r.status + ']' });
   });
   entries.sort((a, b) => b.ts - a.ts);
   if (entries.length === 0) {
