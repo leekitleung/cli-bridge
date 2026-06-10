@@ -13,6 +13,16 @@ import { renderProjectConsoleHtml } from '../apps/local-server/src/routes/projec
 
 // ---- Helpers ----
 
+/** Poll until predicate returns true or timeout expires. */
+async function waitFor(predicate, timeoutMs = 500) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return;
+    await new Promise(r => setTimeout(r, 10));
+  }
+  throw new Error('waitFor timeout after ' + timeoutMs + 'ms');
+}
+
 /** Create a jsdom window loaded with the console HTML and mocked APIs. */
 function setupConsole(options = {}) {
   const html = renderProjectConsoleHtml();
@@ -149,13 +159,8 @@ test('switching project displays loading and then renders new detail', async () 
   assert.match(loadingDuring, /Loading project detail/,
     'loading indicator must appear during switch');
 
-  // Wait for async refresh.
-  await new Promise(r => setTimeout(r, 50));
-
-  // Loading should be gone.
-  const loadingAfter = document.getElementById('goal-content').textContent;
-  assert.ok(!loadingAfter.includes('Loading project detail'),
-    'loading indicator must disappear after switch');
+  // Wait for async refresh — loading must disappear.
+  await waitFor(() => !document.getElementById('goal-content').textContent.includes('Loading project detail'), 500);
 
   // Verify fetches.
   assert.ok(fetchCalls.some(c => c.path === '/bridge/projects/alpha'),
