@@ -37,7 +37,7 @@ time. Run `git log --oneline -1` to confirm current HEAD.
 
 ```
 npm run remote-review-gate → fail
-  - remote-head-mismatch: local ahead of origin by 12 commits
+  - remote-head-mismatch: local branch contains unpushed commits
   - pr-unavailable: gh CLI not configured
   - ci-unavailable: gh CLI not configured
 ```
@@ -70,7 +70,7 @@ in console code, no `spawn/provider/daemon` in any new code paths.
 
 ## Residual Risks
 
-1. **Unpushed commits**: 11 commits local-only. Must push before merge.
+1. **Unpushed commits**: Local branch is ahead of origin. Must push before PR/CI review.
 2. **Legacy audit events**: Without projectId, rely on packetId fallback. Tested end-to-end.
 3. **Console inline edit**: Uses `innerHTML` for input replacement — all injected values escapeHtml'd. User input is the only unescaped content (edit input field), as designed.
 4. **jsdom change events**: Checkbox `dispatchEvent('change')` doesn't fire listeners in jsdom test harness. Behavior tests use `window.refreshAll()` workaround. Real browser behavior unaffected.
