@@ -102,6 +102,10 @@ nav .section-nav { list-style: none; margin: 24px 0 0; padding: 0; border-top: 1
 nav .section-nav li { padding: 6px 16px; cursor: pointer; font-size: 12px; color: var(--muted); }
 nav .section-nav li:hover { color: var(--text); }
 nav .section-nav li.active { color: var(--text); font-weight: 500; }
+nav .archive-toggle { display: block; padding: 6px 16px; font-size: 11px; color: var(--muted); cursor: pointer; }
+nav .archive-toggle input { margin-right: 4px; vertical-align: middle; }
+.archive-btn { font-size: 10px; padding: 0 4px; margin-left: 4px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--muted); line-height: 16px; }
+.pill.archived { background: var(--border); }
 nav .empty-state { padding: 16px; font-size: 12px; color: var(--muted); }
 
 /* ─── Center Workspace ─── */
@@ -204,7 +208,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 <!-- Top Bar -->
 <header>
   <h1>CLI Bridge</h1>
-  <span class="project-name" id="top-project">Project: —</span>
+  <span class="project-name" id="top-project" title="Click to edit label" style="cursor:pointer">Project: —</span>
   <span class="branch" id="top-branch"></span>
   <div class="classic-links">
     <a href="/console">Review console</a>
@@ -225,6 +229,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <ul class="project-list" id="project-list">
     <li class="empty-state" id="project-empty">No projects yet</li>
   </ul>
+  <label class="archive-toggle"><input type="checkbox" id="toggle-archived" /> Show archived</label>
   <ul class="section-nav" id="section-nav" role="tablist">
     <li class="active" data-view="workspace" role="tab" tabindex="0" aria-selected="true">Timeline &amp; Goals</li>
     <li data-view="reviews" role="tab" tabindex="0" aria-selected="false">Reviews</li>
@@ -340,8 +345,10 @@ $('connect').addEventListener('click', async () => {
 
 // ─── Refresh — uses /bridge/projects aggregation endpoints ───
 async function refreshAll() {
+  const includeArchived = document.getElementById('toggle-archived')?.checked;
+  const listUrl = includeArchived ? '/bridge/projects?includeArchived=true' : '/bridge/projects';
   const [projectsRes, detailRes] = await Promise.all([
-    api('/bridge/projects'),
+    api(listUrl),
     api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey)),
   ]);
   if (projectsRes.ok) store.cache.projects = projectsRes.data.projects || [];
@@ -364,15 +371,31 @@ function renderProjectList() {
     list.innerHTML = '<li class="empty-state" id="project-empty">No projects yet</li>';
     return;
   }
-  list.innerHTML = projects.map(p => {
+  const showArchived = document.getElementById('toggle-archived')?.checked;
+  const visible = showArchived ? projects : projects.filter(p => !p.project.archivedAt);
+  if (!visible.length) {
+    list.innerHTML = '<li class="empty-state" id="project-empty">No visible projects</li>';
+    return;
+  }
+  list.innerHTML = visible.map(p => {
     const activeClass = p.project.key === store.activeProjectKey ? ' active' : '';
-    const statusLabel = '<span class="status-label">' + escapeHtml(p.status || 'idle') + ' · ' + escapeHtml(String(p.goalCount)) + ' goals</span>';
-    return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + '</li>';
+    const isArchived = !!p.project.archivedAt;
+    const isDefault = p.project.key === 'cli-bridge';
+    const badge = isArchived ? ' <span class="pill archived">archived</span>' : '';
+    const archiveBtn = (!isArchived && !isDefault)
+      ? '<button class="archive-btn" data-key="' + escapeHtml(p.project.key) + '" data-action="archive" title="Archive project">A</button>'
+      : (isArchived && !isDefault
+        ? '<button class="archive-btn" data-key="' + escapeHtml(p.project.key) + '" data-action="unarchive" title="Unarchive project">U</button>'
+        : '');
+    const statusLabel = '<span class="status-label">' + escapeHtml(p.status || 'idle') + ' · ' + escapeHtml(String(p.goalCount)) + ' goals' + badge + '</span>';
+    return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + archiveBtn + '</li>';
   }).join('');
 
   // Bind project switching
   list.querySelectorAll('.project-item').forEach(li => {
-    li.addEventListener('click', async () => {
+    li.addEventListener('click', async (e) => {
+      // Ignore clicks on archive buttons.
+      if (e.target.classList.contains('archive-btn')) return;
       if (li.dataset.key === store.activeProjectKey) return;
       store.activeProjectKey = li.dataset.key;
       localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
@@ -384,7 +407,24 @@ function renderProjectList() {
         await refreshAll();
       } finally {
         store.switchingProject = false;
-        renderAll();
+        // Bind the archived toggle.
+    const toggleArchived = document.getElementById('toggle-archived');
+    if (toggleArchived) toggleArchived.addEventListener('change', refreshAll);
+    renderAll();
+      }
+    });
+  });
+
+  // Bind archive/unarchive buttons
+  list.querySelectorAll('.archive-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.key;
+      const action = btn.dataset.action; // 'archive' or 'unarchive'
+      const path = '/bridge/projects/' + key + '/' + action;
+      const res = await api(path, 'POST');
+      if (res.ok) {
+        await refreshAll();
       }
     });
   });
@@ -393,7 +433,14 @@ function renderProjectList() {
 function renderTopBar() {
   const detail = store.cache.detail;
   const label = detail && detail.project ? detail.project.label : store.activeProjectKey;
+  const description = detail && detail.project ? detail.project.description || '' : '';
+  const key = store.activeProjectKey;
   $('top-project').textContent = 'Project: ' + label;
+  $('top-project').title = description ? label + ' — ' + description : 'Click to edit label';
+  $('top-project').onclick = () => beginInlineEdit(key, label, description, (newLabel) => {
+    api('/bridge/projects/' + encodeURIComponent(key), 'PATCH', { label: newLabel })
+      .then(res => { if (res.ok) refreshAll(); });
+  });
 }
 
 function renderStatusPanel() {
@@ -728,6 +775,27 @@ async function handleCommand() {
 }
 
 // ─── Utilities ───
+function beginInlineEdit(key, label, description, onSave) {
+  const el = document.getElementById('top-project');
+  if (!el) return;
+  const oldText = el.textContent;
+  el.innerHTML = '<input id="inline-edit-input" value="' + escapeHtml(label) + '" style="width:200px" />'
+    + '<button class="secondary" id="inline-edit-save" style="margin-left:4px">Save</button>'
+    + '<button id="inline-edit-cancel" style="margin-left:2px">Cancel</button>';
+  const input = document.getElementById('inline-edit-input');
+  const save = document.getElementById('inline-edit-save');
+  const cancel = document.getElementById('inline-edit-cancel');
+  save.onclick = () => {
+    const newLabel = input.value.trim();
+    if (newLabel && newLabel !== label) onSave(newLabel);
+    el.textContent = oldText;
+    renderTopBar();
+  };
+  cancel.onclick = () => { el.textContent = oldText; renderTopBar(); };
+  input.focus();
+  input.select();
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }

@@ -55,6 +55,7 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
   assert.deepEqual(paths, new Set([
     '/bridge/metrics',
     '/bridge/projects',
+    '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
     '/bridge/goals/approve',
     '/bridge/goals/step',
@@ -178,6 +179,7 @@ test('project switch loading still only fetches /bridge/projects*', () => {
   assert.deepEqual(paths, new Set([
     '/bridge/metrics',
     '/bridge/projects',
+    '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
     '/bridge/goals/approve',
     '/bridge/goals/step',
@@ -238,6 +240,7 @@ test('all bridge paths in console are within the allowed set', () => {
   const allowed = new Set([
     '/bridge/metrics',
     '/bridge/projects',
+    '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
     '/bridge/goals/approve',
     '/bridge/goals/step',
