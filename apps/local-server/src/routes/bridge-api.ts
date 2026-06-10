@@ -128,6 +128,16 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       auditLog.hydrateEvents(read.snapshot.auditEvents);
       pendingPromptStore.hydratePrompts(read.snapshot.pendingPrompts);
       outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
+      // Hydrate v2 goal/plan/project state (fail-open: skip invalid records).
+      for (const project of read.snapshot.projects ?? []) {
+        projectStore.hydrateProject(project);
+      }
+      for (const goal of read.snapshot.goals ?? []) {
+        goalStore.hydrateGoal(goal);
+      }
+      for (const plan of read.snapshot.plans ?? []) {
+        goalStore.hydratePlan(plan);
+      }
     }
   }
 
@@ -135,14 +145,15 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     if (!snapshotStore) {
       return;
     }
-    // Best-effort: only redacted/persistable records are exported. Raw content
-    // is never part of these exports.
-    snapshotStore.write(buildSnapshot(
-      packetStore.exportPackets(),
-      auditLog.exportEvents(),
-      pendingPromptStore.exportPrompts(),
-      outboundPromptStore.exportPrompts(),
-    ));
+    snapshotStore.write(buildSnapshot({
+      packets: packetStore.exportPackets(),
+      auditEvents: auditLog.exportEvents(),
+      pendingPrompts: pendingPromptStore.exportPrompts(),
+      outboundPrompts: outboundPromptStore.exportPrompts(),
+      goals: goalStore.exportGoals(),
+      plans: goalStore.exportPlans(),
+      projects: projectStore.exportProjects(),
+    }));
   };
 
   return {
@@ -298,7 +309,12 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
   for (const review of reviews) scopedRecordIds.add(review.packetId);
   for (const prompt of pendingPrompts) scopedRecordIds.add(prompt.packetId);
   const auditEvents = runtime.auditLog.listEvents()
-    .filter((event) => event.packetId ? scopedRecordIds.has(event.packetId) : false);
+    .filter((event) => {
+      // Prefer projectId match (v2 audit events carry project scope).
+      if (event.projectId && event.projectId === projectKey) return true;
+      // Fallback: match by scoped record packetId (v1 / legacy events).
+      return event.packetId ? scopedRecordIds.has(event.packetId) : false;
+    });
 
   return {
     summary,

@@ -253,6 +253,41 @@ export class InMemoryGoalStore {
     return Array.from(this.goals.values(), clone);
   }
 
+  /** Export goals for snapshot persistence. */
+  exportGoals(): Goal[] {
+    return this.listGoals();
+  }
+
+  /** Export plans for snapshot persistence. */
+  exportPlans(): Plan[] {
+    return Array.from(this.plans.values(), clone);
+  }
+
+  /** Hydrate a goal from snapshot data. Invalid goals are silently skipped. */
+  hydrateGoal(goal: Goal): boolean {
+    try {
+      assertGoal(goal);
+      this.goals.set(goal.id, clone(goal));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Hydrate a plan from snapshot data. Invalid plans are silently skipped. */
+  hydratePlan(plan: Plan): boolean {
+    try {
+      assertPlan(plan);
+      this.plans.set(plan.id, clone(plan));
+      if (plan.goalId) {
+        this.plansByGoal.set(plan.goalId, plan.id);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private transitionStep(
     goalId: string,
     stepId: string,

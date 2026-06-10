@@ -13,6 +13,8 @@ export interface CreateAuditEventInput {
   sessionId: string;
   packetId?: string;
   approvalId?: string;
+  /** Optional project scope — set from the parent record's projectId. */
+  projectId?: string;
   type: AuditEventType;
   source: string;
   target: string;
@@ -32,6 +34,7 @@ export function createAuditEvent(input: CreateAuditEventInput): AuditEvent {
     sessionId: input.sessionId,
     packetId: input.packetId,
     approvalId: input.approvalId,
+    projectId: input.projectId,
     type: input.type,
     source: input.source,
     target: input.target,

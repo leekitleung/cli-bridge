@@ -4,11 +4,14 @@ import { resolve } from 'node:path';
 import type {
   AuditEvent,
   BridgePacket,
+  Goal,
   OutboundPrompt,
   PendingPrompt,
+  Plan,
+  Project,
 } from '../../../../packages/shared/src/types.ts';
 
-export const SNAPSHOT_VERSION = 1;
+export const SNAPSHOT_VERSION = 2;
 export const SNAPSHOT_FILENAME = 'bridge-snapshot.json';
 
 export interface BridgeSnapshot {
@@ -17,6 +20,12 @@ export interface BridgeSnapshot {
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
   outboundPrompts: OutboundPrompt[];
+  /** v2: persisted goal state. */
+  goals: Goal[];
+  /** v2: persisted plan state. */
+  plans: Plan[];
+  /** v2: persisted project registry (explicitly registered projects only). */
+  projects: Project[];
 }
 
 export interface SnapshotWriteResult {
@@ -32,8 +41,6 @@ export interface SnapshotReadResult {
 }
 
 function snapshotPath(dataDir: string): string {
-  // The filename is a fixed constant, never derived from request input, so
-  // there is no path-traversal surface. Only the configured directory varies.
   return resolve(dataDir, SNAPSHOT_FILENAME);
 }
 
@@ -48,8 +55,6 @@ export class JsonSnapshotStore {
     return snapshotPath(this.dataDir);
   }
 
-  // Best-effort write. Never throws; returns a structured result instead so a
-  // disk failure cannot crash the server.
   write(snapshot: BridgeSnapshot): SnapshotWriteResult {
     try {
       mkdirSync(this.dataDir, { recursive: true });
@@ -64,8 +69,6 @@ export class JsonSnapshotStore {
     }
   }
 
-  // Best-effort read. A missing file or malformed JSON returns ok:false with no
-  // snapshot; the caller stays in-memory.
   read(): SnapshotReadResult {
     let text: string;
     try {
@@ -85,6 +88,9 @@ export class JsonSnapshotStore {
         auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
         pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
         outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
+        goals: Array.isArray(parsed.goals) ? parsed.goals : [],
+        plans: Array.isArray(parsed.plans) ? parsed.plans : [],
+        projects: Array.isArray(parsed.projects) ? parsed.projects : [],
       };
       return { ok: true, snapshot };
     } catch {
@@ -93,17 +99,25 @@ export class JsonSnapshotStore {
   }
 }
 
-export function buildSnapshot(
-  packets: BridgePacket[],
-  auditEvents: AuditEvent[],
-  pendingPrompts: PendingPrompt[],
-  outboundPrompts: OutboundPrompt[] = [],
-): BridgeSnapshot {
+export interface BuildSnapshotInput {
+  packets: BridgePacket[];
+  auditEvents: AuditEvent[];
+  pendingPrompts: PendingPrompt[];
+  outboundPrompts?: OutboundPrompt[];
+  goals?: Goal[];
+  plans?: Plan[];
+  projects?: Project[];
+}
+
+export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
   return {
     version: SNAPSHOT_VERSION,
-    packets,
-    auditEvents,
-    pendingPrompts,
-    outboundPrompts,
+    packets: input.packets,
+    auditEvents: input.auditEvents,
+    pendingPrompts: input.pendingPrompts,
+    outboundPrompts: input.outboundPrompts ?? [],
+    goals: input.goals ?? [],
+    plans: input.plans ?? [],
+    projects: input.projects ?? [],
   };
 }

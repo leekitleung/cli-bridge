@@ -156,6 +156,8 @@ export interface AuditEvent {
   sessionId: string;
   packetId?: string;
   approvalId?: string;
+  /** Optional project scope. Set from the record that triggered this event. */
+  projectId?: string;
   type: AuditEventType;
   source: string;
   target: string;

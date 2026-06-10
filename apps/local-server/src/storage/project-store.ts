@@ -142,6 +142,22 @@ export class InMemoryProjectStore {
     return Array.from(this.projects.values(), clone);
   }
 
+  /** Export explicit projects for snapshot persistence. */
+  exportProjects(): Project[] {
+    return this.list();
+  }
+
+  /** Hydrate a project from snapshot data. Invalid projects are silently skipped. */
+  hydrateProject(project: Project): boolean {
+    try {
+      assertProject(project);
+      this.projects.set(project.key, clone(project));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Build a ProjectSummary for a single project key. */
   buildSummary(key: string, input: BuildSummaryInput): ProjectSummary | undefined {
     const project = this.projects.get(key);
