@@ -121,6 +121,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'create_pending_prompt',
       source: packet.source,
       target: packet.target,
@@ -163,6 +164,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'confirm_prompt',
       source: 'local-server',
       target: prompt.transport,
@@ -216,6 +218,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'send_to_agent',
       source: 'local-server',
       target: adapter.name,
@@ -268,6 +271,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'copy_to_clipboard',
       source: 'local-server',
       target: 'clipboard',
@@ -302,6 +306,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'operation_cancelled',
       source: 'local-server',
       target: prompt.transport,
@@ -351,6 +356,7 @@ export class InMemoryPendingPromptStore {
     this.auditLog.createAndAppend({
       sessionId: prompt.sessionId,
       packetId: prompt.packetId,
+      projectId: prompt.projectId,
       type: 'operation_failed',
       source: 'local-server',
       target: prompt.transport,

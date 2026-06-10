@@ -159,5 +159,5 @@ The `ProjectDerivedStatus.latestAudit` returns the most recent project audit eve
 | P1 | Snapshot persistence | ✅ Implemented (goals/plans/projects in v2 snapshot) |
 | P2 | Project metadata editing | ✅ Implemented (PATCH /bridge/projects/:key) |
 | P2 | Archive / unarchive | ✅ Implemented (archive/unarchive + guards + includeArchived) |
-| P3 | Audit event projectId | ✅ Foundation (type + schema); call-site propagation remains |
+| P3 | Audit event projectId | ✅ Implemented (type + schema + call-site propagation) |
 | P3 | Status panel real sources | ⬜ Pending individual source integrations |

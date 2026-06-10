@@ -114,6 +114,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'create_pending_review',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,
@@ -143,6 +144,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'preview_review',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,
@@ -168,6 +170,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'confirm_review',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,
@@ -214,6 +217,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'send_review',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,
@@ -269,6 +273,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'return_review_result',
       source: review.targetEndpointId,
       target: review.sourceEndpointId,
@@ -316,6 +321,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'operation_cancelled',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,
@@ -346,6 +352,7 @@ export class InMemoryPendingReviewStore {
     this.auditLog.createAndAppend({
       sessionId: review.sessionId,
       packetId: review.packetId,
+      projectId: review.projectId,
       type: 'operation_failed',
       source: review.sourceEndpointId,
       target: review.targetEndpointId,

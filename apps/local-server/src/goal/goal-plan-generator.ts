@@ -190,6 +190,7 @@ export async function generatePlan(
     auditLog.createAndAppend({
       sessionId: goal.sessionId,
       packetId: goal.id,
+      projectId: goal.projectId,
       approvalId: `goal-plan-${goal.id}`,
       type: 'send_review',
       source: 'goal-plan-generator',
@@ -272,6 +273,7 @@ export async function generatePlan(
   auditLog.createAndAppend({
     sessionId: goal.sessionId,
     packetId: goal.id,
+    projectId: goal.projectId,
     approvalId: `goal-plan-${goal.id}`,
     type: 'send_review',
     source: 'goal-plan-generator',

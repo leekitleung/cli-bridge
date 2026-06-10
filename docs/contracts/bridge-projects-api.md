@@ -67,15 +67,20 @@ scoping is automatically visible under the default project.
 
 ### Audit event filtering
 
-Audit events in `/bridge/projects/:key` are filtered by scoped record
-identifiers (not by sessionId):
+Audit events in `/bridge/projects/:key` are filtered using a two-tier strategy:
 
-- Goal → `goal.id` (used as `packetId` in goal-related audit events)
-- AgentReviewRequest → `review.packetId`
-- PendingPrompt → `prompt.packetId`
+1. **projectId-first** (v2): Events with `event.projectId === key` are
+   directly included. All project-scoped audit events created by
+   pending prompts, reviews, and goal-plan generators carry their
+   parent record's `projectId`.
 
-This prevents cross-project audit leakage when two projects share a
-sessionId (e.g. the same console session creates records in both projects).
+2. **packetId fallback** (v1/legacy): Events without a `projectId`
+   are included if their `packetId` matches any scoped record identifier:
+   - Goal → `goal.id`
+   - AgentReviewRequest → `review.packetId`
+   - PendingPrompt → `prompt.packetId`
+
+Events without either `projectId` or a matching `packetId` are excluded.
 
 Events without a `packetId` field, or whose `packetId` does not match any
 scoped record, are excluded (fail-closed).

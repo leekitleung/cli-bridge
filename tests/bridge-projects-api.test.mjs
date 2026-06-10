@@ -393,6 +393,62 @@ test('malformed percent-encoding in unarchive path does not crash', async () => 
     `malformed encoding must return 400/404, got ${res.statusCode}`);
 });
 
+// ════════════════════════════════════════════════════════════════════
+// AuditEvent.projectId propagation
+// ════════════════════════════════════════════════════════════════════
+
+test('project-scoped prompt audit events carry projectId', async () => {
+  const runtime = createBridgeRuntime();
+  const prompt = runtime.pendingPromptStore.createPendingPrompt({
+    sessionId: 's-audit',
+    prompt: 'test prompt with projectId',
+    source: 'chatgpt-web',
+    transport: 'clipboard',
+    projectId: 'alpha',
+  });
+  const events = runtime.auditLog.listEvents();
+  const createEvent = events.find(e => e.packetId === prompt.packetId);
+  assert.ok(createEvent, 'must have created an audit event');
+  assert.equal(createEvent.projectId, 'alpha', 'audit event must carry projectId');
+});
+
+test('project-scoped review audit events carry projectId', async () => {
+  const runtime = createBridgeRuntime();
+  const review = runtime.pendingReviewStore.createDraft({
+    sessionId: 's-audit',
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'review with projectId',
+    projectId: 'beta',
+  });
+  const events = runtime.auditLog.listEvents();
+  const createEvent = events.find(e => e.packetId === review.packetId);
+  assert.ok(createEvent, 'must have created an audit event');
+  assert.equal(createEvent.projectId, 'beta', 'audit event must carry projectId');
+});
+
+test('projectId-match audit filtering isolates events by projectId', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.pendingPromptStore.createPendingPrompt({
+    sessionId: 's1', prompt: 'alpha prompt', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'alpha',
+  });
+  runtime.pendingPromptStore.createPendingPrompt({
+    sessionId: 's1', prompt: 'beta prompt', source: 'chatgpt-web',
+    transport: 'clipboard', projectId: 'beta',
+  });
+
+  const alphaEvents = runtime.auditLog.listEvents()
+    .filter(e => e.projectId === 'alpha');
+  const betaEvents = runtime.auditLog.listEvents()
+    .filter(e => e.projectId === 'beta');
+
+  assert.ok(alphaEvents.length > 0, 'must find alpha-scoped audit events');
+  assert.ok(betaEvents.length > 0, 'must find beta-scoped audit events');
+  assert.ok(alphaEvents.every(e => e.projectId === 'alpha'));
+  assert.ok(betaEvents.every(e => e.projectId === 'beta'));
+});
+
 test('encoded traversal-like project key in archive path is rejected', async () => {
   const runtime = createBridgeRuntime();
   const res = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/%2e%2e/archive`);

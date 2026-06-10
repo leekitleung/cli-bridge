@@ -76,6 +76,7 @@ export async function runCommandReview(
   auditLog.createAndAppend({
     sessionId: review.sessionId,
     packetId: review.packetId,
+    projectId: review.projectId,
     approvalId: review.id,
     type: 'send_review',
     source: review.sourceEndpointId,
