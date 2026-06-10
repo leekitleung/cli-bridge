@@ -17,6 +17,7 @@ import {
 import {
   InMemoryProjectStore,
   resolveProjectKey,
+  validateProjectKey,
 } from '../apps/local-server/src/storage/project-store.ts';
 
 const now = 1793000000000;
@@ -311,4 +312,31 @@ test('createPendingPrompt passes projectId through', async () => {
   });
 
   assert.equal(prompt.projectId, 'my-proj');
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §7  validateProjectKey
+// ════════════════════════════════════════════════════════════════════
+
+test('validateProjectKey accepts valid keys', () => {
+  assert.equal(validateProjectKey('my-project'), 'my-project');
+  assert.equal(validateProjectKey('alpha_2'), 'alpha_2');
+  assert.equal(validateProjectKey('a'), 'a');
+  assert.equal(validateProjectKey('a'.repeat(64)), 'a'.repeat(64));
+  assert.equal(validateProjectKey('123abc'), '123abc');
+  assert.equal(validateProjectKey('z'), 'z');
+});
+
+test('validateProjectKey rejects invalid keys', () => {
+  assert.equal(validateProjectKey(''), null);
+  assert.equal(validateProjectKey('   '), null);
+  assert.equal(validateProjectKey(null), null);
+  assert.equal(validateProjectKey(undefined), null);
+  assert.equal(validateProjectKey('a'.repeat(65)), null, 'too long');
+  assert.equal(validateProjectKey('/etc/passwd'), null, 'slash');
+  assert.equal(validateProjectKey('has space'), null, 'space');
+  assert.equal(validateProjectKey('a/b'), null, 'path-segment');
+  assert.equal(validateProjectKey('-leading-hyphen'), null, 'must start with alnum');
+  assert.equal(validateProjectKey('\x00'), null, 'null char');
+  assert.equal(validateProjectKey(123), null, 'non-string');
 });

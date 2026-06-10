@@ -46,6 +46,56 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** Maximum allowed length for a project key. */
+const MAX_PROJECT_KEY_LENGTH = 64;
+
+/** Characters allowed in a project key: lowercase alphanumeric, hyphen, underscore. */
+const VALID_PROJECT_KEY_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Validates and normalises an explicit project key value.
+ * Returns the normalised key, or null if the value fails validation.
+ *
+ * Rules:
+ *   - null / undefined / empty → null (caller should use default)
+ *   - Must be 1-64 characters
+ *   - Must start with a-z0-9
+ *   - Only a-z, 0-9, hyphen, underscore
+ *   - No slashes, spaces, or control characters
+ */
+export function validateProjectKey(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_PROJECT_KEY_LENGTH) {
+    return null;
+  }
+  if (!VALID_PROJECT_KEY_RE.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+/**
+ * Parse a projectId from a request body field. Returns:
+ *   - the validated key if valid and non-empty
+ *   - undefined if the field is absent, null, or empty (caller uses default)
+ *   - null if the value is present but invalid (caller should reject)
+ */
+export function parseProjectIdField(raw: unknown): string | null | undefined {
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return undefined;
+  }
+  return validateProjectKey(raw);
+}
+
 /** Resolves the effective project key: explicit value, or default. */
 export function resolveProjectKey(explicit: string | undefined): string {
   if (typeof explicit === 'string' && explicit.trim().length > 0) {

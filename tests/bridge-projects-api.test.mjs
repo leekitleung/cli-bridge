@@ -225,3 +225,53 @@ test('project aggregation endpoints are read-only and reject POST', async () => 
   assert.equal(listPost.statusCode, 405);
   assert.equal(detailPost.statusCode, 405);
 });
+
+// projectId input validation: invalid characters, too long, slashes.
+test('POST /bridge/goals rejects invalid projectId values', async () => {
+  const runtime = createBridgeRuntime();
+  const invalidCases = [
+    { projectId: '/etc/passwd', desc: 'slash-traversal' },
+    { projectId: 'a'.repeat(65), desc: 'too-long' },
+    { projectId: 'has space', desc: 'contains-space' },
+    { projectId: 'has/slash', desc: 'contains-slash' },
+    { projectId: '\x00', desc: 'null-char' },
+  ];
+  for (const { projectId, desc } of invalidCases) {
+    const res = await call(runtime, 'POST', BRIDGE_GOALS_PATH, {
+      sessionId: `s-${desc}`,
+      description: 'test',
+      projectId,
+    });
+    assert.equal(res.statusCode, 400, `projectId "${desc}" must be rejected`);
+  }
+});
+
+test('POST /bridge/goals accepts valid projectId values', async () => {
+  const runtime = createBridgeRuntime();
+  const validCases = ['my-project', 'alpha_2', 'a', 'a'.repeat(64)];
+  for (const projectId of validCases) {
+    const res = await call(runtime, 'POST', BRIDGE_GOALS_PATH, {
+      sessionId: `s-${projectId}`,
+      description: 'test',
+      projectId,
+    });
+    assert.equal(res.statusCode, 201, `projectId "${projectId}" must be accepted`);
+  }
+});
+
+test('GET /bridge/projects/:key rejects invalid URL keys', async () => {
+  const runtime = createBridgeRuntime();
+  // Slash, space, and other invalid chars in URL path segment.
+  const invalidPaths = [
+    `${BRIDGE_PROJECTS_PATH}/a/b`,
+    `${BRIDGE_PROJECTS_PATH}/has space`,
+    `${BRIDGE_PROJECTS_PATH}/%2Fslash`,
+  ];
+  for (const path of invalidPaths) {
+    const res = await call(runtime, 'GET', path);
+    assert.ok(
+      res.statusCode === 404 || res.statusCode === 405,
+      `${path} must return 404/405, got ${res.statusCode}`,
+    );
+  }
+});

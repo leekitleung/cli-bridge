@@ -33,6 +33,8 @@ import { InMemoryPendingReviewStore } from '../storage/pending-review-store.ts';
 import {
   InMemoryProjectStore,
   resolveProjectKey,
+  parseProjectIdField,
+  validateProjectKey,
 } from '../storage/project-store.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
 import type {
@@ -318,7 +320,8 @@ function projectDetailPathKey(pathname: string): string | undefined {
     return undefined;
   }
   try {
-    return decodeURIComponent(raw);
+    const decoded = decodeURIComponent(raw);
+    return validateProjectKey(decoded) ?? undefined;
   } catch {
     return undefined;
   }
@@ -504,15 +507,16 @@ export async function handleBridgeRequest(
     if (!sessionId || !prompt) {
       return error(400, 'sessionId and prompt are required');
     }
-    const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
-      ? parsed.body.projectId.trim()
-      : undefined;
+    const projectId = parseProjectIdField(parsed.body.projectId);
+    if (projectId === null) {
+      return error(400, 'projectId is invalid');
+    }
     const pendingPrompt = runtime.pendingPromptStore.createPendingPrompt({
       sessionId,
       prompt,
       source: 'chatgpt-web',
       transport: 'clipboard',
-      projectId,
+      projectId: projectId ?? undefined,
     });
     runtime.persist();
     return created({ pendingPrompt });
@@ -602,15 +606,16 @@ export async function handleBridgeRequest(
     }
     let review;
     try {
-      const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
-        ? parsed.body.projectId.trim()
-        : undefined;
+      const projectId = parseProjectIdField(parsed.body.projectId);
+      if (projectId === null) {
+        return error(400, 'projectId is invalid');
+      }
       review = runtime.pendingReviewStore.createDraft({
         sessionId,
         sourceEndpointId,
         targetEndpointId,
         prompt,
-        projectId,
+        projectId: projectId ?? undefined,
       });
     } catch {
       return error(400, 'Unable to create review for the given endpoints');
@@ -758,10 +763,11 @@ export async function handleBridgeRequest(
     if (!sessionId || !description) {
       return error(400, 'sessionId and description are required');
     }
-    const projectId = typeof parsed.body.projectId === 'string' && parsed.body.projectId.trim().length > 0
-      ? parsed.body.projectId.trim()
-      : undefined;
-    const goal = runtime.goalStore.createGoal({ sessionId, description, projectId });
+    const projectId = parseProjectIdField(parsed.body.projectId);
+    if (projectId === null) {
+      return error(400, 'projectId is invalid');
+    }
+    const goal = runtime.goalStore.createGoal({ sessionId, description, projectId: projectId ?? undefined });
     runtime.persist();
     return created({ goal });
   }
