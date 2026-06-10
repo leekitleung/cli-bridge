@@ -287,11 +287,22 @@ These endpoints do **not**:
 
 ## Testing
 
-- `tests/bridge-projects-api.test.mjs` — endpoint contract tests
+- `tests/bridge-projects-api.test.mjs` — endpoint contract tests (31 tests)
   - Default project exists with no records
   - Explicit grouping and unscoped backfill
   - Project detail with scoped data and derived status
-  - Audit isolation via packetId (including same-session cross-project)
+  - Audit isolation: authoritative projectId + legacy packetId fallback
+    (including same-session cross-project and mismatched projectId regression)
+  - PATCH contract: label/description update, disallowed fields rejection,
+    unknown project 404, idempotency
+  - Archive/unarchive: archivedAt set/cleared, default project guard,
+    creation guards (409), includeArchived toggle
+  - Malformed percent-encoding rejection, traversal key rejection
+- `tests/project-console-ui.test.mjs` — static HTML allowlist and safety
+- `tests/project-console-behavior.test.mjs` — jsdom UI interaction tests
+  (project switch, command bar, management UI)
+- `tests/json-persistence.test.mjs` — snapshot round-trip:
+  metadata, archivedAt, AuditEvent.projectId, legacy audit fallback
   - Unknown project → 404
   - Invalid project key → 404/405
   - POST → 405; invalid projectId → 400

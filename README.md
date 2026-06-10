@@ -40,18 +40,24 @@ loops.
 - **Project Workspace Console** (`/console/project`): a project-centric
   cockpit that consolidates goals, plans, reviews, prompts, audit, and status
   into a single three-region interface. Data is loaded from the `/bridge/projects`
-  aggregation endpoints (read-only projections over existing bridge stores).
-  Project switching with loading state; status panel with server-computed
-  progress, active goal, goals summary, and blocked-gate indicator.
+  aggregation endpoints. Project switching with loading state; status panel with
+  server-computed progress, active goal, goals summary, and blocked-gate indicator.
+  Includes inline metadata editing, archive/unarchive controls, and archived
+  project visibility toggle. All actions remain constrained to allowlisted
+  `/bridge/projects*` paths; no shell/exec/spawn exposure.
 - **Project aggregation endpoints**:
   - `GET /bridge/projects` → `{ projects: ProjectSummary[] }`
     where `ProjectSummary = { project, goalCount, activeGoalCount, reviewCount, promptCount, status }`.
+    Archived projects are excluded by default; `?includeArchived=true` includes them.
   - `GET /bridge/projects/:key` → `{ project, summary, goals, reviews, pendingPrompts, auditEvents, status }`.
-    The `status` field is a server-computed `ProjectDerivedStatus` with progress, activeGoal, goalsSummary, blockedGate.
-    Audit events are filtered by scoped record packetIds (not sessionId), preventing cross-project leakage.
-  - Both are read-only; no POST/PUT/DELETE.
+    The `status` field is a server-computed `ProjectDerivedStatus` with progress, activeGoal, goalsSummary, blockedGate,
+    and `latestAudit`.
+    Audit events are filtered by authoritative `projectId` match; legacy events without `projectId` fall back to packetId.
+  - `PATCH /bridge/projects/:key` — update project `label` / `description`.
+  - `POST /bridge/projects/:key/archive | :key/unarchive` — soft-archive/restore (default project excluded).
   - `projectId` validation: 1–64 chars, `a-z0-9-_` only, no slashes/spaces. Invalid values → 400.
   - Records without explicit `projectId` are backfilled to the default `"cli-bridge"` project at query time.
+  - Archived project guards: creating goals/reviews/prompts with an archived `projectId` returns 409.
   - Detailed contract: see `docs/contracts/bridge-projects-api.md`.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /

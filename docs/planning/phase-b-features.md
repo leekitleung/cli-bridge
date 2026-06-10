@@ -1,6 +1,6 @@
 # Phase B Feature Planning
 
-**Status**: Proposed | **Date**: 2026-06-10  
+**Status**: Implemented (closeout) | **Date**: 2026-06-10
 **Dependencies**: Step 5 (snapshot persistence ADR)
 
 ---
