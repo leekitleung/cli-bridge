@@ -2,6 +2,13 @@
 // consolidates goal/review/prompt/audit/status into a single three-region
 // workspace where Project is the top-level entity.
 //
+// Phase B (Task 15): Data layer migrated from individual /bridge/* GET endpoints
+// to the read-only /bridge/projects aggregation endpoints. The console now:
+//   - Lists projects via GET /bridge/projects
+//   - Loads project detail via GET /bridge/projects/:key
+//   - Derives status from the server-computed ProjectDerivedStatus
+//   - Still calls individual POST endpoints for actions (create, approve, etc.)
+//
 // Like the review and goal consoles, this is a THIN CLIENT: it holds NO
 // business logic. Every action calls a /bridge/* endpoint that already enforces
 // redaction, capability gating, plan-level approval, per-step state-mutating
@@ -288,7 +295,7 @@ const store = {
   connected: false,
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
   view: 'workspace',
-  cache: { goals: [], reviews: [], prompts: [], metrics: null },
+  cache: { projects: [], detail: null, metrics: null },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -324,15 +331,14 @@ $('connect').addEventListener('click', async () => {
   }
 });
 
-// ─── Refresh ───
+// ─── Refresh — Phase B: uses /bridge/projects aggregation endpoints ───
 async function refreshAll() {
-  const [goals, reviews, prompts, metrics] = await Promise.all([
-    api('/bridge/goals'), api('/bridge/reviews'), api('/bridge/pending-prompts'), api('/bridge/metrics'),
+  const [projectsRes, detailRes] = await Promise.all([
+    api('/bridge/projects'),
+    api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey)),
   ]);
-  if (goals.ok) store.cache.goals = goals.data.goals || [];
-  if (reviews.ok) store.cache.reviews = reviews.data.reviews || [];
-  if (prompts.ok) store.cache.prompts = prompts.data.pendingPrompts || [];
-  if (metrics.ok) store.cache.metrics = metrics.data.metrics || null;
+  if (projectsRes.ok) store.cache.projects = projectsRes.data.projects || [];
+  if (detailRes.ok) store.cache.detail = detailRes.data;
   renderAll();
 }
 
@@ -346,49 +352,71 @@ function renderAll() {
 
 function renderProjectList() {
   const list = $('project-list');
-  list.innerHTML = '<li class="active"><span>cli-bridge</span><span class="status-label">' + deriveProjectStatus() + '</span></li>';
-}
+  const projects = store.cache.projects;
+  if (!projects.length) {
+    list.innerHTML = '<li class="empty-state" id="project-empty">No projects yet</li>';
+    return;
+  }
+  list.innerHTML = projects.map(p => {
+    const activeClass = p.project.key === store.activeProjectKey ? ' active' : '';
+    const statusLabel = '<span class="status-label">' + (p.status || 'idle') + ' · ' + p.goalCount + ' goals</span>';
+    return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + '</li>';
+  }).join('');
 
-function deriveProjectStatus() {
-  const goals = store.cache.goals;
-  const active = goals.find(g => g.goal.status === 'executing' || g.goal.status === 'approved');
-  if (active) return 'in progress';
-  const planned = goals.find(g => g.goal.status === 'planned' || g.goal.status === 'draft');
-  if (planned) return 'planning';
-  if (goals.length === 0) return 'idle';
-  return 'idle';
+  // Bind project switching
+  list.querySelectorAll('.project-item').forEach(li => {
+    li.addEventListener('click', async () => {
+      store.activeProjectKey = li.dataset.key;
+      localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
+      await refreshAll();
+    });
+  });
 }
 
 function renderTopBar() {
-  $('top-project').textContent = 'Project: ' + store.activeProjectKey;
+  const detail = store.cache.detail;
+  const label = detail && detail.project ? detail.project.label : store.activeProjectKey;
+  $('top-project').textContent = 'Project: ' + label;
 }
 
 function renderStatusPanel() {
-  // Progress: derived from active plan steps
-  const activeGoal = store.cache.goals.find(g => g.plan && (g.plan.status === 'executing' || g.plan.status === 'approved'));
-  if (activeGoal && activeGoal.plan) {
-    const steps = activeGoal.plan.steps || [];
-    const done = steps.filter(s => s.status === 'done').length;
-    const total = steps.length;
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    $('status-progress').innerHTML = '<div>' + done + ' / ' + total + ' steps</div><div class="progress-bar"><div class="fill" style="width:' + pct + '%"></div></div>';
+  const detail = store.cache.detail;
+  const status = detail ? detail.status : null;
+
+  // Progress
+  if (status && status.progress) {
+    const pct = status.progress.total > 0 ? Math.round((status.progress.completed / status.progress.total) * 100) : 0;
+    $('status-progress').innerHTML = '<div>' + status.progress.completed + ' / ' + status.progress.total + ' steps</div><div class="progress-bar"><div class="fill" style="width:' + pct + '%"></div></div>';
   } else {
     $('status-progress').innerHTML = '<span class="unavailable">no active plan</span>';
   }
 
   // Active goal
-  if (activeGoal) {
-    const nextStep = (activeGoal.plan.steps || []).find(s => s.status === 'pending' || s.status === 'gated-approved' || s.status === 'blocked-needs-gate');
-    let nextText = nextStep ? 'next: ' + escapeHtml(nextStep.intent.slice(0, 50)) : 'all steps done or blocked';
-    if (nextStep && nextStep.status === 'blocked-needs-gate') nextText += ' <span class="pill gate">blocked-needs-gate</span>';
-    $('status-active-goal').innerHTML = '<div>' + escapeHtml(activeGoal.goal.description.slice(0, 60)) + '</div><div style="margin-top:4px;font-size:11px;color:var(--muted)">' + nextText + '</div>';
+  if (status && status.activeGoal) {
+    let nextText = 'next: —';
+    if (status.blockedGate) {
+      nextText = 'next: step ' + status.blockedGate.stepIndex + ' <span class="pill gate">blocked-needs-gate</span>';
+    }
+    $('status-active-goal').innerHTML = '<div>' + escapeHtml(status.activeGoal.description.slice(0, 60)) + '</div><div style="margin-top:4px;font-size:11px;color:var(--muted)">' + nextText + '</div>';
   } else {
     $('status-active-goal').innerHTML = '<span class="unavailable">no active goal</span>';
   }
 
   // Goals summary
-  const goalsSummary = store.cache.goals.map(g => '<div><span class="pill ' + (g.goal.status === 'done' ? 'done' : '') + '">' + g.goal.status + '</span> ' + escapeHtml(g.goal.description.slice(0, 40)) + '</div>').join('');
-  $('status-goals').innerHTML = goalsSummary || '<span class="unavailable">no goals</span>';
+  if (status && status.goalsSummary.length) {
+    const goalsHtml = status.goalsSummary.map(g => '<div><span class="pill ' + (g.status === 'done' ? 'done' : '') + '">' + g.status + '</span> ' + escapeHtml(g.description.slice(0, 40)) + '</div>').join('');
+    $('status-goals').innerHTML = goalsHtml;
+  } else {
+    $('status-goals').innerHTML = '<span class="unavailable">no goals</span>';
+  }
+
+  // Audit
+  if (detail && detail.auditEvents && detail.auditEvents.length) {
+    $('status-audit').innerHTML = '<div>' + detail.auditEvents.length + ' audit events</div>';
+  }
+
+  // Memory
+  $('status-memory').innerHTML = '<span class="unavailable">unavailable (Phase B)</span>';
 }
 
 function renderWorkspace() {
@@ -405,7 +433,8 @@ function renderWorkspace() {
 }
 
 function renderGoalCard() {
-  const activeGoal = store.cache.goals.find(g => g.goal.status !== 'done' && g.goal.status !== 'cancelled');
+  const goals = store.cache.detail ? store.cache.detail.goals || [] : [];
+  const activeGoal = goals.find(g => g.goal.status !== 'done' && g.goal.status !== 'cancelled');
   if (!activeGoal) {
     $('goal-content').innerHTML = '<span class="unavailable">no active goal — use the command bar to create one</span>';
     return;
@@ -467,9 +496,13 @@ async function goalAction(path, body, msg) {
 }
 
 function renderTimeline() {
-  // Derive activity feed from goals/steps/reviews/prompts
+  const detail = store.cache.detail;
+  if (!detail) {
+    $('timeline').innerHTML = '<div class="loading">Connect to load activity timeline…</div>';
+    return;
+  }
   const entries = [];
-  store.cache.goals.forEach(g => {
+  (detail.goals || []).forEach(g => {
     entries.push({ ts: g.goal.createdAt, origin: 'user', text: 'Goal created: ' + g.goal.description });
     if (g.plan) {
       entries.push({ ts: g.plan.createdAt, origin: 'system', text: 'Plan generated (' + g.plan.steps.length + ' steps)' });
@@ -479,21 +512,21 @@ function renderTimeline() {
       });
     }
   });
-  store.cache.reviews.forEach(r => {
-    entries.push({ ts: r.createdAt, origin: 'user', text: 'Review created → ' + r.targetEndpointId + ' [' + r.status + ']' });
+  (detail.reviews || []).forEach(r => {
+    entries.push({ ts: r.createdAt, origin: 'user', text: 'Review created to' + r.targetEndpointId + ' [' + r.status + ']' });
   });
   entries.sort((a, b) => b.ts - a.ts);
-  const timeline = $('timeline');
   if (entries.length === 0) {
-    timeline.innerHTML = '<div class="loading">No activity yet — create a goal to begin.</div>';
+    $('timeline').innerHTML = '<div class="loading">No activity yet — create a goal to begin.</div>';
     return;
   }
-  timeline.innerHTML = entries.slice(0, 50).map(e =>
+  $('timeline').innerHTML = entries.slice(0, 50).map(e =>
     '<div class="timeline-entry"><div class="origin ' + e.origin + '">' + (e.origin === 'user' ? 'You' : 'Bridge') + '</div><div class="body">' + escapeHtml(e.text) + '</div></div>'
   ).join('');
 }
 
 function renderSectionView() {
+  const detail = store.cache.detail;
   const main = $('workspace');
   let html = '';
   if (store.view === 'reviews') {
@@ -509,24 +542,33 @@ function renderSectionView() {
     html += '<pre id="review-result" style="margin-top:8px;">—</pre>';
     html += '</div>';
     html += '<div class="card" style="margin-top:16px;"><h3>Reviews</h3>';
-    if (store.cache.reviews.length === 0) html += '<span class="unavailable">no reviews</span>';
+    const reviews = detail ? (detail.reviews || []) : [];
+    if (!reviews.length) html += '<span class="unavailable">no reviews</span>';
     else {
       html += '<table><thead><tr><th>id</th><th>target</th><th>status</th></tr></thead><tbody>';
-      store.cache.reviews.forEach(r => { html += '<tr><td>' + r.id.slice(0,8) + '</td><td>' + r.targetEndpointId + '</td><td><span class="pill">' + r.status + '</span></td></tr>'; });
+      reviews.forEach(r => { html += '<tr><td>' + r.id.slice(0,8) + '</td><td>' + r.targetEndpointId + '</td><td><span class="pill">' + r.status + '</span></td></tr>'; });
       html += '</tbody></table>';
     }
     html += '</div>';
   } else if (store.view === 'prompts') {
     html = '<div class="card"><h3>Pending Prompts</h3><p style="font-size:11px;color:var(--muted)">Drafts require explicit confirm — never auto-sent.</p>';
-    if (store.cache.prompts.length === 0) html += '<span class="unavailable">no pending prompts</span>';
+    const prompts = detail ? (detail.pendingPrompts || []) : [];
+    if (!prompts.length) html += '<span class="unavailable">no pending prompts</span>';
     else {
       html += '<table><thead><tr><th>id</th><th>status</th><th>transport</th></tr></thead><tbody>';
-      store.cache.prompts.forEach(p => { html += '<tr><td>' + p.id.slice(0,8) + '</td><td><span class="pill">' + p.status + '</span></td><td>' + p.transport + '</td></tr>'; });
+      prompts.forEach(p => { html += '<tr><td>' + p.id.slice(0,8) + '</td><td><span class="pill">' + p.status + '</span></td><td>' + p.transport + '</td></tr>'; });
       html += '</tbody></table>';
     }
     html += '</div>';
   } else if (store.view === 'audit') {
-    html = '<div class="card"><h3>Audit Log</h3><span class="unavailable">Activity audit — derived from metrics and events.</span><pre id="audit-pre">—</pre></div>';
+    html = '<div class="card"><h3>Audit Log</h3>';
+    const auditEvents = detail ? (detail.auditEvents || []) : [];
+    if (auditEvents.length) {
+      html += '<pre id="audit-pre">' + escapeHtml(JSON.stringify(auditEvents.slice(0, 20), null, 2)) + '</pre>';
+    } else {
+      html += '<span class="unavailable">Activity audit — derived from metrics and events.</span><pre id="audit-pre">—</pre>';
+    }
+    html += '</div>';
   } else if (store.view === 'memory') {
     html = '<div class="card"><h3>Memory</h3><span class="unavailable">No memory store in Phase A. This section will show project long-term facts once a backend memory source is added (Phase B).</span></div>';
   }
@@ -617,14 +659,16 @@ async function handleCommand() {
   $('command-input').value = '';
   // Simple intent detection
   if (input.toLowerCase().startsWith('generate plan') || input.toLowerCase().startsWith('生成 plan') || input.toLowerCase().startsWith('生成plan')) {
-    const activeGoal = store.cache.goals.find(g => g.goal.status === 'draft');
+    const detail = store.cache.detail;
+    const activeGoal = detail ? (detail.goals || []).find(g => g.goal.status === 'draft') : null;
     if (activeGoal) {
       await goalAction('/bridge/goals/plan', { goalId: activeGoal.goal.id }, 'generating plan…');
     }
     return;
   }
   if (input.toLowerCase() === 'continue' || input === '继续') {
-    const activeGoal = store.cache.goals.find(g => g.plan && (g.plan.status === 'approved' || g.plan.status === 'executing'));
+    const detail = store.cache.detail;
+    const activeGoal = detail ? (detail.goals || []).find(g => g.plan && (g.plan.status === 'approved' || g.plan.status === 'executing')) : null;
     if (activeGoal) {
       await goalAction('/bridge/goals/step', { goalId: activeGoal.goal.id }, 'advancing…');
     }

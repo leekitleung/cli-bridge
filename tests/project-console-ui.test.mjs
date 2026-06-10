@@ -49,16 +49,20 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
   const html = renderProjectConsoleHtml();
   const paths = new Set(extractBridgePaths(html));
 
+  // After Task 15, data refresh uses /bridge/projects aggregation instead of
+  // individual /bridge/goals|reviews|pending-prompts GET calls.  POST actions
+  // for goal/review operations remain unchanged.
   assert.deepEqual(paths, new Set([
     '/bridge/metrics',
-    '/bridge/goals',
-    '/bridge/reviews',
-    '/bridge/pending-prompts',
+    '/bridge/projects',
+    '/bridge/projects/',
     '/bridge/goals/approve',
     '/bridge/goals/step',
     '/bridge/goals/cancel',
     '/bridge/goals/plan',
     '/bridge/goals/gate',
+    '/bridge/goals',
+    '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
   ]));
