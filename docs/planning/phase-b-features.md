@@ -100,17 +100,11 @@ In `/bridge/projects/:key`, audit filtering uses a two-tier strategy:
 Non-project-scoped audit events (bridge-loop, outbound, handoffs)
 remain unchanged and carry no `projectId`.
 
-- Must be backward-compatible (existing `projectId`-less audit events
-  still filtered by packetId as today)
-- Requires updating all call sites that create audit events
-  (audit-log.ts, goal-store.ts, pending-review-store.ts, etc.)
+### Completed implementation
 
-### Implementation order
-
-1. Add `projectId?: string` to `AuditEvent` type + schema
-2. Update `createAndAppend` to accept optional `projectId`
-3. Update all call sites (goals, reviews, prompts store layers)
-4. Update `/bridge/projects/:key` filtering to prefer `projectId`, fall back to `packetId`
+- Type + schema: `projectId?: string` added to `AuditEvent` and `validateAuditEvent()`
+- Call sites: All project-scoped audit events (PendingPrompt, PendingReview, goal-plan, command review) propagate parent record's `projectId`
+- Filtering: `/bridge/projects/:key` uses authoritative `projectId` match; legacy events without `projectId` fall back to packetId
 
 ---
 

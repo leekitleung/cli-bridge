@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
+  BRIDGE_PROJECTS_PATH,
   createBridgeRuntime,
 } from '../apps/local-server/src/routes/bridge-api.ts';
 import { createMetricsSummary } from '../apps/local-server/src/storage/metrics-summary.ts';
@@ -175,7 +176,7 @@ test('AuditEvent.projectId persists and rehydrates across restarts', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('legacy audit event without projectId hydrates and is available via packetId fallback', () => {
+test('legacy audit event without projectId hydrates and appears via endpoint packetId fallback', async () => {
   const dir = tempDir();
   const legacyEvent = {
     id: 'legacy-1', sessionId: 's1', packetId: 'pkt-legacy',
@@ -189,7 +190,7 @@ test('legacy audit event without projectId hydrates and is available via packetI
       persistedAt: 1 }],
     auditEvents: [legacyEvent],
     pendingPrompts: [{ id: 'prompt-legacy', sessionId: 's1', packetId: 'pkt-legacy',
-      source: 'cli', prompt: 'legacy', transport: 'clipboard', status: 'staged',
+      source: 'cli', prompt: 'legacy', transport: 'clipboard', status: 'confirmed',
       projectId: 'alpha', createdAt: 1, updatedAt: 1 }],
     outboundPrompts: [],
     goals: [],
@@ -203,5 +204,13 @@ test('legacy audit event without projectId hydrates and is available via packetI
   const legacy = events.find(e => e.id === 'legacy-1');
   assert.ok(legacy, 'legacy event must hydrate');
   assert.equal(legacy.projectId, undefined, 'legacy event must have no projectId');
+
+  // Endpoint-level: the legacy event should appear in alpha detail
+  // via packetId fallback even though it lacks a projectId.
+  const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const detail = await handleBridgeRequest(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha`, {});
+  assert.equal(detail.statusCode, 200);
+  assert.ok(detail.payload.auditEvents.some(e => e.id === 'legacy-1'),
+    'legacy audit event without projectId must appear via packetId fallback');
   rmSync(dir, { recursive: true, force: true });
 });
