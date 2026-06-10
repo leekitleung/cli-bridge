@@ -43,8 +43,10 @@ loops.
   aggregation endpoints. Project switching with loading state; status panel with
   server-computed progress, active goal, goals summary, and blocked-gate indicator.
   Includes inline metadata editing, archive/unarchive controls, and archived
-  project visibility toggle. All actions remain constrained to allowlisted
-  `/bridge/projects*` paths; no shell/exec/spawn exposure.
+  project visibility toggle. Project management actions use
+  `/bridge/projects*`; other console actions use existing allowlisted
+  `/bridge/*` controlled endpoints (goals, reviews, prompts, metrics).
+  No shell/exec/spawn exposure.
 - **Project aggregation endpoints**:
   - `GET /bridge/projects` → `{ projects: ProjectSummary[] }`
     where `ProjectSummary = { project, goalCount, activeGoalCount, reviewCount, promptCount, status }`.

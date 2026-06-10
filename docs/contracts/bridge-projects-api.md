@@ -179,7 +179,7 @@ Returned when the project key is unknown AND no records reference it.
 | `goals` | GoalWithPlan[] | All goals scoped to this project, each with its plan (or null). |
 | `reviews` | AgentReviewRequest[] | Reviews scoped to this project. |
 | `pendingPrompts` | PendingPrompt[] | Pending prompts scoped to this project. |
-| `auditEvents` | AuditEvent[] | Filtered by packetIds of all scoped records. Events without a matching `packetId` are excluded. |
+| `auditEvents` | AuditEvent[] | Filtered by authoritative `projectId` when present; legacy events without `projectId` fall back to scoped record packetId. |
 | `status.progress` | object? | Step completion ratio (completed / total). Null if no active plan. |
 | `status.activeGoal` | object? | The first active goal (not done/cancelled/failed). Null if none. |
 | `status.goalsSummary` | object[] | All goals with id, description, status. |

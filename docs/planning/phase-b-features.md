@@ -42,9 +42,9 @@ Console inline edit UI is implemented (click project label in top bar).
 
 ---
 
-## 2. Archive / unarchive (partial implementation)
+## 2. Archive / unarchive (implemented)
 
-### Current state (implemented 2026-06-10)
+### Current state
 
 Archive is implemented as soft-delete via `POST /bridge/projects/:key/archive`
 and `POST /bridge/projects/:key/unarchive`. Archived projects:
@@ -53,12 +53,13 @@ and `POST /bridge/projects/:key/unarchive`. Archived projects:
 - Block new goal/review/prompt creation (409)
 - Remain readable via `GET /bridge/projects/:key`
 - Persist across restarts via v2 snapshot
+- Console UI includes archive/unarchive buttons and show-archived toggle
 
-### Remaining work
+### Future (not authorized in this phase)
 
-- **Delete**: hard-delete a project and all its records. Requires
-  explicit confirmation gate (console UI with double-confirm).
-- **Console UI**: archive/unarchive affordance and filtered views.
+- **Hard-delete** (`DELETE /bridge/projects/:key`): irreversible removal of a
+  project and all its records. Requires explicit confirmation gate.
+  Not authorized in v2.0 / Phase B.
 
 ### Constraints
 
