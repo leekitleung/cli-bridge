@@ -480,3 +480,82 @@ test('alpha path cannot cancel beta team', async () => {
   assert.equal(res.statusCode, 404);
   assert.equal(runtime.teamStore.get('team-beta2').status, 'pending-approval');
 });
+
+// ════════════════════════════════════════════════════════════════════
+// Goal project isolation on create
+// ════════════════════════════════════════════════════════════════════
+
+test('reject goal from different project on team create', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+  // Create goal + plan in beta project
+  const gb = await seedApprovedGoalPlan(runtime, 'beta');
+  if (!gb) { assert.fail('seed failed'); return; }
+
+  // Try to use beta goal/plan to create team in alpha
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-cross-goal', goalId: gb.goalId, planId: gb.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('project'));
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Duplicate team ID rejection
+// ════════════════════════════════════════════════════════════════════
+
+test('reject duplicate team id on create', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 'team-dup', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 'team-dup', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 409);
+});
+
+test('duplicate team id across projects does not overwrite', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+  const ga = await seedApprovedGoalPlan(runtime, 'alpha');
+  const gb = await seedApprovedGoalPlan(runtime, 'beta');
+  if (!ga || !gb) { assert.fail('seed failed'); return; }
+
+  // Create in alpha
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 'team-same', goalId: ga.goalId, planId: ga.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  // Try same id in beta — should be 409, not overwrite alpha
+  const res = await call(runtime, 'POST', TEAMS('beta'), {
+    action: 'create', id: 'team-same', goalId: gb.goalId, planId: gb.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 409);
+
+  // Alpha team should still be in alpha's listing
+  assert.equal(runtime.teamStore.listByProject('alpha').length, 1);
+  assert.equal(runtime.teamStore.listByProject('alpha')[0].provider, 'claude');
+});

@@ -178,6 +178,11 @@ async function handleTeamsPost(
   if (!goal) return error(400, 'Goal not found');
   if (goal.status !== 'approved') return error(400, 'Goal must be approved');
 
+  // Goal must belong to the URL project.
+  if (resolveProjectKey(goal.projectId) !== projectKey) {
+    return error(400, 'Goal does not belong to this project');
+  }
+
   const plan = runtime.goalStore.getPlanByGoal(goal.id);
   if (!plan) return error(400, 'Plan not found for goal');
   if (plan.status !== 'approved') return error(400, 'Plan must be approved');
@@ -201,10 +206,16 @@ async function handleTeamsPost(
     }
   }
 
+  // Reject duplicate team id
+  if (runtime.teamStore.get(body.id as string)) {
+    return error(409, 'Team already exists');
+  }
+
   try {
     const team = runtime.teamStore.create({
       ...(body as any), projectId: projectKey,
     });
+    if (!team) return error(409, 'Team already exists');
     runtime.persist();
 
     // Audit

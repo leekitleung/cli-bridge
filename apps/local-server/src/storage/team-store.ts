@@ -26,7 +26,10 @@ export class InMemoryTeamSpecStore {
     provider: string;
     endpointId: string;
     policyRequirements?: Array<{ kind: string; detail: string }>;
-  }): TeamSpec {
+  }): TeamSpec | null {
+    // Reject duplicate team id — create is strict.
+    if (this.teams.has(input.id)) return null;
+
     const now = Date.now();
     const team: TeamSpec = {
       id: input.id,
