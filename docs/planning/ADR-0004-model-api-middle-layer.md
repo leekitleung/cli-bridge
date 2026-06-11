@@ -173,15 +173,16 @@ If accepted:
 - A new `ModelProvider` abstraction (interface only — no runtime implementation
   until a v2.4a implementation handoff) is authorized.
 - PlannerModel as the first role is authorized for implementation planning.
-- v2.4a implementation handoff may be drafted, but must reference this ADR and
+- The drafted v2.4a implementation handoff may proceed through review, but must reference this ADR and
   await explicit approval before code.
 - ADR-0003 invariants remain binding and are not weakened.
 
 If rejected:
 
 - Model API remains entirely outside the bridge.
-- Plan generation continues through the existing `POST /bridge/goals/plan`
-  endpoint (which shells out to an external CLI).
+- Plan generation continues through the existing review-only command transport
+  path (`POST /bridge/goals/plan`), which uses allowlisted argv with
+  `shell: false` and the existing plan parser / PolicyEngine gates.
 - ADR-0004 is closed as Rejected with reasons recorded.
 
 ## Status / Next
@@ -189,5 +190,5 @@ If rejected:
 PROPOSED. Awaiting senior review. If approved:
 
 1. Status changes to ACCEPTED.
-2. A v2.4a PlannerModel minimal implementation handoff may be drafted.
+2. The drafted v2.4a PlannerModel implementation handoff may proceed through review.
 3. Implementation begins only after the handoff is reviewed and approved.
