@@ -466,6 +466,7 @@ const WORKBUDDY_FORBIDDEN_FIELDS = [
   'autoExecute',
   'autoSend',
   'confirmed',
+  'confirmedAuto',
   'sent',
   'executable',
   'command',

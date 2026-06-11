@@ -148,6 +148,44 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
   };
 }
 
+// ---- WorkBuddy strict whitelist builder ----
+
+/** Strips unknown keys from a WorkBuddy payload, keeping only allowed fields
+ *  for the given action. Returns an error message string if any unknown keys
+ *  are present, or null on success. */
+function sanitizeWorkBuddyPayload(
+  action: string,
+  body: Record<string, unknown>,
+): Record<string, unknown> | string {
+  const allowed: string[] = (() => {
+    switch (action) {
+      case 'record-task':
+        return ['id', 'projectId', 'title', 'status', 'createdAt', 'updatedAt'];
+      case 'record-review-result':
+        return ['id', 'projectId', 'taskId', 'reviewResultId', 'summary', 'findings', 'createdAt'];
+      case 'record-prompt-draft':
+        return ['id', 'projectId', 'taskId', 'promptDraft', 'createdAt'];
+      case 'record-ledger':
+        return ['id', 'projectId', 'taskId', 'kind', 'summary', 'createdAt'];
+      default:
+        return []; // will be caught later by the unknown action check
+    }
+  })();
+
+  const unknownKeys = Object.keys(body).filter(k => !allowed.includes(k));
+  if (unknownKeys.length > 0) {
+    return `Unknown field(s): ${unknownKeys.join(', ')}`;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (key in body) sanitized[key] = body[key];
+  }
+  return sanitized;
+}
+
+// ---- WorkBuddy multiplex handler ----
+
 async function postWorkBuddyMultiplex(
   runtime: BridgeRuntime,
   projectKey: string,
@@ -160,9 +198,12 @@ async function postWorkBuddyMultiplex(
   const pidErr = requireProjectIdMatch(parsed.body, projectKey);
   if (pidErr) return error(400, pidErr);
 
-  // Normalise: inject projectId, strip action.
+  // Strip action and projectId, sanitize to whitelisted fields only.
   const { action: _a, projectId: _pid, ...bodyRest } = parsed.body as Record<string, unknown>;
-  const payload: Record<string, unknown> = { ...bodyRest, projectId: projectKey };
+  const sanitized = sanitizeWorkBuddyPayload(action, bodyRest);
+  if (typeof sanitized === 'string') return error(400, sanitized);
+
+  const payload: Record<string, unknown> = { ...sanitized, projectId: projectKey };
 
   try {
     switch (action) {

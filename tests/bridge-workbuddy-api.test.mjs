@@ -207,3 +207,138 @@ test('PATCH/DELETE workbuddy returns 405', async () => {
   assert.equal(res1.statusCode, 405);
   assert.equal(res2.statusCode, 405);
 });
+
+// ════════════════════════════════════════════════════════════════════
+// P1: strict whitelist — unknown / forbidden fields rejected
+// ════════════════════════════════════════════════════════════════════
+
+test('record-task rejects confirmedAuto', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', WB, {
+    action: 'record-task', id: 't-bad', title: 'X', status: 'open',
+    createdAt: 1, updatedAt: 2, confirmedAuto: true,
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('confirmedAuto'));
+});
+
+test('record-task rejects shell field', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', WB, {
+    action: 'record-task', id: 't-bad', title: 'X', status: 'open',
+    createdAt: 1, updatedAt: 2, shell: 'rm -rf /',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('record-task rejects dispatch / targetEndpointId', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', WB, {
+    action: 'record-task', id: 't-bad', title: 'X', status: 'open',
+    createdAt: 1, updatedAt: 2, dispatch: true, targetEndpointId: 'codex-cli',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('record-review-result rejects autoSend', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', WB, {
+    action: 'record-review-result', id: 'rr-1', reviewResultId: 'rev',
+    summary: 'OK', findings: [], createdAt: 1, autoSend: true,
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('record-prompt-draft rejects status sent / confirmed', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  let res = await call(runtime, 'POST', WB, {
+    action: 'record-prompt-draft', id: 'pd-1', promptDraft: 'X',
+    createdAt: 1, status: 'sent',
+  });
+  assert.equal(res.statusCode, 400);
+
+  res = await call(runtime, 'POST', WB, {
+    action: 'record-prompt-draft', id: 'pd-2', promptDraft: 'Y',
+    createdAt: 1, confirmed: true,
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('record-ledger rejects command / executable', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', WB, {
+    action: 'record-ledger', id: 'le-1', kind: 'external-status-recorded',
+    summary: 'X', createdAt: 1, command: 'run', executable: true,
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('GET workbuddy does not contain unknown keys', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  await call(runtime, 'POST', WB, {
+    action: 'record-task', id: 't-clean', title: 'Clean', status: 'done',
+    createdAt: 100, updatedAt: 200,
+  });
+  const res = await call(runtime, 'GET', WB);
+  const task = res.payload.tasks[0];
+  const keys = new Set(Object.keys(task));
+  const expected = new Set(['id', 'projectId', 'title', 'status', 'createdAt', 'updatedAt']);
+  for (const k of keys) {
+    assert.ok(expected.has(k), `unexpected key "${k}" in GET response`);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Snapshot round-trip
+// ════════════════════════════════════════════════════════════════════
+
+test('WorkBuddy persistence round-trip: POST → persist → hydrate → GET', async () => {
+  const tmpDir = (await import('node:os')).tmpdir() + '/cli-bridge-wb-test-' + Date.now();
+  const fs = (await import('node:fs'));
+  fs.mkdirSync(tmpDir, { recursive: true });
+  process.env.CLI_BRIDGE_DATA_DIR = tmpDir;
+
+  try {
+    const { createBridgeRuntime } = await import('../apps/local-server/src/routes/bridge-api.ts');
+    const runtime1 = createBridgeRuntime({ dataDir: tmpDir });
+    runtime1.projectStore.upsert({ key: 'persist-proj' });
+    runtime1.workbuddyStore.recordTaskReference({
+      id: 'p1', projectId: 'persist-proj', title: 'Persisted',
+      status: 'done', createdAt: 1, updatedAt: 2,
+    });
+    runtime1.persist();
+
+    const runtime2 = createBridgeRuntime({ dataDir: tmpDir });
+    const tasks = runtime2.workbuddyStore.listTaskReferences()
+      .filter(t => t.projectId === 'persist-proj');
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].id, 'p1');
+    assert.equal(tasks[0].title, 'Persisted');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.CLI_BRIDGE_DATA_DIR;
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Archived project: PATCH/DELETE
+// ════════════════════════════════════════════════════════════════════
+
+test('archived project PATCH/DELETE workbuddy returns 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'arch-method' });
+  runtime.projectStore.archive('arch-method');
+  const archWb = BRIDGE_PROJECTS_PATH + '/arch-method/workbuddy';
+  const res1 = await call(runtime, 'PATCH', archWb);
+  const res2 = await call(runtime, 'DELETE', archWb);
+  // Archived project blocks all mutations including unknown methods → 409.
+  assert.equal(res1.statusCode, 409);
+  assert.equal(res2.statusCode, 409);
+});
