@@ -59,6 +59,10 @@ export const AUDIT_EVENT_TYPES = [
   'return_review_result',
   'operation_failed',
   'operation_cancelled',
+  // v2.3 AgentTeam lifecycle
+  'team_created',
+  'team_approved',
+  'team_cancelled',
 ] as const;
 
 export const AUDIT_RISK_LEVELS = [
@@ -158,6 +162,11 @@ export interface AuditEvent {
   approvalId?: string;
   /** Optional project scope. Set from the record that triggered this event. */
   projectId?: string;
+  /** v2.3 AgentTeam metadata. */
+  teamId?: string;
+  slotId?: string;
+  planStepId?: string;
+  goalId?: string;
   type: AuditEventType;
   source: string;
   target: string;

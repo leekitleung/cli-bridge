@@ -15,6 +15,11 @@ export interface CreateAuditEventInput {
   approvalId?: string;
   /** Optional project scope — set from the parent record's projectId. */
   projectId?: string;
+  /** v2.3 AgentTeam metadata. */
+  teamId?: string;
+  slotId?: string;
+  planStepId?: string;
+  goalId?: string;
   type: AuditEventType;
   source: string;
   target: string;
@@ -35,6 +40,10 @@ export function createAuditEvent(input: CreateAuditEventInput): AuditEvent {
     packetId: input.packetId,
     approvalId: input.approvalId,
     projectId: input.projectId,
+    teamId: input.teamId,
+    slotId: input.slotId,
+    planStepId: input.planStepId,
+    goalId: input.goalId,
     type: input.type,
     source: input.source,
     target: input.target,

@@ -22,6 +22,7 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
+import { validateProviderCapability } from '../storage/provider-capability.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
 import type { CommandRunOptions } from '../adapters/command-runner.ts';
@@ -173,6 +174,15 @@ async function handleTeamsPost(
   const result = validateTeamSpecCreate({ ...body, projectId: projectKey });
   if (!result.ok) return error(400, 'Invalid TeamSpec: ' + result.errors.join(', '));
 
+  // Provider capability validation
+  const providerCheck = validateProviderCapability(
+    body.provider as string,
+    body.mode as string,
+    body.isolation as string,
+    body.maxConcurrentBridgeSlots as number,
+  );
+  if (!providerCheck.ok) return error(400, 'Provider capability mismatch: ' + providerCheck.errors.join(', '));
+
   // Policy checks
   const goal = runtime.goalStore.getGoal(body.goalId as string);
   if (!goal) return error(400, 'Goal not found');
@@ -222,9 +232,11 @@ async function handleTeamsPost(
     runtime.auditLog.createAndAppend({
       sessionId: 'team-create-' + team.id,
       projectId: projectKey,
-      type: 'operation_failed' as any,
+      type: 'team_created',
       source: 'team-orchestrator',
       target: 'team-' + team.id,
+      teamId: team.id,
+      goalId: team.goalId,
       result: { ok: true },
     });
 
@@ -1351,6 +1363,16 @@ export async function handleBridgeRequest(
       : runtime.teamStore.cancel(teamMatch.teamId);
     if (!team) return error(409, teamMatch.sub === 'approve' ? 'Team not found or not pending approval' : 'Team not found or not cancellable');
     runtime.persist();
+    runtime.auditLog.createAndAppend({
+      sessionId: 'team-' + teamMatch.sub + '-' + team.id,
+      projectId: teamMatch.key,
+      type: teamMatch.sub === 'approve' ? 'team_approved' : 'team_cancelled',
+      source: 'team-orchestrator',
+      target: 'team-' + team.id,
+      teamId: team.id,
+      goalId: team.goalId,
+      result: { ok: true },
+    });
     return ok({ team });
   }
   if (teamMatch.matched) return error(405, 'Method not allowed');
