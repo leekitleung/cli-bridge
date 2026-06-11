@@ -243,6 +243,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <li data-view="memory" role="tab" tabindex="0" aria-selected="false">Memory</li>
     <li data-view="verification" role="tab" tabindex="0" aria-selected="false">Verification</li>
     <li data-view="workbuddy" role="tab" tabindex="0" aria-selected="false">Tasks</li>
+    <li data-view="teams" role="tab" tabindex="0" aria-selected="false">Team</li>
   </ul>
 </nav>
 
@@ -319,7 +320,7 @@ const store = {
   connected: false,
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
   view: 'workspace',
-  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null },
+  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null, teams: null },
   switchingProject: false,
 };
 
@@ -434,6 +435,7 @@ function renderProjectList() {
       store.cache.memory = null;
       store.cache.verification = null;
       store.cache.workbuddy = null;
+      store.cache.teams = null;
       renderWorkspace();
       try {
         await refreshAll();
@@ -748,6 +750,29 @@ function renderSectionView() {
       html += '<span class="unavailable">No completed plan steps — nothing to verify.</span>';
     }
     html += '</div>';
+  } else if (store.view === 'teams') {
+    html = '<div class="card"><h3>AgentTeam (v2.3 − non-executing view)</h3>';
+    html += '<p style="font-size:11px;color:var(--muted);">Teams are created and approved via the API. This console shows read-only team status, slot progress, and artifacts. No execute/dispatch/apply buttons.</p>';
+    const teamsData = store.cache.teams;
+    if (teamsData && teamsData.teams && teamsData.teams.length) {
+      teamsData.teams.forEach(team => {
+        html += '<div style="margin-top:12px;border:1px solid var(--border);border-radius:6px;padding:8px;">';
+        html += '<strong>' + escapeHtml(team.id.slice(0,8)) + '</strong> ';
+        html += '<span class="pill">' + escapeHtml(team.status) + '</span> ';
+        html += '<span style="font-size:11px;color:var(--muted);">' + escapeHtml(team.provider) + ' · ' + escapeHtml(team.mode) + ' · ' + escapeHtml(team.isolation) + ' · ' + escapeHtml(String(team.maxConcurrentBridgeSlots)) + ' slot</span>';
+        if (team.logicalSlots && team.logicalSlots.length) {
+          html += '<table style="margin-top:4px;"><thead><tr><th>role</th><th>#</th><th>tier</th><th>status</th></tr></thead><tbody>';
+          team.logicalSlots.forEach(s => {
+            html += '<tr><td>' + escapeHtml(s.role) + '</td><td>' + escapeHtml(String(s.stepIndex)) + '</td><td>' + escapeHtml(s.tier) + '</td><td><span class="pill">' + escapeHtml(s.status) + '</span></td></tr>';
+          });
+          html += '</tbody></table>';
+        }
+        html += '</div>';
+      });
+    } else {
+      html += '<span class="unavailable">No AgentTeams in this project. Create one via POST /bridge/projects/:key/teams.</span>';
+    }
+    html += '</div>';
   } else if (store.view === 'workbuddy') {
     html = '<div class="card"><h3>WorkBuddy Tasks (non-executing)</h3>';
     html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records. All strictly non-executing — no dispatch, no confirm, no auto-send.</p>';
@@ -936,6 +961,7 @@ $('btn-new-proj').addEventListener('click', async () => {
     store.cache.memory = null;
     store.cache.verification = null;
     store.cache.workbuddy = null;
+    store.cache.teams = null;
     await refreshAll();
   } else {
     $('new-proj-status').textContent = res.data?.message || 'failed';

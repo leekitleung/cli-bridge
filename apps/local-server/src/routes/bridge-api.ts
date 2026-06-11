@@ -20,6 +20,8 @@ import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
 import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
+import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
+import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
 import type { CommandRunOptions } from '../adapters/command-runner.ts';
@@ -97,6 +99,7 @@ export interface BridgeRuntime {
   goalPlanCommandOptions?: CommandRunOptions;
   // v2.2 WorkBuddy non-executing task system.
   workbuddyStore: InMemoryWorkBuddyStateStore;
+  teamStore: InMemoryTeamSpecStore;
 }
 
 export interface BridgeRuntimeOptions {
@@ -109,6 +112,77 @@ export interface BridgeRuntimeOptions {
   // Override the command runner used by goal→plan generation (used by tests to
   // avoid spawning a real CLI). When omitted, the default runner is used.
   goalPlanCommandOptions?: CommandRunOptions;
+}
+
+
+/** Matches /bridge/projects/:key/teams (exact path only). */
+function matchProjectTeamPath(pathname: string): {
+  matched: true; key: string | undefined;
+} | { matched: false } {
+  const prefix = BRIDGE_PROJECTS_PATH + '/';
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  // Expect: :key/teams — key has no slashes, ends with /teams
+  if (!rest.endsWith('/teams')) return { matched: false };
+  const raw = rest.slice(0, -6); // remove '/teams'
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  try {
+    const decoded = decodeURIComponent(raw);
+    const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
+    return { matched: true, key };
+  } catch { return { matched: true, key: undefined }; }
+}
+
+async function handleTeamsPost(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  if (proj.archivedAt) return error(409, 'Project is archived');
+
+  const body = parsed.body as Record<string, unknown>;
+  const pidErr = requireProjectIdMatch(body, projectKey);
+  if (pidErr) return error(400, pidErr);
+
+  // Schema validation
+  const result = validateTeamSpecCreate({ ...body, projectId: projectKey });
+  if (!result.ok) return error(400, 'Invalid TeamSpec: ' + result.errors.join(', '));
+
+  // Policy checks
+  const goal = runtime.goalStore.getGoal(body.goalId as string);
+  if (!goal) return error(400, 'Goal not found');
+  if (goal.status !== 'approved') return error(400, 'Goal must be approved');
+
+  const plan = runtime.goalStore.getPlanByGoal(goal.id);
+  if (!plan) return error(400, 'Plan not found for goal');
+  if (plan.status !== 'approved') return error(400, 'Plan must be approved');
+  if (plan.goalId !== goal.id) return error(400, 'Plan does not belong to goal');
+
+  try {
+    const team = runtime.teamStore.create({
+      ...(body as any), projectId: projectKey,
+    });
+    runtime.persist();
+
+    // Audit
+    runtime.auditLog.createAndAppend({
+      sessionId: 'team-create-' + team.id,
+      projectId: projectKey,
+      type: 'operation_failed' as any,
+      source: 'team-orchestrator',
+      target: 'team-' + team.id,
+      result: { ok: true },
+    });
+
+    return created({ team });
+  } catch (err: any) {
+    return error(400, err?.message ?? 'TeamSpec creation failed');
+  }
 }
 
 /** Matches /bridge/projects/:key/workbuddy (path portion only). */
@@ -259,6 +333,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
 
   const workbuddyStore = new InMemoryWorkBuddyStateStore();
+  const teamStore = new InMemoryTeamSpecStore();
 
   if (snapshotStore) {
     const read = snapshotStore.read();
@@ -287,6 +362,12 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const p of read.snapshot.workbuddyPromptDraftSinks ?? []) {
         try { workbuddyStore.recordPromptDraftSink(p); } catch { }
       }
+      for (const t of read.snapshot.teams ?? []) {
+        try { teamStore.hydrateTeam(t); } catch { /* skip bad record */ }
+      }
+      for (const a of read.snapshot.teamArtifacts ?? []) {
+        try { teamStore.hydrateArtifact(a); } catch { }
+      }
       for (const e of read.snapshot.workbuddyExecutionLedgerEvents ?? []) {
         try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { }
       }
@@ -307,6 +388,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       workbuddyReviewResultSinks: workbuddyStore.listReviewResultSinks(),
       workbuddyPromptDraftSinks: workbuddyStore.listPromptDraftSinks(),
       workbuddyExecutionLedgerEvents: workbuddyStore.listExecutionLedgerEvents(),
+      teams: teamStore.exportTeams(),
+      teamArtifacts: teamStore.exportArtifacts(),
     }));
   };
 
@@ -328,6 +411,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     projectStore,
     goalPlanCommandOptions: options.goalPlanCommandOptions,
     workbuddyStore,
+    teamStore,
   };
 }
 
@@ -644,6 +728,8 @@ export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
 
 // v2.2 WorkBuddy non-executing task system project-scoped path.
 export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
+// v2.3 AgentTeam project-scoped path.
+export const BRIDGE_PROJECT_TEAMS_SUFFIX = '/teams';
 
   /** Matches /bridge/projects/:key/{timeline|audit|memory|verification}. */
 function matchProjectObservabilityPath(pathname: string): {
@@ -1186,6 +1272,22 @@ export async function handleBridgeRequest(
     }
     return error(405, 'Method not allowed');
   }
+
+
+  // ── v2.3 AgentTeam Sequential MVP ─────────────────────────────────
+
+  const teamMatch = matchProjectTeamPath(pathname);
+  if (teamMatch.matched && method === 'GET') {
+    if (!teamMatch.key) return error(400, 'Invalid project key');
+    const proj = runtime.projectStore.get(teamMatch.key);
+    if (!proj) return error(404, 'Project not found');
+    return ok({ teams: runtime.teamStore.listByProject(teamMatch.key) });
+  }
+  if (teamMatch.matched && method === 'POST') {
+    if (!teamMatch.key) return error(400, 'Invalid project key');
+    return handleTeamsPost(runtime, teamMatch.key, request);
+  }
+  if (teamMatch.matched) return error(405, 'Method not allowed');
 
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
 

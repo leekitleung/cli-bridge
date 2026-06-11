@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type {
+  AgentSlot,
+  SlotArtifact,
+  TeamSpec,
   WorkBuddyExecutionLedgerEvent,
   WorkBuddyProjectSnapshot,
   WorkBuddyPromptDraftSink,
@@ -35,6 +38,8 @@ export interface BridgeSnapshot {
   workbuddyReviewResultSinks: WorkBuddyReviewResultSink[];
   workbuddyPromptDraftSinks: WorkBuddyPromptDraftSink[];
   workbuddyExecutionLedgerEvents: WorkBuddyExecutionLedgerEvent[];
+  teams: TeamSpec[];
+  teamArtifacts: SlotArtifact[];
 }
 
 export interface SnapshotWriteResult {
@@ -104,6 +109,8 @@ export class JsonSnapshotStore {
         workbuddyReviewResultSinks: Array.isArray(parsed.workbuddyReviewResultSinks) ? parsed.workbuddyReviewResultSinks : [],
         workbuddyPromptDraftSinks: Array.isArray(parsed.workbuddyPromptDraftSinks) ? parsed.workbuddyPromptDraftSinks : [],
         workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
+        teams: Array.isArray(parsed.teams) ? parsed.teams : [],
+        teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
       };
       return { ok: true, snapshot };
     } catch {
@@ -124,6 +131,8 @@ export interface BuildSnapshotInput {
   workbuddyReviewResultSinks?: WorkBuddyReviewResultSink[];
   workbuddyPromptDraftSinks?: WorkBuddyPromptDraftSink[];
   workbuddyExecutionLedgerEvents?: WorkBuddyExecutionLedgerEvent[];
+  teams?: TeamSpec[];
+  teamArtifacts?: SlotArtifact[];
 }
 
 export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
@@ -140,5 +149,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     workbuddyReviewResultSinks: input.workbuddyReviewResultSinks ?? [],
     workbuddyPromptDraftSinks: input.workbuddyPromptDraftSinks ?? [],
     workbuddyExecutionLedgerEvents: input.workbuddyExecutionLedgerEvents ?? [],
+    teams: input.teams ?? [],
+    teamArtifacts: input.teamArtifacts ?? [],
   };
 }

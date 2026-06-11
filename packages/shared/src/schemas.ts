@@ -30,6 +30,7 @@ import {
   type WorkBuddyPromptDraftSink,
   type WorkBuddyReviewResultSink,
   type WorkBuddyTaskReference,
+  SLOT_ROLES,
 } from './types.ts';
 
 export const SHARED_SCHEMA_VERSION = 0;
@@ -614,6 +615,108 @@ export function validateWorkBuddyExecutionLedgerEvent(value: unknown): SchemaVal
   }
   requireNumber(value, 'createdAt', errors);
   return { ok: errors.length === 0, errors };
+}
+
+
+// --- v2.3 TeamSpec validation ---
+
+const TEAMSPEC_ALLOWED_FIELDS: Record<string, string[]> = {
+  team: ['id', 'projectId', 'goalId', 'planId', 'logicalSlots', 'maxConcurrentBridgeSlots', 'mode', 'isolation', 'provider', 'endpointId', 'policyRequirements', 'status', 'currentSlotIndex', 'createdAt', 'updatedAt', 'approvedAt'],
+  slot: ['id', 'role', 'stepIndex', 'tier', 'isolation', 'status'],
+  artifact: ['teamId', 'slotId', 'planStepId', 'summary', 'proposedFiles', 'verificationNotes', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
+};
+
+export interface TeamSpecValidationResult { ok: boolean; errors: string[]; }
+
+export function validateTeamSpecCreate(value: Record<string, unknown>): TeamSpecValidationResult {
+  const errors: string[] = [];
+
+  if (typeof value !== 'object' || value === null) return { ok: false, errors: ['must be an object'] };
+  requireNonEmptyString(value, 'id', errors);
+  requireNonEmptyString(value, 'projectId', errors);
+  requireNonEmptyString(value, 'goalId', errors);
+  requireNonEmptyString(value, 'planId', errors);
+
+  // logicalSlots
+  if (!Array.isArray(value.logicalSlots) || value.logicalSlots.length < 1 || value.logicalSlots.length > 10) {
+    errors.push('logicalSlots must be an array of 1-10 elements');
+  } else {
+    for (let i = 0; i < value.logicalSlots.length; i++) {
+      const s = value.logicalSlots[i] as Record<string, unknown>;
+      requireNonEmptyString(s, 'id', errors);
+      if (!SLOT_ROLES.includes(s.role as any)) errors.push('logicalSlots[' + i + '].role must be one of: ' + SLOT_ROLES.join(', '));
+      if (typeof s.stepIndex !== 'number' || !Number.isInteger(s.stepIndex) || s.stepIndex < 0) errors.push('logicalSlots[' + i + '].stepIndex must be a non-negative integer');
+      if (typeof s.tier !== 'string') errors.push('logicalSlots[' + i + '].tier must be a string');
+      if (s.isolation !== 'patch-only') errors.push('logicalSlots[' + i + '].isolation must be "patch-only"');
+    }
+  }
+
+  // maxConcurrentBridgeSlots
+  if (value.maxConcurrentBridgeSlots !== 1) errors.push('maxConcurrentBridgeSlots must be 1 in v2.3');
+
+  // mode
+  if (value.mode !== 'sequential') errors.push('mode must be "sequential" in v2.3');
+
+  // isolation
+  if (value.isolation !== 'patch-only') errors.push('isolation must be "patch-only" in v2.3');
+
+  // provider
+  requireNonEmptyString(value, 'provider', errors);
+  if (value.provider === 'workbuddy') errors.push('WorkBuddy cannot be an executor');
+  requireNonEmptyString(value, 'endpointId', errors);
+
+  // Reject forbidden execution fields
+  for (const key of ['autoApply', 'autoCommit', 'autoPush', 'autoExecute', 'command']) {
+    if (key in value) errors.push(key + ' must not be present');
+  }
+
+  return errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
+}
+
+export function assertTeamSpecCreate(value: unknown): asserts value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) throw new Error('TeamSpec must be an object');
+  const result = validateTeamSpecCreate(value as Record<string, unknown>);
+  if (!result.ok) throw new Error('Invalid TeamSpec: ' + result.errors.join(', '));
+}
+
+export function validateSlotArtifact(value: Record<string, unknown>): TeamSpecValidationResult {
+  const errors: string[] = [];
+  if (typeof value !== 'object' || value === null) return { ok: false, errors: ['must be an object'] };
+  requireNonEmptyString(value, 'teamId', errors);
+  requireNonEmptyString(value, 'slotId', errors);
+  requireNonEmptyString(value, 'planStepId', errors);
+  requireNonEmptyString(value, 'summary', errors);
+  if (!Array.isArray(value.proposedFiles)) errors.push('proposedFiles must be an array');
+  if (typeof value.outputRedacted !== 'boolean') errors.push('outputRedacted must be a boolean');
+  if (typeof value.createdAt !== 'number') errors.push('createdAt must be a number');
+  return errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
+}
+
+export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedFiles: string[] }>): { clean: boolean; conflicts: Array<{ path: string; slotA: string; slotB: string }> } {
+  const conflicts: Array<{ path: string; slotA: string; slotB: string }> = [];
+  const fileOwners = new Map<string, string>(); // path -> slotId
+
+  for (const artifact of artifacts) {
+    for (const file of artifact.proposedFiles) {
+      const normalized = file.startsWith('/') ? file : '/' + file;
+      // Check direct overlap.
+      if (fileOwners.has(normalized)) {
+        conflicts.push({ path: normalized, slotA: fileOwners.get(normalized)!, slotB: artifact.slotId });
+        continue;
+      }
+      // Check directory prefix overlap.
+      for (const [existingPath, owner] of fileOwners) {
+        if (normalized.startsWith(existingPath + '/') || existingPath.startsWith(normalized + '/')) {
+          conflicts.push({ path: normalized + ' ⇄ ' + existingPath, slotA: owner, slotB: artifact.slotId });
+        }
+      }
+      if (!fileOwners.has(normalized)) {
+        fileOwners.set(normalized, artifact.slotId);
+      }
+    }
+  }
+
+  return { clean: conflicts.length === 0, conflicts };
 }
 
 export function assertWorkBuddyExecutionLedgerEvent(

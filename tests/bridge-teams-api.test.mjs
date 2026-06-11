@@ -1,0 +1,342 @@
+// v2.3 AgentTeam Sequential MVP tests — TeamSpec API + policy + store.
+// All endpoints are project-scoped, non-executing, token-gate protected.
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  BRIDGE_PROJECTS_PATH,
+  BRIDGE_GOALS_PATH,
+  createBridgeRuntime,
+  handleBridgeRequest,
+} from '../apps/local-server/src/routes/bridge-api.ts';
+import { detectFileConflicts } from '../packages/shared/src/schemas.ts';
+
+function jsonRequest(body) {
+  const text = body === undefined ? '' : JSON.stringify(body);
+  async function* gen() {
+    if (text.length > 0) yield Buffer.from(text, 'utf8');
+  }
+  return gen();
+}
+
+async function call(runtime, method, path, body) {
+  return handleBridgeRequest(runtime, method, path, jsonRequest(body));
+}
+
+async function seedApprovedGoalPlan(runtime, projectId) {
+  const goal = runtime.goalStore.createGoal({
+    sessionId: 'seed', description: 'Goal for team', projectId,
+  });
+  // Attach a plan to the goal, then approve.
+  const plan = runtime.goalStore.attachPlan({
+    goalId: goal.id,
+    steps: [
+      { intent: 'Plan task', kind: 'review', tier: 'patch-proposal', isStateMutating: false, targetEndpointId: 'claude-code-command' },
+      { intent: 'Verify task', kind: 'review', tier: 'patch-proposal', isStateMutating: false, targetEndpointId: 'claude-code-command' },
+    ],
+    permittedTiers: ['patch-proposal'],
+  });
+  if (!plan) throw new Error('failed to attach plan');
+  runtime.goalStore.approvePlan(goal.id);
+  return { goalId: goal.id, planId: plan.id };
+}
+
+const TEAMS = (key) => BRIDGE_PROJECTS_PATH + '/' + key + '/teams';
+
+// ════════════════════════════════════════════════════════════════════
+// TeamSpec create — happy path
+// ════════════════════════════════════════════════════════════════════
+
+test('POST /bridge/projects/:key/teams creates a valid TeamSpec', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's1');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 'team-1', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.team.id, 'team-1');
+  assert.equal(res.payload.team.status, 'pending-approval');
+  assert.equal(res.payload.team.maxConcurrentBridgeSlots, 1);
+  assert.equal(res.payload.team.logicalSlots.length, 2);
+
+  // GET
+  const getRes = await call(runtime, 'GET', TEAMS('alpha'));
+  assert.equal(getRes.statusCode, 200);
+  assert.equal(getRes.payload.teams.length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Rejections
+// ════════════════════════════════════════════════════════════════════
+
+test('reject maxConcurrentBridgeSlots > 1', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's2');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 2, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('reject mode !== sequential', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's3');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'parallel', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('reject isolation !== patch-only', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's4');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'worktree' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'worktree',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('reject WorkBuddy as executor', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's5');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'workbuddy', endpointId: 'workbuddy-connector',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('WorkBuddy'));
+});
+
+test('accept logicalSlots > 1 with maxConcurrentBridgeSlots = 1', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 's6');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-multi', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 's1', role: 'executor', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 201);
+});
+
+test('reject unknown project', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', TEAMS('unknown'), { action: 'create', id: 't' });
+  assert.equal(res.statusCode, 404);
+});
+
+test('reject archived project create', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'arch-proj' });
+  runtime.projectStore.archive('arch-proj');
+  const res = await call(runtime, 'POST', TEAMS('arch-proj'), {
+    action: 'create', id: 't', goalId: 'g', planId: 'p',
+    logicalSlots: [{ id: 's', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 409);
+});
+
+test('PATCH/DELETE teams returns 405', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res1 = await call(runtime, 'PATCH', TEAMS('alpha'));
+  const res2 = await call(runtime, 'DELETE', TEAMS('alpha'));
+  assert.equal(res1.statusCode, 405);
+  assert.equal(res2.statusCode, 405);
+});
+
+test('alpha teams not visible in beta', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+  const ga = await seedApprovedGoalPlan(runtime, 'alpha', 'sa');
+  if (!ga) return;
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-a', goalId: ga.goalId, planId: ga.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  const betaRes = await call(runtime, 'GET', TEAMS('beta'));
+  assert.equal(betaRes.statusCode, 200);
+  assert.equal(betaRes.payload.teams.length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Store: approve/cancel/slot progression
+// ════════════════════════════════════════════════════════════════════
+
+test('approve and cancel team lifecycle', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 'sl');
+  if (!g) return;
+
+  // Create
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-life', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  // Approve via store
+  const approved = runtime.teamStore.approve('t-life');
+  assert.ok(approved, 'must approve');
+  assert.equal(approved.status, 'approved');
+
+  // Cancel via store
+  const cancelled = runtime.teamStore.cancel('t-life');
+  assert.ok(cancelled, 'must cancel');
+  assert.equal(cancelled.status, 'cancelled');
+});
+
+test('slot progression: sequential order', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 'sq');
+  if (!g) return;
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-seq', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  runtime.teamStore.approve('t-seq');
+  runtime.teamStore.setExecuting('t-seq');
+
+  // Advance slot 0 to done
+  let team = runtime.teamStore.advanceSlot('t-seq', 's0', 'done');
+  assert.ok(team);
+  assert.equal(team.logicalSlots[0].status, 'done');
+  assert.equal(team.currentSlotIndex, 1); // moved forward
+
+  // Advance slot 1 to done
+  let team2 = runtime.teamStore.advanceSlot('t-seq', 's1', 'done');
+  assert.ok(team2);
+  assert.equal(team2.status, 'done'); // all slots done
+});
+
+test('failed slot stops team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 'sf');
+  if (!g) return;
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-fail', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  runtime.teamStore.approve('t-fail');
+  runtime.teamStore.setExecuting('t-fail');
+  let team = runtime.teamStore.advanceSlot('t-fail', 's0', 'failed');
+  assert.ok(team);
+  assert.equal(team.status, 'failed');
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Conflict detection
+// ════════════════════════════════════════════════════════════════════
+
+test('detectFileConflicts: same file conflict', () => {
+  const result = detectFileConflicts([
+    { slotId: 'a', proposedFiles: ['src/app.ts'] },
+    { slotId: 'b', proposedFiles: ['src/app.ts'] },
+  ]);
+  assert.equal(result.clean, false);
+  assert.equal(result.conflicts.length, 1);
+});
+
+test('detectFileConflicts: directory prefix conflict', () => {
+  const result = detectFileConflicts([
+    { slotId: 'a', proposedFiles: ['/src/components'] },
+    { slotId: 'b', proposedFiles: ['/src/components/app.ts'] },
+  ]);
+  assert.equal(result.clean, false);
+});
+
+test('detectFileConflicts: no overlap clean', () => {
+  const result = detectFileConflicts([
+    { slotId: 'a', proposedFiles: ['src/api.ts'] },
+    { slotId: 'b', proposedFiles: ['tests/api.test.ts'] },
+  ]);
+  assert.equal(result.clean, true);
+});
+
+test('detectFileConflicts: non-adjacent overlap', () => {
+  const result = detectFileConflicts([
+    { slotId: 'a', proposedFiles: ['src/shared.ts'] },
+    { slotId: 'b', proposedFiles: ['tests/main.ts'] },
+    { slotId: 'c', proposedFiles: ['src/shared.ts'] },
+  ]);
+  assert.equal(result.clean, false);
+  assert.equal(result.conflicts[0].slotA, 'a');
+  assert.equal(result.conflicts[0].slotB, 'c');
+});
+
+test('Slot artifact recording', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha', 'sa-art');
+  if (!g) return;
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-art', goalId: g.goalId, planId: g.goalId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  runtime.teamStore.recordArtifact('t-art', {
+    teamId: 't-art', slotId: 's0', planStepId: 's0',
+    summary: 'Patched auth', proposedFiles: ['src/auth.ts'],
+    outputRedacted: true, createdAt: 100,
+  });
+  const artifacts = runtime.teamStore.listArtifacts('t-art');
+  assert.equal(artifacts.length, 1);
+  assert.equal(artifacts[0].summary, 'Patched auth');
+});

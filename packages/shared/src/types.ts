@@ -563,6 +563,80 @@ export interface Project {
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */
+
+// --- v2.3 AgentTeam: TeamSpec & SlotArtifact DTOs ---
+
+export const TEAMSPEC_MODES = ['sequential'] as const;
+export type TeamSpecMode = typeof TEAMSPEC_MODES[number];
+
+export const TEAMSPEC_ISOLATION_MODES = ['patch-only'] as const;
+export type TeamSpecIsolationMode = typeof TEAMSPEC_ISOLATION_MODES[number];
+
+export const TEAM_STATUSES = [
+  'pending-approval', 'approved', 'executing', 'done', 'failed', 'cancelled',
+] as const;
+export type TeamStatus = typeof TEAM_STATUSES[number];
+
+export const SLOT_STATUSES = [
+  'pending', 'ready', 'executing', 'blocked-needs-gate', 'done', 'failed', 'cancelled',
+] as const;
+export type SlotStatus = typeof SLOT_STATUSES[number];
+
+export const SLOT_ROLES = ['planner', 'executor', 'verifier'] as const;
+export type SlotRole = typeof SLOT_ROLES[number];
+
+export interface AgentSlot {
+  id: string;
+  role: SlotRole;
+  stepIndex: number;
+  tier: string;
+  isolation: TeamSpecIsolationMode;
+  status: SlotStatus;
+}
+
+export interface PolicyRequirement {
+  kind: string;
+  detail: string;
+}
+
+export interface TeamSpec {
+  id: string;
+  projectId: string;
+  goalId: string;
+  planId: string;
+  logicalSlots: AgentSlot[];
+  maxConcurrentBridgeSlots: number;
+  mode: TeamSpecMode;
+  isolation: TeamSpecIsolationMode;
+  provider: string;
+  endpointId: string;
+  policyRequirements: PolicyRequirement[];
+  status: TeamStatus;
+  currentSlotIndex: number;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+}
+
+export interface SlotArtifact {
+  teamId: string;
+  slotId: string;
+  planStepId: string;
+  summary: string;
+  proposedFiles: string[];
+  verificationNotes?: string;
+  rawProviderOutput?: string;
+  outputRedacted: boolean;
+  createdAt: number;
+}
+
+export interface ConflictReport {
+  clean: boolean;
+  conflicts: Array<{ path: string; slotA: string; slotB: string }>;
+}
+
+// --- Phase B: Project workspace model ---
+
 export interface ProjectSummary {
   project: Project;
   /** Number of goals scoped to this project. */
