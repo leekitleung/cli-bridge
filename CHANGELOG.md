@@ -21,9 +21,11 @@ All notable changes to CLI Bridge are documented here.
 - `recordArtifact()` and `hydrateArtifact()` both now align with `validateSlotArtifact` plus `outputRedacted` guard.
 - `detectFileConflicts()` optimized to sort-first O(n log n) from O(n^2) prefix scan.
 - `currentSlotIndex` sentinel semantics documented; `cancel()` lifecycle documents orchestrator cleanup responsibility.
+- Patch review follow-up: artifact `planStepId` is derived from the approved plan and rejects mismatches; `blocked-needs-gate` is supported with `slot_gated` audit semantics; cancelled slots now cancel the team; `slot_started` is only written when advancing to `executing`; malformed encoded slot routes no longer throw 500.
 
 ### Tests
 - 15 new API-level tests covering artifact recording (happy path, redaction rejection, unknown slot, cross-project, audit), conflict report (clean, same-file conflict, cross-project), and slot advance (sequential order, skip rejection, double executing, failed-stops-team, pending-rejection, cross-project, audit events).
+- 4 patch review follow-up tests covering `planStepId` mismatch rejection, `blocked-needs-gate` audit, cancelled-team lifecycle, and malformed encoded slot routes.
 - Console UI tests continue to pass with no new shell/exec/run paths; allowlist unchanged.
 
 ### Safety
@@ -32,7 +34,7 @@ All notable changes to CLI Bridge are documented here.
 - No parallel slots, worktree, branch, shared workspace.
 - No WorkBuddy executor, Model API, scheduler, daemon.
 - Console remains read-only with no execute/dispatch/apply/merge buttons.
-- Verdict: 494/494 tests pass; typecheck pass; lint pass.
+- Verdict: 498/498 tests pass; typecheck pass; lint pass; diff check pass.
 
 ## [v2.3] — 2026-06-11 — AgentTeam Hardening
 

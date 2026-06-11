@@ -3,7 +3,7 @@
 **Status**: IMPLEMENTED — v2.3 AgentTeam Sequential MVP Closeout
 **Date**: 2026-06-12 (original handoff 2026-06-11)
 **Based on**: `CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md` (v2.3 spike)
-**Spans**: DESIGN ONLY. No implementation code.
+**Spans**: Historical implementation handoff. Implementation evidence now lives in `CLI-BRIDGE-v2.3-CLOSEOUT-REVIEW.md`.
 
 ---
 
@@ -11,6 +11,8 @@
 
 This document is the v2.3 implementation handoff. It translates the v2.3 feasibility
 spike into a concrete, reviewer-ready blueprint for the v2.3 AgentTeam Sequential MVP.
+
+**Post-closeout note (2026-06-12):** v2.3 has since been implemented and closeout-approved. The design-time wording below is preserved as the original execution contract; use the closeout review and changelog for current implementation evidence.
 
 **It is NOT a code implementation.** No runtime, no store, no HTTP endpoint, no
 orchestrator, no provider registry, no model API exists yet.

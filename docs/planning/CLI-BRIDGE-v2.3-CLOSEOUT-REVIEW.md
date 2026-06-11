@@ -1,8 +1,9 @@
 # CLI Bridge v2.3 — Closeout Review
 
-**Status**: DRAFT — Awaiting senior review
+**Status**: APPROVED — v2.3 AgentTeam Sequential MVP closeout
 **Date**: 2026-06-12
 **Based on**: `CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`
+**Final review**: PASS after patch review follow-up (`5c7af73`)
 
 ---
 
@@ -84,13 +85,14 @@ pending → [advance] → executing → [advance] → done
 ```
 npm run typecheck   → pass
 npm run lint        → pass
-npm test            → 494/494 pass
+npm test            → 498/498 pass
+git diff --check    → pass
 ```
 
 ### Coverage by subsystem
 | Subsystem | Test count | Status |
 |-----------|-----------|--------|
-| TeamSpec API | 51 tests | pass |
+| TeamSpec API | 55 tests | pass |
 | Console UI | 17 tests | pass |
 | Audit events | 4 tests | pass (schema covers new types) |
 | JSON persistence | 11 tests | pass |
@@ -98,10 +100,11 @@ npm test            → 494/494 pass
 | Review CLI | ~20 tests | pass |
 | All other | ~361 tests | pass |
 
-### New tests added (15 tests)
+### New tests added (19 tests)
 - Artifact POST: happy path, redaction rejection, unknown slot, cross-project, audit
 - Conflict GET: clean, same-file conflict, cross-project isolation
 - Slot advance POST: sequential order, skip rejection, double-executing rejection, failed-stops-team, audit events, pending-rejection, cross-project
+- Patch review follow-up: `planStepId` mismatch rejection, `blocked-needs-gate` audit semantics, slot cancelled -> team cancelled, malformed encoded route segment handled without 500
 
 ---
 
@@ -128,6 +131,6 @@ npm test            → 494/494 pass
 
 ## 8. Closeout Readiness
 
-**Verdict**: READY for senior review.
+**Verdict**: PASS / CLOSEOUT.
 
-All v2.3 handoff requirements are implemented. The sequential single-provider patch-only AgentTeam chain is complete from TeamSpec creation through to audit, artifacts, conflict detection, and console visibility. No v2.4+ capabilities are included.
+All v2.3 handoff requirements are implemented. The sequential single-provider patch-only AgentTeam chain is complete from TeamSpec creation through to audit, artifacts, conflict detection, and console visibility. The review follow-up patched `planStepId` validation, gated-slot audit semantics, cancelled-team lifecycle, `slot_started` audit semantics, and malformed encoded route handling. No v2.4+ capabilities are included.

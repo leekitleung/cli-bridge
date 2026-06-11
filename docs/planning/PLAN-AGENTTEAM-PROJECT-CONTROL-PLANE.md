@@ -2,19 +2,21 @@
 
 ## 0. Status
 
-Status: V2.3 SPIKE COMPLETE — Implementation handoff created (2026-06-11).
+Status: V2.3 CLOSEOUT COMPLETE — Post-v2.3 planning gate active (2026-06-12).
 
 The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
 concluded; the implementation handoff (`CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`)
-is now available for review. Key decisions:
+was implemented and closeout-approved in `CLI-BRIDGE-v2.3-CLOSEOUT-REVIEW.md`.
+Post-v2.3 planning is tracked in `CLI-BRIDGE-POST-v2.3-PLANNING-HANDOFF.md`.
+Key decisions:
 - Sequential, single-provider, patch-only AgentTeam is feasible with current bridge architecture.
 - Bridge-governed parallel slots are not available in v2.3 because cli-bridge lacks the slot governance contract.
 - Claude Code product-native parallelism: reported by official docs, pending citation verification.
 - Codex product-native parallelism: unknown / requires evidence.
-- Minimum viable v2.3 scope: sequential slot orchestrator, TeamSpec data model, patch conflict detection.
+- Minimum viable v2.3 scope is implemented: TeamSpec, sequential slot state, patch artifact recording, read-only conflict reporting, audit, and console visibility.
 - Worktree/branch isolation deferred past v2.3. WorkBuddy remains non-executing.
 
-This document remains the architectural reference. The spike is the gate decision artifact.
+This document remains the architectural reference. The spike is the feasibility artifact; the closeout review is the v2.3 implementation evidence; the post-v2.3 handoff is the next planning gate.
 
 This plan is intentionally **not** a v2.1 implementation baseline. v2.0 must
 first run real Goal -> Plan -> approve -> bounded step progression -> gate ->
