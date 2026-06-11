@@ -242,6 +242,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <li data-view="audit" role="tab" tabindex="0" aria-selected="false">Audit</li>
     <li data-view="memory" role="tab" tabindex="0" aria-selected="false">Memory</li>
     <li data-view="verification" role="tab" tabindex="0" aria-selected="false">Verification</li>
+    <li data-view="workbuddy" role="tab" tabindex="0" aria-selected="false">Tasks</li>
   </ul>
 </nav>
 
@@ -318,7 +319,7 @@ const store = {
   connected: false,
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
   view: 'workspace',
-  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null },
+  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null },
   switchingProject: false,
 };
 
@@ -369,14 +370,16 @@ async function refreshAll() {
     api(base + '/audit'),
     api(base + '/memory'),
     api(base + '/verification'),
+    api(base + '/workbuddy'),
   ]);
-  const [prR, deR, tiR, auR, meR, veR] = results;
+  const [prR, deR, tiR, auR, meR, veR, wbR] = results;
   if (prR.status === 'fulfilled' && prR.value.ok) store.cache.projects = prR.value.data.projects || [];
   if (deR.status === 'fulfilled' && deR.value.ok) store.cache.detail = deR.value.data;
   if (tiR.status === 'fulfilled' && tiR.value.ok) store.cache.timeline = tiR.value.data;
   if (auR.status === 'fulfilled' && auR.value.ok) store.cache.audit = auR.value.data;
   if (meR.status === 'fulfilled' && meR.value.ok) store.cache.memory = meR.value.data;
   if (veR.status === 'fulfilled' && veR.value.ok) store.cache.verification = veR.value.data;
+  if (wbR.status === 'fulfilled' && wbR.value.ok) store.cache.workbuddy = wbR.value.data;
   renderAll();
 }
 
@@ -430,6 +433,7 @@ function renderProjectList() {
       store.cache.audit = null;
       store.cache.memory = null;
       store.cache.verification = null;
+      store.cache.workbuddy = null;
       renderWorkspace();
       try {
         await refreshAll();
@@ -744,6 +748,42 @@ function renderSectionView() {
       html += '<span class="unavailable">No completed plan steps — nothing to verify.</span>';
     }
     html += '</div>';
+  } else if (store.view === 'workbuddy') {
+    html = '<div class="card"><h3>WorkBuddy Tasks (non-executing)</h3>';
+    html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records. All strictly non-executing — no dispatch, no confirm, no auto-send.</p>';
+    const wb = store.cache.workbuddy;
+    if (wb && wb.tasks && wb.tasks.length) {
+      html += '<h4 style="margin-top:12px;">Tasks</h4><table><thead><tr><th>title</th><th>status</th></tr></thead><tbody>';
+      wb.tasks.forEach(t => {
+        html += '<tr><td>' + escapeHtml(t.title) + '</td><td><span class="pill">' + escapeHtml(t.status) + '</span></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (wb && wb.reviewResultSinks && wb.reviewResultSinks.length) {
+      html += '<h4 style="margin-top:12px;">Review Results</h4><table><thead><tr><th>summary</th><th>findings</th></tr></thead><tbody>';
+      wb.reviewResultSinks.forEach(r => {
+        html += '<tr><td>' + escapeHtml(r.summary) + '</td><td>' + escapeHtml((r.findings || []).join(', ')) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (wb && wb.promptDraftSinks && wb.promptDraftSinks.length) {
+      html += '<h4 style="margin-top:12px;">Prompt Drafts</h4><table><thead><tr><th>draft</th><th>status</th></tr></thead><tbody>';
+      wb.promptDraftSinks.forEach(p => {
+        html += '<tr><td>' + escapeHtml(p.promptDraft) + '</td><td><span class="pill">' + escapeHtml(p.status) + '</span></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (wb && wb.executionLedgerEvents && wb.executionLedgerEvents.length) {
+      html += '<h4 style="margin-top:12px;">Execution Ledger</h4><table><thead><tr><th>kind</th><th>summary</th></tr></thead><tbody>';
+      wb.executionLedgerEvents.forEach(e => {
+        html += '<tr><td><span class="pill">' + escapeHtml(e.kind) + '</span></td><td>' + escapeHtml(e.summary) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (!wb || (!wb.tasks?.length && !wb.reviewResultSinks?.length && !wb.promptDraftSinks?.length && !wb.executionLedgerEvents?.length)) {
+      html += '<span class="unavailable">No WorkBuddy records in this project. Tasks, review results, prompt drafts, and external execution records will appear here once recorded via the WorkBuddy API.</span>';
+    }
+    html += '</div>';
   }
   const existing = document.getElementById('section-panel');
   if (existing) existing.remove();
@@ -895,6 +935,7 @@ $('btn-new-proj').addEventListener('click', async () => {
     store.cache.audit = null;
     store.cache.memory = null;
     store.cache.verification = null;
+    store.cache.workbuddy = null;
     await refreshAll();
   } else {
     $('new-proj-status').textContent = res.data?.message || 'failed';

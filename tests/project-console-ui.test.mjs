@@ -271,3 +271,12 @@ test('new project create UI is present and calls POST /bridge/projects', () => {
   // No /exec, /shell additions.
   assert.equal(/\/(exec|shell)['"`]/.test(html), false);
 });
+
+// v2.2: Tasks/WorkBuddy nav present and non-executing labeled.
+test('Tasks nav is present and no exec/shell paths', () => {
+  const html = renderProjectConsoleHtml();
+  assert.ok(html.includes('workbuddy'), 'workbuddy tasks nav should exist');
+  assert.ok(html.includes('Non-executing') || html.includes('non-executing'),
+    'workbuddy should be labeled as non-executing');
+  assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
+});

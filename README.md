@@ -33,7 +33,7 @@ loops.
   `processedContent` is persisted.
 - **Still library-only** (validated by tests, not yet exposed over HTTP):
   bidirectional loop orchestration, endpoint registry with capability gating,
-  agent-to-agent review lifecycle, and a WorkBuddy state contract.
+  and agent-to-agent review lifecycle.
 - **Remote Review Gate**: a local, read-only release gate
   (`npm run remote-review-gate`) that checks local/remote HEAD match, working
   tree cleanliness, and (when GitHub CLI is available) PR / CI state.
@@ -61,6 +61,20 @@ loops.
   - Records without explicit `projectId` are backfilled to the default `"cli-bridge"` project at query time.
   - Archived project guards: creating goals/reviews/prompts with an archived `projectId` returns 409.
   - Detailed contract: see `docs/contracts/bridge-projects-api.md`.
+- **Goal-driven execution (v2.0)**: Goal → Plan → Approve → Step → Gate → Audit
+  flow with tier enforcement, step ceiling (hard 10), mutating-step gates, and
+  controlled execution. See `docs/planning/ADR-0003-controlled-execution-layer.md`.
+- **Read-only project observability (v2.1)**: `GET /bridge/projects/:key/{timeline,audit,memory,verification}`
+  — server-derived views from existing stores. No new execution authority.
+- **Explicit project creation (B3)**: `POST /bridge/projects` with `{ key, label?, description? }`.
+  Duplicate / archived / default project keys return 409.
+- **WorkBuddy non-executing task system (v2.2)**: `POST /bridge/projects/:key/workbuddy`
+  with action multiplexing (`record-task` / `record-review-result` / `record-prompt-draft` /
+  `record-ledger`). GET returns project-scoped task state. All strictly non-executing —
+  no confirm, no send, no dispatch, no CLI invocation. Detailed contract: see
+  `docs/contracts/bridge-workbuddy-api.md`.
+  Archived project GET allowed, POST → 409.
+  Console Tasks dashboard visible at `/console/project`.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is

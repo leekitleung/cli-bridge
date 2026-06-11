@@ -19,6 +19,7 @@ import {
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
 import { InMemoryGoalStore } from '../storage/goal-store.ts';
+import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
 import type { CommandRunOptions } from '../adapters/command-runner.ts';
@@ -94,6 +95,8 @@ export interface BridgeRuntime {
   projectStore: InMemoryProjectStore;
   /** Command runner override for goal→plan generation (test injection). */
   goalPlanCommandOptions?: CommandRunOptions;
+  // v2.2 WorkBuddy non-executing task system.
+  workbuddyStore: InMemoryWorkBuddyStateStore;
 }
 
 export interface BridgeRuntimeOptions {
@@ -106,6 +109,89 @@ export interface BridgeRuntimeOptions {
   // Override the command runner used by goal→plan generation (used by tests to
   // avoid spawning a real CLI). When omitted, the default runner is used.
   goalPlanCommandOptions?: CommandRunOptions;
+}
+
+/** Matches /bridge/projects/:key/workbuddy (path portion only). */
+function matchProjectWorkBuddyPath(pathname: string): {
+  matched: true; key: string | undefined; sub: string;
+} | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  const suffix = BRIDGE_PROJECT_WORKBUDDY_SUFFIX;
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  const raw = rest.slice(0, -suffix.length);
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  let decoded: string | undefined;
+  try { decoded = decodeURIComponent(raw); } catch { return { matched: true, key: undefined, sub: suffix }; }
+  const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
+  return { matched: true, key, sub: '' };
+}
+
+/** Validates that body.projectId, if present, matches the URL key. */
+function requireProjectIdMatch(body: Record<string, unknown>, urlKey: string): string | null {
+  const bodyProjectId = body.projectId;
+  if (bodyProjectId !== undefined) {
+    if (typeof bodyProjectId !== 'string') return 'body.projectId must be a string';
+    const resolved = resolveProjectKey(bodyProjectId);
+    if (resolved !== urlKey) return 'body.projectId does not match URL project key';
+  }
+  return null; // ok
+}
+
+function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
+  return {
+    projectId: projectKey,
+    tasks: runtime.workbuddyStore.listTaskReferences().filter(t => resolveProjectKey(t.projectId) === projectKey),
+    reviewResultSinks: runtime.workbuddyStore.listReviewResultSinks().filter(r => resolveProjectKey(r.projectId) === projectKey),
+    promptDraftSinks: runtime.workbuddyStore.listPromptDraftSinks().filter(p => resolveProjectKey(p.projectId) === projectKey),
+    executionLedgerEvents: runtime.workbuddyStore.listExecutionLedgerEvents().filter(e => resolveProjectKey(e.projectId) === projectKey),
+  };
+}
+
+async function postWorkBuddyMultiplex(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+  const action = requireString(parsed.body, 'action');
+  if (!action) return error(400, 'action is required');
+  const pidErr = requireProjectIdMatch(parsed.body, projectKey);
+  if (pidErr) return error(400, pidErr);
+
+  // Normalise: inject projectId, strip action.
+  const { action: _a, projectId: _pid, ...bodyRest } = parsed.body as Record<string, unknown>;
+  const payload: Record<string, unknown> = { ...bodyRest, projectId: projectKey };
+
+  try {
+    switch (action) {
+      case 'record-task': {
+        const task = runtime.workbuddyStore.recordTaskReference(payload as any);
+        runtime.persist();
+        return created({ task });
+      }
+      case 'record-review-result': {
+        const sink = runtime.workbuddyStore.recordReviewResultSink(payload as any);
+        runtime.persist();
+        return created({ reviewResultSink: sink });
+      }
+      case 'record-prompt-draft': {
+        const draft = runtime.workbuddyStore.recordPromptDraftSink(payload as any);
+        runtime.persist();
+        return created({ promptDraftSink: draft });
+      }
+      case 'record-ledger': {
+        const event = runtime.workbuddyStore.recordExecutionLedgerEvent(payload as any);
+        runtime.persist();
+        return created({ executionLedgerEvent: event });
+      }
+      default:
+        return error(400, `Unknown action: ${action}`);
+    }
+  } catch (err: any) {
+    return error(400, err?.message ?? 'Invalid WorkBuddy payload');
+  }
 }
 
 export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeRuntime {
@@ -131,6 +217,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
   const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
 
+  const workbuddyStore = new InMemoryWorkBuddyStateStore();
+
   if (snapshotStore) {
     const read = snapshotStore.read();
     if (read.ok && read.snapshot) {
@@ -148,13 +236,24 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const plan of read.snapshot.plans ?? []) {
         goalStore.hydratePlan(plan);
       }
+      // v2.2 WorkBuddy state: fail-open hydration.
+      for (const t of read.snapshot.workbuddyTaskReferences ?? []) {
+        try { workbuddyStore.recordTaskReference(t); } catch { /* skip bad record */ }
+      }
+      for (const r of read.snapshot.workbuddyReviewResultSinks ?? []) {
+        try { workbuddyStore.recordReviewResultSink(r); } catch { }
+      }
+      for (const p of read.snapshot.workbuddyPromptDraftSinks ?? []) {
+        try { workbuddyStore.recordPromptDraftSink(p); } catch { }
+      }
+      for (const e of read.snapshot.workbuddyExecutionLedgerEvents ?? []) {
+        try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { }
+      }
     }
   }
 
   const persist = (): void => {
-    if (!snapshotStore) {
-      return;
-    }
+    if (!snapshotStore) return;
     snapshotStore.write(buildSnapshot({
       packets: packetStore.exportPackets(),
       auditEvents: auditLog.exportEvents(),
@@ -163,6 +262,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       goals: goalStore.exportGoals(),
       plans: goalStore.exportPlans(),
       projects: projectStore.exportProjects(),
+      workbuddyTaskReferences: workbuddyStore.listTaskReferences(),
+      workbuddyReviewResultSinks: workbuddyStore.listReviewResultSinks(),
+      workbuddyPromptDraftSinks: workbuddyStore.listPromptDraftSinks(),
+      workbuddyExecutionLedgerEvents: workbuddyStore.listExecutionLedgerEvents(),
     }));
   };
 
@@ -183,6 +286,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     goalStore,
     projectStore,
     goalPlanCommandOptions: options.goalPlanCommandOptions,
+    workbuddyStore,
   };
 }
 
@@ -496,6 +600,9 @@ export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
 export const BRIDGE_PROJECT_AUDIT_SUFFIX = '/audit';
 export const BRIDGE_PROJECT_MEMORY_SUFFIX = '/memory';
 export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
+
+// v2.2 WorkBuddy non-executing task system project-scoped path.
+export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
 
   /** Matches /bridge/projects/:key/{timeline|audit|memory|verification}. */
 function matchProjectObservabilityPath(pathname: string): {
@@ -1017,6 +1124,27 @@ export async function handleBridgeRequest(
     return error(404, 'Not found');
   }
   if (obsPath.matched) return error(405, 'Method not allowed');
+
+  // ── v2.2 WorkBuddy Non-Executing Task System ───────────────────────
+
+  const wbMatch = matchProjectWorkBuddyPath(pathname);
+  if (wbMatch.matched) {
+    if (!wbMatch.key) return error(400, 'Invalid project key');
+    const wbProj = runtime.projectStore.get(wbMatch.key);
+    if (!wbProj) return error(404, 'Project not found');
+    // Archived project: GET allowed, mutation blocked.
+    if (wbProj.archivedAt && method !== 'GET') {
+      return error(409, 'Cannot mutate WorkBuddy state in archived project');
+    }
+
+    if (wbMatch.sub === '' && method === 'GET') {
+      return ok(buildWorkBuddyProjectView(runtime, wbMatch.key));
+    }
+    if (wbMatch.sub === '' && method === 'POST') {
+      return postWorkBuddyMultiplex(runtime, wbMatch.key, request);
+    }
+    return error(405, 'Method not allowed');
+  }
 
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
 

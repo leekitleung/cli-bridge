@@ -2,6 +2,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type {
+  WorkBuddyExecutionLedgerEvent,
+  WorkBuddyProjectSnapshot,
+  WorkBuddyPromptDraftSink,
+  WorkBuddyReviewResultSink,
+  WorkBuddyTaskReference,
   AuditEvent,
   BridgePacket,
   Goal,
@@ -26,6 +31,10 @@ export interface BridgeSnapshot {
   plans: Plan[];
   /** v2: persisted project registry (explicitly registered projects only). */
   projects: Project[];
+  workbuddyTaskReferences: WorkBuddyTaskReference[];
+  workbuddyReviewResultSinks: WorkBuddyReviewResultSink[];
+  workbuddyPromptDraftSinks: WorkBuddyPromptDraftSink[];
+  workbuddyExecutionLedgerEvents: WorkBuddyExecutionLedgerEvent[];
 }
 
 export interface SnapshotWriteResult {
@@ -91,6 +100,10 @@ export class JsonSnapshotStore {
         goals: Array.isArray(parsed.goals) ? parsed.goals : [],
         plans: Array.isArray(parsed.plans) ? parsed.plans : [],
         projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+        workbuddyTaskReferences: Array.isArray(parsed.workbuddyTaskReferences) ? parsed.workbuddyTaskReferences : [],
+        workbuddyReviewResultSinks: Array.isArray(parsed.workbuddyReviewResultSinks) ? parsed.workbuddyReviewResultSinks : [],
+        workbuddyPromptDraftSinks: Array.isArray(parsed.workbuddyPromptDraftSinks) ? parsed.workbuddyPromptDraftSinks : [],
+        workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
       };
       return { ok: true, snapshot };
     } catch {
@@ -107,6 +120,10 @@ export interface BuildSnapshotInput {
   goals?: Goal[];
   plans?: Plan[];
   projects?: Project[];
+  workbuddyTaskReferences?: WorkBuddyTaskReference[];
+  workbuddyReviewResultSinks?: WorkBuddyReviewResultSink[];
+  workbuddyPromptDraftSinks?: WorkBuddyPromptDraftSink[];
+  workbuddyExecutionLedgerEvents?: WorkBuddyExecutionLedgerEvent[];
 }
 
 export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
@@ -119,5 +136,9 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     goals: input.goals ?? [],
     plans: input.plans ?? [],
     projects: input.projects ?? [],
+    workbuddyTaskReferences: input.workbuddyTaskReferences ?? [],
+    workbuddyReviewResultSinks: input.workbuddyReviewResultSinks ?? [],
+    workbuddyPromptDraftSinks: input.workbuddyPromptDraftSinks ?? [],
+    workbuddyExecutionLedgerEvents: input.workbuddyExecutionLedgerEvents ?? [],
   };
 }
