@@ -2,12 +2,17 @@
 
 ## 0. Status
 
-Status: FUTURE / NOT BASELINE.
+Status: V2.3 SPIKE COMPLETE — Implementation handoff allowed (2026-06-11).
 
-This document organizes the AgentTeam, memory, harness, model API, execution
-provider, and project-management UI direction without changing the meaning of
-the discussion recorded in
-`CLI-BRIDGE-v2.1-AGENTTEAM-DISCUSSION-RAW.md`.
+The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
+concluded:
+- Sequential, single-provider, patch-only AgentTeam is feasible with current bridge architecture.
+- Native parallel multi-slot is NOT available (Codex/Claude Code are single-process CLI tools).
+- Worktree/branch isolation requires separate ADRs; deferred past v2.3.
+- WorkBuddy remains a non-executing task system.
+- Minimum viable v2.3 scope: sequential slot orchestrator using existing plan step infrastructure.
+
+This document remains the architectural reference. The spike is the gate decision artifact.
 
 This plan is intentionally **not** a v2.1 implementation baseline. v2.0 must
 first run real Goal -> Plan -> approve -> bounded step progression -> gate ->
