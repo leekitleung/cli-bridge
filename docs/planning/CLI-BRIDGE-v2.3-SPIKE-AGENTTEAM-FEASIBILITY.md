@@ -1,6 +1,6 @@
 # CLI Bridge v2.3 Spike — Single-Provider Multi-Slot Feasibility
 
-**Status**: SPIKE COMPLETE — Implementation Handoff Allowed (with constraints)
+**Status**: SPIKE COMPLETE (revised 2026-06-11 — parallelism terminology clarification)
 **Date**: 2026-06-11
 **Branch**: feat/v2.3-spike-agentteam-feasibility
 **Spans**: PLANS only. No implementation code.
@@ -12,6 +12,8 @@
 ### What This Spike Covers
 
 - Feasibility of single-provider, multi-slot AgentTeam execution via Codex or Claude Code CLI.
+- Provider-native parallelism vs bridge-governed parallelism distinction.
+- Evidence tiers for provider capability claims.
 - Isolation strategy comparison: patch-only, worktree, branch, shared-workspace.
 - Minimum policy invariants required for v2.3 implementation.
 - Draft TeamSpec schema (design artifact, not runtime contract).
@@ -29,6 +31,19 @@
 - Workspace-write auto-apply, auto-commit, auto-push, auto-merge.
 - Real CLI spawn in spike documents.
 
+### Evidence Rules
+
+Claims about provider capabilities must cite one of these evidence sources:
+
+| Tier | Label | Source |
+|------|-------|--------|
+| 1 | official docs | Provider product documentation, CLI help output, or published capability matrix |
+| 2 | local experiment | Verifiable CLI behavior observed in the project environment |
+| 3 | reported | Third-party documentation or community reports — treated as indicative but not confirmed |
+| 4 | unknown | No evidence available — must not be asserted as confirmed |
+
+Without Tier 1–2 evidence, a capability is marked `unknown / requires evidence`. Blog posts, hearsay, competitive analysis, and unverifiable anecdotes do not constitute evidence for this spike.
+
 ### Reference Documents
 
 | Document | Role |
@@ -41,302 +56,326 @@
 
 ---
 
-## 1. Provider Capability Feasibility Matrix
+## 1. Terminology — Capability Levels
 
-### 1.1 Codex CLI
+This spike introduces a critical distinction between two kinds of parallelism that were conflated in earlier drafts.
 
-| Capability | Supported? | Evidence |
-|-----------|-----------|----------|
-| `canReview` | ✅ Yes | v1.6-v1.7 review endpoint, Claude review args |
-| `canProposePatch` | ✅ Yes | v2.0 plan-step patch-proposal tier |
-| `canVerify` | ⚠️ Partial | Can run lint/test, but output is unstructured; no formal harness integration |
-| `canExecute` | ✅ Yes (gated) | ADR-0003 workspace-write tier; per-step gate required |
-| `canWriteFile` | ✅ Yes (gated) | workspace-write tier only, behind gate confirm |
-| `supportsParallelSlots` | ❌ No | Codex CLI is a single interactive session. Cannot run multiple concurrent `codex exec` instances in the same worktree without file conflicts |
-| `maxSlots` | 1 | Single process, single worktree |
-| `isolationModes` | `patch-only` (current), `worktree` (future, needs ADR) | Current bridge only uses patch-proposal; worktree writes are not implemented |
+### 1.1 Product-native parallelism
 
-**Verdict**: Codex CLI cannot support true parallel multi-slot execution in its current form. It can serve as the single provider for a team, but all slots must execute sequentially or in isolated worktrees.
+The external provider's own ability to manage agents, subagents, sessions, teams, or dynamic workflows internally.
 
-### 1.2 Claude Code CLI
+- Claude Code may support internal subagent/session parallelism (reported by official docs — see §2.2).
+- Codex's product-native parallelism is `unknown / requires evidence` (see §2.1).
+- cli-bridge has no control over, and no visibility into, provider-internal parallelism.
 
-| Capability | Supported? | Evidence |
-|-----------|-----------|----------|
-| `canReview` | ✅ Yes | Review endpoint adapters (claude-code-command) |
-| `canProposePatch` | ✅ Yes | v2.0 plan-step patch-proposal tier |
-| `canVerify` | ⚠️ Partial | Same as Codex — unstructured output |
-| `canExecute` | ✅ Yes (gated) | workspace-write tier, per-step gate |
-| `supportsParallelSlots` | ❌ No | Same single-session limitation as Codex |
-| `maxSlots` | 1 | Single process |
-| `isolationModes` | `patch-only` (current), `worktree` (future) | Same as Codex |
+### 1.2 Bridge-governed parallel slots
 
-**Verdict**: Same single-slot limitation. No real provider-level parallelism.
+cli-bridge's own ability to model, authorize, audit, isolate, cancel, recover, and merge parallel execution slots.
 
-### 1.3 WorkBuddy (as executor endpoint)
+- Bridge-governed parallel slots require all of: slot identity, session identity, per-slot audit, per-slot isolation, machine-readable patch artifacts, conflict detection, cancellation/retry, merge protocol, per-slot gate state.
+- **None of these exist in current cli-bridge.** This is a bridge-side gap, not a provider-side gap.
 
-| Capability | Supported? | Evidence |
-|-----------|-----------|----------|
-| `canExecute` | ❌ Not in scope | v2.2 explicitly positions WorkBuddy as non-executing task source/result sink |
-| `supportsParallelSlots` | ❌ Not applicable | Task system only; no execution authority |
+### 1.3 External-managed team run
 
-**Verdict**: WorkBuddy remains a task system, not an executor. Promoting it to `canExecute: true` requires a separate ADR.
+A mode where the external tool manages its own team/subagents independently, and cli-bridge only records summary results, artifacts, and ledger events.
 
-### 1.4 Combined Feasibility
+- This is close to the existing v2.2 WorkBuddy record surface (non-executing, import/record only).
+- cli-bridge must NOT start, dispatch, spawn, apply, merge, or approve anything in this mode.
 
-**Key finding**: Neither Codex CLI nor Claude Code CLI supports native parallel slots in a single worktree. Both are single-process, interactive CLI tools.
+### 1.4 Additional terms
 
-**Implication**: Multi-slot AgentTeam execution cannot rely on provider-native parallelism. It MUST use one of:
-- Sequential execution (single provider, ordered slots).
-- Worktree/branch isolation (one worktree per slot, provider instances in separate processes).
-- Multiple provider instances in separate directories.
+| Term | Definition |
+|------|-----------|
+| `logicalSlots` | Roles or task slots in TeamSpec (planner, executor, verifier). Can be more than 1. |
+| `maxConcurrentBridgeSlots` | Maximum concurrent slots cli-bridge can govern. v2.3 MVP: **1**. |
+| `provider session` | A provider-side identifiable session or execution context. |
+| `workspace / worktree isolation` | File-system isolation strategies. v2.3 MVP does NOT enable worktree, branch, or shared-workspace writes. |
 
 ---
 
-## 2. Multi-Slot Feasibility Assessment
+## 2. Provider Capability Feasibility Matrix
 
-### 2.1 Sequential Execution (Minimum Viable)
+Each capability is split into two layers: **provider-native** and **bridge-governed**.
 
-**How it works**: A single provider instance executes slots one at a time. Planner → Executor-A → Executor-B → Verifier, in order. State from slot N is committed before slot N+1 starts.
+### 2.1 Codex CLI
 
-**Feasibility**: ✅ Immediately feasible with current bridge architecture.
+#### Provider-native capabilities
+
+| Capability | Status | Evidence tier | Notes |
+|-----------|--------|---------------|-------|
+| `canReview` | ✅ Yes | Tier 2 (local) | v1.6-v1.7 review endpoint, Claude review args |
+| `canProposePatch` | ✅ Yes | Tier 2 (local) | v2.0 plan-step patch-proposal tier |
+| `canVerify` | ⚠️ Partial | Tier 2 (local) | Can run lint/test; output is unstructured |
+| `canExecute` | ✅ Yes (gated) | Tier 2 (local) | ADR-0003 workspace-write tier; per-step gate |
+| `productNativeParallelism` | unknown / requires evidence | Tier 4 (unknown) | No official docs or local experiment confirming multi-session parallelism |
+
+#### Bridge-governed capabilities
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| `bridgeGovernedParallelSlots` | ❌ Not supported | cli-bridge has no parallel slot contract (§3.1 gap list) |
+| `maxConcurrentBridgeSlots` | 1 (v2.3 MVP) | Hard limit by bridge policy |
+| `bridgeIsolationModes` | `patch-only` (current) | Worktree/branch are future |
+
+### 2.2 Claude Code CLI
+
+#### Provider-native capabilities
+
+| Capability | Status | Evidence tier | Notes |
+|-----------|--------|---------------|-------|
+| `canReview` | ✅ Yes | Tier 2 (local) | Review endpoint adapters |
+| `canProposePatch` | ✅ Yes | Tier 2 (local) | v2.0 plan-step patch-proposal tier |
+| `canVerify` | ⚠️ Partial | Tier 2 (local) | Same as Codex |
+| `canExecute` | ✅ Yes (gated) | Tier 2 (local) | workspace-write tier, per-step gate |
+| `productNativeParallelism` | supported (reported by official docs pending citation) | Tier 1 (official docs) | Claude Code documentation describes internal subagent/session management. Citation must be verified in implementation handoff before this is treated as confirmed. |
+
+#### Bridge-governed capabilities
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| `bridgeGovernedParallelSlots` | ❌ Not supported | Same bridge gap as Codex |
+| `maxConcurrentBridgeSlots` | 1 (v2.3 MVP) | Hard limit by bridge policy |
+| `bridgeIsolationModes` | `patch-only` (current) | Same as Codex |
+
+### 2.3 WorkBuddy
+
+| Capability | Status | Evidence |
+|-----------|--------|----------|
+| `canExecute` | ❌ Not in scope | v2.2: non-executing task source/result sink |
+| `productNativeParallelism` | ❌ Not applicable | Task system only |
+| `bridgeGovernedParallelSlots` | ❌ Not applicable | No execution authority |
+
+**Verdict**: WorkBuddy remains a task system. Promoting to executor requires separate ADR.
+
+### 2.4 Key Asymmetry
+
+- Claude Code has **product-native parallelism** (Tier 1 evidence, citation pending).
+- Codex's product-native parallelism is **unknown** (Tier 4 — no evidence).
+- **Neither** has bridge-governed parallel slots — because cli-bridge has not implemented the slot governance contract.
+
+This means: even if a provider supports internal parallelism, cli-bridge v2.3 cannot govern it. The bridge gap is the binding constraint for v2.3.
+
+---
+
+## 3. Multi-Slot Feasibility Assessment
+
+### 3.1 Bridge Gap Analysis — Why Bridge-Governed Parallel Slots Are Not Feasible in v2.3
+
+The following capabilities are required for bridge-governed parallel slots and are **all absent** from current cli-bridge:
+
+| # | Gap | Impact |
+|---|-----|--------|
+| 1 | Slot identity | No way to tag which provider output belongs to which slot |
+| 2 | Provider session identity | No way to correlate provider sessions to bridge slots |
+| 3 | Per-slot audit | Audit events are not slot-scoped |
+| 4 | Per-slot isolation | No file-system or artifact isolation between slots |
+| 5 | Machine-readable patch artifacts | Plan step output is unstructured text |
+| 6 | Patch conflict detection | No file-path-aware overlap detection between slot outputs |
+| 7 | Cancellation / retry per slot | No per-slot lifecycle beyond plan step status |
+| 8 | Merge protocol | No defined merge strategy for multi-slot output |
+| 9 | Per-slot gate state | Gate model is per-plan-step, not per-slot |
+| 10 | Parallel capability declaration | Endpoint config has no `supportsParallelSlots` or `maxConcurrentBridgeSlots` |
+
+Until these gaps are addressed, **bridge-governed parallel slots cannot be implemented**.
+
+### 3.2 Sequential Execution (v2.3 Minimum Viable)
+
+**How it works**: A single provider instance executes logical slots one at a time. Planner → Executor-A → Executor-B → Verifier, in order.
+
+**Feasibility**: ✅ Immediately feasible. Reuses existing plan step infrastructure.
 
 **Constraints**:
-- Not "parallel" in the traditional sense.
-- Slot output must be committed or clearly delineated before next slot runs.
-- Race conditions still possible if two slots write overlapping files in sequence.
-- Step ceiling (ADR-0003 hard 10) limits total plan steps, not per-slot steps.
+- `maxConcurrentBridgeSlots` = 1 (hard policy limit).
+- Slot output must be committed before next slot starts.
+- Overlapping file writes across slots must be flagged as conflict.
 
-**Recommended for**: v2.3 minimum viable implementation.
+### 3.3 Worktree Isolation
 
-### 2.2 Worktree Isolation (Multi-Process)
+**Feasibility**: ⚠️ Requires ADR on git worktree creation authority.
 
-**How it works**: `git worktree add` creates an isolated working directory per slot. Each slot has its own Codex/Claude process. Slots truly run concurrently in separate directories.
+**Recommended for**: v2.4+, after sequential mode is stable and the 10 bridge gaps above are closed.
 
-**Feasibility**: ⚠️ Requires ADR on git worktree creation authority. Current bridge has no `git worktree` or `git branch` endpoint.
+### 3.4 Branch Isolation
 
-**Risks**:
-- Worktree creation/cleanup must be audited and bounded.
-- Overlapping file patches require merge reconciliation.
-- Provider processes in different worktrees can still affect shared `.git` directory.
+**Feasibility**: ⚠️ Requires merge gate ADR. Higher complexity than worktree.
 
-**Recommended for**: v2.4+ advanced mode, after sequential mode is stable.
+**Recommended for**: POST-v2.3.
 
-### 2.3 Branch Isolation
+### 3.5 Shared Workspace
 
-**How it works**: Each slot operates on a dedicated git branch. Merges happen after per-slot gate approval.
-
-**Feasibility**: ⚠️ Higher complexity than worktree. Requires merge conflict detection, branch lifecycle management, and explicit merge gates.
-
-**Recommended for**: POST-v2.3; needs dedicated ADR.
-
-### 2.4 Shared Workspace (DANGEROUS)
-
-**How it works**: Multiple slots write to the same working directory concurrently.
-
-**Feasibility**: ❌ Explicitly unsafe. Current bridge has no file locking, no merge conflict detection, and no concurrent-write safety.
-
-**Verdict**: MUST BE REJECTED for v2.3. If ever considered, requires its own ADR with safety constraints, merge conflict detection, and post-write verification.
-
-### 2.5 Recommended v2.3 Minimum Viable Isolation
-
-```
-Sequential, single-provider, patch-only (no workspace-write auto-apply).
-Each slot runs to completion before the next starts.
-Overlapping file writes within a single sequential execution must be flagged as conflict.
-```
+**Feasibility**: ❌ Explicitly unsafe. Blocked for v2.3 and until file locking and concurrent-write safety are proven.
 
 ---
 
-## 3. Isolation Strategy Recommendation
+## 4. Key Findings (Revised)
 
-| Strategy | v2.3 | Rationale |
-|----------|------|-----------|
-| Sequential, patch-only | ✅ Recommended | Safe, auditable, minimal new surface. Uses existing patch-proposal tier. |
-| Worktree isolation | ❌ Deferred | Requires git worktree ADR. Too complex for minimum viable. |
-| Branch isolation | ❌ Deferred | Requires merge gate ADR. |
-| Shared workspace | ❌ Blocked | Inherently unsafe. May require separate ADR with file locking if ever considered. |
+### Q1: Do Codex / Claude Code support product-native parallel agent workflows?
+
+- **Claude Code**: Yes — reported by official docs (Tier 1 evidence, citation pending). Must be verified in implementation handoff.
+- **Codex**: Unknown — no Tier 1–2 evidence available. Must NOT be asserted as confirmed.
+
+### Q2: Can cli-bridge v2.3 support bridge-governed parallel slots?
+
+**No**. The 10 gaps in §3.1 are the binding constraint. Even if a provider supports internal parallelism, cli-bridge cannot govern it without:
+- Slot/session identity.
+- Per-slot audit, isolation, gates.
+- Machine-readable patch artifacts.
+- Conflict detection and merge protocol.
+
+### Q3: What is the minimum safe v2.3 implementation?
+
+- Bridge-governed sequential orchestration.
+- Single provider.
+- `patch-only` isolation (no workspace-write auto-apply).
+- `maxConcurrentBridgeSlots` = 1.
+- `logicalSlots` may be >1 (multiple roles in TeamSpec), but only one slot executes at a time.
+- No worktree, branch, or shared workspace.
+- No WorkBuddy executor promotion.
+- No auto-apply, auto-commit, auto-push.
+
+### Why sequential, not because "provider can't parallel"
+
+v2.3 MVP is sequential **not** because providers lack product-native parallelism (Claude Code may have it), but because **cli-bridge lacks the bridge-governed parallel slot contract**. The bridge gap is the binding constraint, not the provider gap.
 
 ---
 
-## 4. Policy Invariants (v2.3 Required)
-
-These invariants must be enforced by the v2.3 implementation. They build on ADR-0003 and the AgentTeam control plane plan.
+## 5. Policy Invariants (v2.3 Required)
 
 | # | Invariant | Source |
 |---|-----------|--------|
 | P1 | Plan must be approved before dispatch | ADR-0003 §7.3 |
 | P2 | State-mutating step requires per-step gate confirm | ADR-0003 §7.3 |
 | P3 | Provider capability must be explicitly declared; tool names do not grant authority | AgentTeam Plan §4 |
-| P4 | Parallel execution requires `supportsParallelSlots=true` AND `maxSlots >= 2` | AgentTeam Plan §4 |
-| P5 | If parallel is unavailable, fallback must be explicit (sequential or rejected), never silently faked | AgentTeam Plan §4 |
-| P6 | Step ceiling (hard 10) applies to total plan steps across all slots | ADR-0003 |
+| P4 | Bridge-governed parallel execution requires the 10 conditions in §3.1 to be met | This spike |
+| P5 | If bridge-governed parallel is unavailable, fallback must be explicit (sequential or rejected), never silently faked | This spike |
+| P6 | Step ceiling (hard 10) applies to total plan steps across all logical slots | ADR-0003 |
 | P7 | Model/provider output cannot authorize execution, gate bypass, or workspace-write | ADR-0003, AgentTeam Plan §4.1 |
 | P8 | Overlapping file patches across slots require conflict detection | This spike |
 | P9 | Execution provider registry is future; v2.3 may hardcode a single known provider | This spike |
 | P10 | WorkBuddy remains task source/result sink; NOT promoted to executor | v2.2 contract |
+| P11 | `maxConcurrentBridgeSlots` must be enforced by PolicyEngine; v2.3 MVP = 1 | This spike |
 
 ---
 
-## 5. Minimal TeamSpec Schema (Draft)
+## 6. Minimal TeamSpec Schema (Draft)
 
-This is a design artifact, not an implementation contract. It informs the v2.3 implementation handoff.
+This is a design artifact, not an implementation contract.
 
 ```text
-TeamSpec {
-  id: string;                    // unique team id
-  projectId: string;             // scoped to a project
-  goalId: string;                // the goal this team executes
-  planId: string;                // the approved plan
+TeamSpecDraft {
+  id: string;
+  projectId: string;
+  goalId: string;
+  planId: string;
 
-  slots: AgentSlot[];            // 1-10 slots (ceiling from ADR-0003)
-  mode: 'sequential';            // only sequential in v2.3
-  isolation: 'patch-only';       // only patch-only in v2.3
+  logicalSlots: AgentSlotDraft[];      // 1–10 logical roles/tasks
+  maxConcurrentBridgeSlots: 1;         // v2.3 MVP — hard ceiling
+  mode: 'sequential';                  // only sequential in v2.3
+  isolation: 'patch-only';             // only patch-only in v2.3
 
-  provider: 'codex' | 'claude';  // single provider
-  endpointId: string;            // registered bridge endpoint id
+  provider: 'codex' | 'claude';        // single provider
+  endpointId: string;                   // registered bridge endpoint id
 
-  maxSlots: 1;                   // hard ceiling from provider capability
-  policyRequirements: PolicyRequirement[];
+  policyRequirements: PolicyRequirementDraft[];
   createdAt: number;
 }
 
-AgentSlot {
-  id: string;                    // slot-unique id
+AgentSlotDraft {
+  id: string;
   role: 'planner' | 'executor' | 'verifier';
-  stepIndex: number;             // plan step this slot maps to
-  tier: ExecutionTier;           // patch-proposal | workspace-write
-  isolationHint: 'patch-only';   // provisional; worktree later
+  stepIndex: number;
+  tier: 'patch-proposal' | 'workspace-write';
+  isolationHint: 'patch-only';          // provisional
 }
 
-PolicyRequirement {
+PolicyRequirementDraft {
   kind: 'human-gate' | 'conflict-detection' | 'output-verification';
   detail: string;
 }
 ```
 
-**Notes**:
-- `maxSlots: 1` is intentional for v2.3. It reflects the single-provider, sequential reality.
-- `mode: 'sequential'` is the only allowed value until worktree isolation is available.
-- `isolation: 'patch-only'` enforces the current safety boundary.
-- This schema adds NO execution authority — it's a metadata declaration consumed by the orchestrator.
+### Critical note on slots
+
+In v2.3, an AgentTeam **may contain multiple logical slots** (e.g., planner + executor + verifier), but **cli-bridge may govern only one slot at a time** (`maxConcurrentBridgeSlots` = 1). This is sequential bridge-governed orchestration, not provider-native parallel orchestration.
+
+The TeamSpec declares what roles exist (`logicalSlots`). The PolicyEngine enforces how many run concurrently (`maxConcurrentBridgeSlots`).
 
 ---
 
-## 6. Console Impact Assessment
+## 7. Kill Gates — Bridge-Governed Parallel Slots
 
-Project console will need to display AgentTeam state in v2.3+. **No UI changes in this spike.** Below is the assessed future UI surface:
+Parallel bridge-governed slots are **blocked** until ALL of the following conditions are met:
 
-| UI Element | Data Source | Notes |
-|-----------|-------------|-------|
-| Active team indicator | TeamSpec GET / project detail | Shows team name, provider, mode |
-| Slot status table | Goal/plan step status per slot | Planner → executing, Executor-A → done, etc. |
-| Pending approvals | Blocked-needs-gate steps | Same as current gate model |
-| Patch queue | Derived from plan steps with patch-proposal | Preview patches before apply |
-| Blocked capability indicator | Provider capability mismatch | "Parallel requested but provider supports only sequential" |
-| Isolation mode badge | TeamSpec.isolation | "patch-only" / "worktree" |
-| Verification result | Plan step output | Placeholder until real harness integration |
+1. Provider exposes independent slot/session identity.
+2. Each slot has isolated workspace or patch-only artifact boundary.
+3. Each slot output is machine-readable enough for cli-bridge to audit.
+4. cli-bridge can map each slot to a Goal / Plan / Step.
+5. cli-bridge can detect overlapping file patches before apply.
+6. cli-bridge can cancel / retry / fail one slot without corrupting others.
+7. cli-bridge can produce per-slot audit events.
+8. User can inspect and approve merge / apply decisions.
+9. Provider capability declaration includes `bridgeGovernedParallelSlots: true` and `maxConcurrentBridgeSlots >= 2`.
+10. Worktree, branch, or shared-workspace modes have separate ADR approval.
 
-Existing console sections (timeline, audit, memory, verification, tasks) are untouched.
-
----
-
-## 7. Existing Bridge State Model Assessment
-
-### What v2.0-v2.2 already provides
-
-| Capability | Status | Relevance to AgentTeam |
-|-----------|--------|----------------------|
-| Goal → Plan → Step progression | ✅ v2.0 | Team executes a plan; existing model maps 1:1 |
-| Step ceiling (10) | ✅ ADR-0003 | Applies to total plan steps across all slots |
-| Tier enforcement (patch-proposal / workspace-write) | ✅ v2.0 | Same tiers for AgentTeam slots |
-| Per-step gate (blocked-needs-gate) | ✅ v2.0 | Same gate model for mutating steps |
-| Project scoping + isolation | ✅ v2.1 | TeamSpec scoped to projectId |
-| Audit + observability | ✅ v2.1 | Timeline/audit view covers team dispatch events |
-| WorkBuddy task surface | ✅ v2.2 | Tasks can be linked to goals; results flow back |
-| Explicit project creation | ✅ B3 | AgentTeam operates on existing projects |
-
-### What v2.3 must add (minimal)
-
-| Addition | Type | Notes |
-|----------|------|-------|
-| TeamSpec data model | Schema + store | Draft above; no HTTP endpoint in spike |
-| Provider capability declaration | Endpoint config addition | `canExecute`, `supportsParallelSlots`, `maxSlots`, `isolationModes` |
-| Sequential slot orchestrator | Runtime logic | Dispatches slots one at a time using existing plan step infrastructure |
-| Patch conflict detection | Policy check | Compare file paths across slot outputs before sequential execution |
-| TeamSpec console view | UI | Read-only display of active team/slots |
-
-### What is explicitly NOT needed for v2.3
-
-- Multiple provider support (Codex + Claude simultaneously).
-- Worktree/branch management.
-- Model API / PlannerModel / CriticModel integration.
-- Parallel execution.
-- WorkBuddy promoted to executor.
-- Auto-apply or auto-merge of patches.
+Until all 10 conditions are met, the implementation must reject any TeamSpec with `maxConcurrentBridgeSlots > 1` and `mode !== 'sequential'`.
 
 ---
 
-## 8. Risk / Kill-Gate Report
+## 8. v2.3 Implementation Handoff Prerequisites
 
-### Decision: v2.3 implementation handoff is ALLOWED
+**Do NOT implement directly from this spike.** Before entering implementation, produce:
 
-**Reason**: The provider limitation (no native parallelism) does NOT block AgentTeam. It constrains the implementation to sequential, single-provider mode — which is the safest starting point and aligns with ADR-0003's existing gated execution model.
-
-### Conditions for implementation handoff
-
-1. `TeamSpec` data model must be finalized (draft in §5).
-2. Provider capability declaration must be implemented as endpoint config (no new endpoint; extend existing adapter metadata).
-3. Sequential slot dispatch must use existing plan step infrastructure — no new execution paths.
-4. Patch conflict detection must exist before any slot execution that writes overlapping files.
-5. `mode`, `isolation`, `maxSlots` fields must be enforced by PolicyEngine at dispatch time.
-
-### Kill gates (blocks implementation)
-
-| Gate | Condition |
-|------|-----------|
-| Provider capability not declared | If the selected Codex/Claude endpoint does not declare `canExecute` and `isolationModes`, reject the team at creation |
-| Parallel requested, provider does not support | Reject with explicit "sequential only" fallback |
-| `mode !== 'sequential'` | Block; only sequential supported in v2.3 |
-| `isolation !== 'patch-only'` | Block; worktree/branch are future |
-| `maxSlots > 1` (v2.3) | Block; provider supports only 1 slot |
-| Workspace-write auto-apply requested | Block; per-step gate required |
-| Overlapping patches detected | Block; conflict must be surfaced for review |
-
-### If kills gates fire
-
-The system should return a structured error indicating:
-- Which invariant was violated.
-- What the allowed alternatives are.
-- That the team creation / team dispatch was rejected.
+1. **Evidence reconciliation document**: Verify and cite Claude Code product-native parallelism from official docs or local experiment. Mark Codex as `unknown` unless new evidence emerges.
+2. **Final TeamSpec schema**: From §6 draft, with finalized field names, validation rules, and store contract.
+3. **Sequential orchestrator state machine**: How slots progress through pending → executing → done/failed/blocked.
+4. **Patch-only conflict detection algorithm**: Compare patch file paths across sequential slot outputs.
+5. **Provider capability declaration shape**: What endpoint metadata declares `canExecute`, `productNativeParallelism`, `maxConcurrentBridgeSlots`, `isolationModes`.
+6. **PolicyEngine invariants**: Enforce §5 invariants at TeamSpec creation and dispatch time.
+7. **Forbidden implementation list**: Explicitly list what v2.3 must NOT implement (§9).
+8. **Test plan**: Sequential execution, conflict detection, gate enforcement, parallel rejection, evidence-verified capability matrix.
 
 ---
 
-## 9. Safe-to-Proceed
+## 9. Forbidden Implementation List (Strong Constraint)
+
+The following must NOT appear in any v2.3 implementation artifact:
+
+- AgentTeam runtime implementation (scheduler, queue, daemon, dispatcher).
+- TeamSpec HTTP endpoint or persistent store.
+- Provider registry runtime code.
+- Shell / exec / run / command endpoint.
+- Workspace-write auto-apply or auto-commit or auto-push or auto-merge.
+- Worktree / branch creation by cli-bridge.
+- WorkBuddy promoted to executor (`canExecute: true`).
+- Model API integration (PlannerModel, CriticModel, summary agent).
+- External agent team dispatch by cli-bridge.
+- Silent fake parallelism (sequential disguised as concurrent).
+
+The spike document may discuss these as future capabilities, but must not imply they are currently implemented or approved.
+
+---
+
+## 10. Safe-to-Proceed
 
 ### Summary
 
 | Question | Answer |
 |----------|--------|
-| Can we enter AgentTeam implementation handoff? | ✅ Yes, with constraints |
-| What is the minimum safe scope? | Sequential, single-provider, patch-only, 1 slot |
-| Is parallel execution available? | ❌ No (provider limitation) |
+| Can we enter AgentTeam implementation handoff? | ✅ Yes, with constraints (see §8 prerequisites) |
+| What is the minimum safe scope? | Sequential bridge-governed, single-provider, patch-only, maxConcurrentBridgeSlots=1 |
+| Is bridge-governed parallel execution available? | ❌ No (10 bridge gaps, §3.1) |
+| Does Claude Code have product-native parallelism? | Yes (Tier 1 evidence reported, citation pending) |
+| Does Codex have product-native parallelism? | unknown / requires evidence |
 | Is worktree isolation available? | ❌ Not yet (needs git worktree ADR) |
 | Does WorkBuddy become an executor? | ❌ No |
 | Are new execution surfaces needed? | ❌ No (reuse existing plan step + gate) |
-| What invariants must code review enforce? | Policy invariants in §4 |
-| What still needs a separate ADR? | Worktree isolation, branch isolation, Model API |
+| What invariants must code review enforce? | §5 (11 invariants) |
+| What still needs a separate ADR? | Worktree isolation, branch isolation, Model API, WorkBuddy executor promotion |
 
 ### Recommended next step
 
-Write a `v2.3-implementation-handoff.md` based on this spike, detailing:
-- TeamSpec schema (from §5 draft).
-- Sequential slot orchestrator design.
-- Patch conflict detection algorithm.
-- Endpoint capability declaration format.
-- Test plan for sequential execution, conflict detection, gate enforcement.
-
-Then open `feat/v2.3-agentteam-sequential` as an implementation branch.
+Write `CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md` covering all §8 prerequisites. Do not open an implementation branch until the handoff is reviewed and approved.
 
 ---
 
-*This spike is complete. It is a decision artifact, not an implementation. Merge it as a planning document.*
+*This spike is a decision artifact, not an implementation. It is safe to merge as a planning document.*

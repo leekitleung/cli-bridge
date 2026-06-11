@@ -184,19 +184,25 @@ ExecutionObject {
 
 Important fields:
 
-- `supportsParallelSlots`: whether multiple slots can run concurrently.
+- `supportsParallelSlots`: whether multiple slots can run concurrently **under bridge governance** (not provider-native parallelism — see v2.3 spike §1 for the distinction).
 - `maxSlots`: hard concurrency limit.
 - `isolationModes`: `patch-only`, `worktree`, `branch`, `shared-workspace`.
 - `supportedModes`: `review-only`, `patch-proposal`, `workspace-write`,
   `verify`, `task-sync`.
 
-Parallel execution requires both `supportsParallelSlots=true` and `maxSlots >= 2`.
-If either condition is not met, the orchestrator must explicitly reject the
+Bridge-governed parallel execution requires both `supportsParallelSlots=true` AND
+`maxSlots >= 2` AND the 10 bridge gap conditions from the v2.3 spike (§3.1).
+If any condition is not met, the orchestrator must explicitly reject the
 parallel request or present a sequential/patch-only/provider-switch fallback.
 
-If a requested AgentTeam needs more slots than a provider supports, the middle
-layer must report that explicitly and offer safe alternatives. It must not
-silently fake parallel execution.
+Provider-native parallelism (e.g., Claude Code subagent management) is a
+separate concept. Even if a provider supports it internally, cli-bridge cannot
+govern parallel slots until the bridge gap is closed. See
+`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md` for the full analysis.
+
+If a requested AgentTeam needs more slots than bridge governance supports,
+the middle layer must report that explicitly and offer safe alternatives.
+It must not silently fake parallel execution.
 
 Concrete schemas and state machines are intentionally deferred to each v2.x
 implementation handoff. This plan defines the conceptual shape and invariants.
