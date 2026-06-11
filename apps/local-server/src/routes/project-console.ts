@@ -754,7 +754,7 @@ function renderSectionView() {
     html += '</div>';
   } else if (store.view === 'teams') {
     html = '<div class="card"><h3>AgentTeam (v2.3 − non-executing view)</h3>';
-    html += '<p style="font-size:11px;color:var(--muted);">Teams are created and approved via the API. This console shows read-only team status, slot progress, and artifacts. No execute/dispatch/apply buttons.</p>';
+    html += '<p style="font-size:11px;color:var(--muted);">Teams are created and approved via the API. This console shows read-only team status, slot progress, artifacts, and conflict reports. No execute/dispatch/apply buttons.</p>';
     const teamsData = store.cache.teams;
     if (teamsData && teamsData.teams && teamsData.teams.length) {
       teamsData.teams.forEach(team => {
@@ -768,6 +768,24 @@ function renderSectionView() {
             html += '<tr><td>' + escapeHtml(s.role) + '</td><td>' + escapeHtml(String(s.stepIndex)) + '</td><td>' + escapeHtml(s.tier) + '</td><td><span class="pill">' + escapeHtml(s.status) + '</span></td></tr>';
           });
           html += '</tbody></table>';
+        }
+        // Conflict status badge
+        if (team.conflictStatus) {
+          const conflictColor = team.conflictStatus === 'clean' ? '#22c55e' : '#f59e0b';
+          html += '<div style="margin-top:4px;font-size:11px;">';
+          html += '<strong>Conflicts:</strong> <span style="color:' + conflictColor + ';">' + escapeHtml(team.conflictStatus) + '</span>';
+          if (team.conflictCount > 0) html += ' (' + escapeHtml(String(team.conflictCount)) + ')';
+          html += '</div>';
+        }
+        // Artifact summaries
+        if (team.artifactCount > 0) {
+          html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">';
+          html += '<strong>Artifacts (' + escapeHtml(String(team.artifactCount)) + '):</strong> ';
+          const summaries = (team.artifactSummaries || []).map(a => escapeHtml(a.summary)).join('; ');
+          html += escapeHtml(summaries);
+          html += '</div>';
+        } else if (team.status === 'approved' || team.status === 'executing' || team.status === 'done') {
+          html += '<div style="margin-top:4px;font-size:11px;"><span class="unavailable">No artifacts recorded yet</span></div>';
         }
         html += '</div>';
       });

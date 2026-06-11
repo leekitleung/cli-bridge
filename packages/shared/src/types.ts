@@ -63,6 +63,12 @@ export const AUDIT_EVENT_TYPES = [
   'team_created',
   'team_approved',
   'team_cancelled',
+  // v2.3 AgentTeam slot lifecycle
+  'slot_started',
+  'slot_done',
+  'slot_failed',
+  'slot_gated',
+  'artifact_recorded',
 ] as const;
 
 export const AUDIT_RISK_LEVELS = [

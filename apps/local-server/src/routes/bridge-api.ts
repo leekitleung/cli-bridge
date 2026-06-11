@@ -116,34 +116,66 @@ export interface BridgeRuntimeOptions {
 }
 
 
-/** Matches /bridge/projects/:key/teams and /bridge/projects/:key/teams/:teamId/{approve|cancel}. */
+type TeamSubAction = '' | 'approve' | 'cancel' | 'artifacts' | 'conflicts' | 'slots-advance';
+
+/** Matches /bridge/projects/:key/teams and sub-routes:
+ *  /teams/:teamId/{approve|cancel|artifacts|conflicts}
+ *  /teams/:teamId/slots/:slotId/advance */
 function matchProjectTeamPath(pathname: string): {
-  matched: true; key: string | undefined; sub: '' | 'approve' | 'cancel'; teamId?: string;
+  matched: true; key: string | undefined; sub: TeamSubAction; teamId?: string; slotId?: string;
 } | { matched: false } {
   const prefix = BRIDGE_PROJECTS_PATH + '/';
   if (!pathname.startsWith(prefix)) return { matched: false };
   const rest = pathname.slice(prefix.length);
-  // Check sub-actions: :key/teams/:teamId/approve or :key/teams/:teamId/cancel
-  for (const action of ['approve', 'cancel'] as const) {
-    const actionSuffix = '/teams/';
-    const idx = rest.indexOf(actionSuffix);
-    if (idx !== -1) {
-      const raw = rest.slice(0, idx);
-      if (raw.length === 0 || raw.includes('/')) continue;
-      const remaining = rest.slice(idx + actionSuffix.length);
-      const slashIdx = remaining.lastIndexOf('/' + action);
-      if (slashIdx !== -1 && remaining === remaining.slice(0, slashIdx) + '/' + action) {
-        const teamId = remaining.slice(0, slashIdx);
-        if (teamId.length === 0) continue;
-        try {
-          const decoded = decodeURIComponent(raw);
-          const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
-          return { matched: true, key, sub: action, teamId: decodeURIComponent(teamId) };
-        } catch { return { matched: true, key: undefined, sub: action, teamId }; }
-      }
-    }
+
+  // Helper: extract key + teamId + suffix from "key/teams/teamId/suffix"
+  function tryMatchTeamsAction(rest: string, suffix: string): { key: string | undefined; teamId: string } | null {
+    const actionIdx = rest.indexOf('/teams/');
+    if (actionIdx === -1) return null;
+    const raw = rest.slice(0, actionIdx);
+    if (raw.length === 0 || raw.includes('/')) return null;
+    const remaining = rest.slice(actionIdx + '/teams/'.length);
+    if (!remaining.endsWith(suffix)) return null;
+    const teamIdRaw = remaining.slice(0, remaining.length - suffix.length);
+    if (teamIdRaw.length === 0 || teamIdRaw.includes('/')) return null;
+    try {
+      const decodedKey = decodeURIComponent(raw);
+      const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
+      return { key, teamId: decodeURIComponent(teamIdRaw) };
+    } catch { return null; }
   }
-  // Basic /teams path: :key/teams or :key/teams (exact)
+
+  // slots/:slotId/advance — extract both teamId and slotId
+  function tryMatchSlotsAdvance(rest: string): { key: string | undefined; teamId: string; slotId: string } | null {
+    const actionIdx = rest.indexOf('/teams/');
+    if (actionIdx === -1) return null;
+    const raw = rest.slice(0, actionIdx);
+    if (raw.length === 0 || raw.includes('/')) return null;
+    const remaining = rest.slice(actionIdx + '/teams/'.length);
+    // remaining = "teamId/slots/slotId/advance"
+    const parts = remaining.split('/');
+    if (parts.length !== 4 || parts[1] !== 'slots' || parts[3] !== 'advance') return null;
+    const teamId = decodeURIComponent(parts[0]);
+    const slotId = decodeURIComponent(parts[2]);
+    if (teamId.length === 0 || slotId.length === 0) return null;
+    try {
+      const decodedKey = decodeURIComponent(raw);
+      const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
+      return { key, teamId, slotId };
+    } catch { return null; }
+  }
+
+  // Check sub-actions: approve, cancel, artifacts, conflicts
+  for (const sub of ['approve', 'cancel', 'artifacts', 'conflicts'] as const) {
+    const m = tryMatchTeamsAction(rest, '/' + sub);
+    if (m) return { matched: true, key: m.key, sub, teamId: m.teamId };
+  }
+
+  // Check slots-advance: :key/teams/:teamId/slots/:slotId/advance
+  const sa = tryMatchSlotsAdvance(rest);
+  if (sa) return { matched: true, key: sa.key, sub: 'slots-advance', teamId: sa.teamId, slotId: sa.slotId };
+
+  // Basic /teams path: :key/teams (exact)
   if (!rest.endsWith('/teams')) return { matched: false };
   const raw = rest.slice(0, -6);
   if (raw.length === 0 || raw.includes('/')) return { matched: false };
@@ -244,6 +276,211 @@ async function handleTeamsPost(
   } catch (err: any) {
     return error(400, err?.message ?? 'TeamSpec creation failed');
   }
+}
+
+// ── v2.3 Artifact recording ──────────────────────────────────────
+
+async function handleArtifactPost(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+  const body = parsed.body as Record<string, unknown>;
+
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  if (proj.archivedAt) return error(409, 'Project is archived');
+
+  // Team must exist and belong to the project.
+  const team = runtime.teamStore.get(teamId);
+  if (!team) return error(404, 'Team not found');
+  if (team.projectId !== projectKey) return error(404, 'Team not found');
+
+  // Validate required fields.
+  const slotId = body.slotId;
+  if (typeof slotId !== 'string' || slotId.length === 0) return error(400, 'slotId is required');
+  const planStepId = body.planStepId;
+  if (typeof planStepId !== 'string' || planStepId.length === 0) return error(400, 'planStepId is required');
+  const summary = body.summary;
+  if (typeof summary !== 'string' || summary.trim().length === 0) return error(400, 'summary is required');
+
+  // Slot must belong to this team.
+  const slot = team.logicalSlots.find(s => s.id === slotId);
+  if (!slot) return error(400, 'slotId does not belong to this team');
+
+  // Build artifact.
+  const artifact: Record<string, unknown> = {
+    teamId,
+    slotId,
+    planStepId,
+    summary,
+    proposedFiles: Array.isArray(body.proposedFiles) ? body.proposedFiles.filter((f: unknown) => typeof f === 'string') : [],
+    outputRedacted: typeof body.outputRedacted === 'boolean' ? body.outputRedacted : false,
+    createdAt: typeof body.createdAt === 'number' ? body.createdAt : Date.now(),
+  };
+  if (body.verificationNotes !== undefined && typeof body.verificationNotes === 'string') {
+    artifact.verificationNotes = body.verificationNotes;
+  }
+  if (body.rawProviderOutput !== undefined && typeof body.rawProviderOutput === 'string') {
+    artifact.rawProviderOutput = body.rawProviderOutput;
+  }
+
+  const recorded = runtime.teamStore.recordArtifact(teamId, artifact as any);
+  if (!recorded) return error(400, 'Invalid artifact: must pass schema validation and redaction guard');
+
+  runtime.persist();
+
+  // Audit: artifact_recorded
+  runtime.auditLog.createAndAppend({
+    sessionId: 'artifact-' + teamId + '-' + slotId,
+    projectId: projectKey,
+    type: 'artifact_recorded',
+    source: 'team-orchestrator',
+    target: 'team-' + teamId,
+    teamId,
+    slotId,
+    planStepId,
+    result: { ok: true },
+  });
+
+  return created({ artifact: recorded });
+}
+
+// ── v2.3 Conflict report (read-only) ─────────────────────────────
+
+function handleConflictGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+): BridgeResult {
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+
+  const team = runtime.teamStore.get(teamId);
+  if (!team) return error(404, 'Team not found');
+  if (team.projectId !== projectKey) return error(404, 'Team not found');
+
+  const artifacts = runtime.teamStore.listArtifacts(teamId);
+  const report = detectFileConflicts(
+    artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles })),
+  );
+  return ok({ teamId, report });
+}
+
+// ── v2.3 Controlled slot state advance ───────────────────────────
+
+async function handleSlotAdvancePost(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  slotId: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+  const body = parsed.body as Record<string, unknown>;
+
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  if (proj.archivedAt) return error(409, 'Project is archived');
+
+  const team = runtime.teamStore.get(teamId);
+  if (!team) return error(404, 'Team not found');
+  if (team.projectId !== projectKey) return error(404, 'Team not found');
+
+  // Status must be one of the valid slot statuses.
+  const nextStatus = body.status;
+  if (typeof nextStatus !== 'string') return error(400, 'status is required');
+  const allowed = ['ready', 'executing', 'done', 'failed', 'cancelled'] as const;
+  if (!(allowed as readonly string[]).includes(nextStatus)) {
+    return error(400, 'status must be one of: ' + allowed.join(', '));
+  }
+
+  // Slot must belong to team.
+  const slot = team.logicalSlots.find(s => s.id === slotId);
+  if (!slot) return error(400, 'slotId does not belong to this team');
+
+  // ════════════════════════════════════════════════════
+  // Sequential guard — enforced at API level
+  // ════════════════════════════════════════════════════
+
+  // Cannot advance if team is not approved or executing.
+  if (team.status !== 'approved' && team.status !== 'executing') {
+    return error(409, `Cannot advance slot: team is ${team.status}`);
+  }
+
+  // Cannot advance a slot that's already done/failed/cancelled.
+  if (slot.status === 'done' || slot.status === 'failed' || slot.status === 'cancelled') {
+    return error(409, `Cannot advance slot: slot is already ${slot.status}`);
+  }
+
+  // Sequential: can only advance the slot at currentSlotIndex.
+  const currentSlot = team.logicalSlots[team.currentSlotIndex];
+  if (currentSlot && currentSlot.id !== slotId) {
+    return error(409, `Slot ${slotId} is not the current slot (expected: ${currentSlot?.id ?? 'none'}, index: ${team.currentSlotIndex})`);
+  }
+
+  // Cannot have two slots executing.
+  if (nextStatus === 'executing') {
+    const alreadyExecuting = team.logicalSlots.some(
+      s => s.id !== slotId && s.status === 'executing'
+    );
+    if (alreadyExecuting) return error(409, 'A slot is already executing');
+  }
+
+  // Transition team to executing if approving first slot.
+  if (team.status === 'approved') {
+    const setExec = runtime.teamStore.setExecuting(teamId);
+    if (!setExec) return error(409, 'Cannot transition team to executing');
+    // Resolve planStepId from stepIndex for audit.
+    const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
+    const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
+    // Audit slot_started on transition to executing.
+    runtime.auditLog.createAndAppend({
+      sessionId: 'slot-start-' + teamId + '-' + slotId,
+      projectId: projectKey,
+      type: 'slot_started',
+      source: 'team-orchestrator',
+      target: 'team-' + teamId,
+      teamId,
+      slotId,
+      planStepId: pStepId,
+      result: { ok: true },
+    });
+  }
+
+  // Perform the advance.
+  const updated = runtime.teamStore.advanceSlot(teamId, slotId, nextStatus as any);
+  if (!updated) return error(409, 'Slot advance failed');
+
+  runtime.persist();
+
+  // Resolve planStepId for audit.
+  const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
+  const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
+
+  // Audit the slot lifecycle event.
+  let auditType: 'slot_done' | 'slot_failed' | 'slot_gated';
+  if (nextStatus === 'done') auditType = 'slot_done';
+  else if (nextStatus === 'failed') auditType = 'slot_failed';
+  else auditType = 'slot_gated';
+
+  runtime.auditLog.createAndAppend({
+    sessionId: 'slot-' + nextStatus + '-' + teamId + '-' + slotId,
+    projectId: projectKey,
+    type: auditType,
+    source: 'team-orchestrator',
+    target: 'team-' + teamId,
+    teamId,
+    slotId,
+    planStepId: pStepId,
+    result: { ok: true },
+  });
+
+  return ok({ team: updated });
 }
 
 /** Matches /bridge/projects/:key/workbuddy (path portion only). */
@@ -1342,7 +1579,24 @@ export async function handleBridgeRequest(
     if (!teamMatch.key) return error(400, 'Invalid project key');
     const proj = runtime.projectStore.get(teamMatch.key);
     if (!proj) return error(404, 'Project not found');
-    return ok({ teams: runtime.teamStore.listByProject(teamMatch.key) });
+    const teams = runtime.teamStore.listByProject(teamMatch.key);
+    // Enrich teams with artifact summaries and conflict status.
+    const enriched = teams.map(team => {
+      const artifacts = runtime.teamStore.listArtifacts(team.id);
+      const conflictReport = detectFileConflicts(
+        artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles })),
+      );
+      return {
+        ...team,
+        artifactCount: artifacts.length,
+        artifactSummaries: artifacts.map(a => ({
+          slotId: a.slotId, summary: a.summary, proposedFiles: a.proposedFiles,
+        })),
+        conflictStatus: conflictReport.clean ? 'clean' : 'conflicts',
+        conflictCount: conflictReport.conflicts.length,
+      };
+    });
+    return ok({ teams: enriched });
   }
   if (teamMatch.matched && method === 'POST' && teamMatch.sub === '') {
     if (!teamMatch.key) return error(400, 'Invalid project key');
@@ -1374,6 +1628,21 @@ export async function handleBridgeRequest(
       result: { ok: true },
     });
     return ok({ team });
+  }
+  // Artifact recording — POST /bridge/projects/:key/teams/:teamId/artifacts
+  if (teamMatch.matched && method === 'POST' && teamMatch.sub === 'artifacts') {
+    if (!teamMatch.key || !teamMatch.teamId) return error(400, 'Invalid project key or team id');
+    return handleArtifactPost(runtime, teamMatch.key, teamMatch.teamId, request);
+  }
+  // Conflict report — GET /bridge/projects/:key/teams/:teamId/conflicts
+  if (teamMatch.matched && method === 'GET' && teamMatch.sub === 'conflicts') {
+    if (!teamMatch.key || !teamMatch.teamId) return error(400, 'Invalid project key or team id');
+    return handleConflictGet(runtime, teamMatch.key, teamMatch.teamId);
+  }
+  // Slot state advance — POST /bridge/projects/:key/teams/:teamId/slots/:slotId/advance
+  if (teamMatch.matched && method === 'POST' && teamMatch.sub === 'slots-advance') {
+    if (!teamMatch.key || !teamMatch.teamId || !teamMatch.slotId) return error(400, 'Invalid project key, team id, or slot id');
+    return handleSlotAdvancePost(runtime, teamMatch.key, teamMatch.teamId, teamMatch.slotId, request);
   }
   if (teamMatch.matched) return error(405, 'Method not allowed');
 

@@ -4,6 +4,36 @@ All notable changes to CLI Bridge are documented here.
 
 ## [Unreleased] — v2.x
 
+## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
+
+### Added
+- **SlotArtifact recording API**: `POST /bridge/projects/:key/teams/:teamId/artifacts` with redaction guard, slot/project validation, and `artifact_recorded` audit events.
+- **Conflict report read-only API**: `GET /bridge/projects/:key/teams/:teamId/conflicts` using `detectFileConflicts()` on stored artifacts; returns `{ clean, conflicts }` without apply/merge behavior.
+- **Controlled slot state advance API**: `POST /bridge/projects/:key/teams/:teamId/slots/:slotId/advance` with sequential guard (cannot skip `currentSlotIndex`, cannot have two executing slots, failed/cancelled stops team).
+- **Slot lifecycle audit events**: `slot_started`, `slot_done`, `slot_failed`, `slot_gated` event types, written in slot advance paths with `teamId`/`slotId`/`planStepId`/`projectId` metadata.
+- **Console Team view enhancement**: Artifact summaries and conflict status displayed per team; no execute/dispatch/apply buttons added.
+- **Artifact summaries inline in GET /teams**: Team listing response now includes `artifactCount`, `artifactSummaries`, `conflictStatus`, and `conflictCount` per team.
+
+### Changed
+- **Path matcher refactored**: `matchProjectTeamPath` now handles `artifacts`, `conflicts`, and `slots-advance` sub-routes alongside `approve`/`cancel`.
+
+### Fixed
+- `recordArtifact()` and `hydrateArtifact()` both now align with `validateSlotArtifact` plus `outputRedacted` guard.
+- `detectFileConflicts()` optimized to sort-first O(n log n) from O(n^2) prefix scan.
+- `currentSlotIndex` sentinel semantics documented; `cancel()` lifecycle documents orchestrator cleanup responsibility.
+
+### Tests
+- 15 new API-level tests covering artifact recording (happy path, redaction rejection, unknown slot, cross-project, audit), conflict report (clean, same-file conflict, cross-project), and slot advance (sequential order, skip rejection, double executing, failed-stops-team, pending-rejection, cross-project, audit events).
+- Console UI tests continue to pass with no new shell/exec/run paths; allowlist unchanged.
+
+### Safety
+- No new shell/exec/run/command endpoints.
+- No auto-apply, auto-commit, auto-push, auto-merge.
+- No parallel slots, worktree, branch, shared workspace.
+- No WorkBuddy executor, Model API, scheduler, daemon.
+- Console remains read-only with no execute/dispatch/apply/merge buttons.
+- Verdict: 494/494 tests pass; typecheck pass; lint pass.
+
 ## [v2.3] — 2026-06-11 — AgentTeam Hardening
 
 ### Added
