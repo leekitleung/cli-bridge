@@ -4,6 +4,11 @@ All notable changes to CLI Bridge are documented here.
 
 ## [Unreleased] — v2.x
 
+### Planning / ADR
+- **ADR-0004 Model API Middle Layer** drafted as PROPOSED (`docs/planning/ADR-0004-model-api-middle-layer.md`). Covers: API key handling, PlannerModel scope, redaction, prompt-injection controls, budget/retry/timeout, offline behavior, audit events, ADR-0003 invariants preservation. No runtime implementation.
+- **v2.4a PlannerModel Implementation Handoff** drafted (`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`). Pending ADR-0004 acceptance before any code.
+- Post-v2.3 planning handoff and PLAN-AGENTTEAM updated to reference ADR-0004 draft.
+
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 
 ### Added

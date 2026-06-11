@@ -2,7 +2,7 @@
 
 ## 0. Status
 
-Status: V2.3 CLOSEOUT COMPLETE — Post-v2.3 planning gate active (2026-06-12).
+Status: V2.3 CLOSEOUT COMPLETE — Post-v2.3 planning gate active (2026-06-12). Track B (ADR-0004 Model API) in ADR drafting.
 
 The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
 concluded; the implementation handoff (`CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`)
@@ -365,6 +365,12 @@ Model API in the middle layer is deferred and not part of the current planning
 baseline. It changes the product shape from transport/policy/audit to a model
 caller, with API key management, billing, vendor dependency, prompt-injection,
 and offline-mode implications.
+
+**Status update (2026-06-12)**: ADR-0004 has been drafted as PROPOSED at
+`docs/planning/ADR-0004-model-api-middle-layer.md`. The v2.4a PlannerModel
+implementation handoff is at `docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`
+and requires ADR-0004 acceptance before any code. Track B in the post-v2.3
+planning handoff now references these documents.
 
 Before implementation, create a dedicated ADR-0004-style decision:
 
