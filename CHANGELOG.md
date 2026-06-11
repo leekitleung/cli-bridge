@@ -2,7 +2,30 @@
 
 All notable changes to CLI Bridge are documented here.
 
-## [Unreleased] — v2.0 (feat/v2.0-goal-data-model)
+## [Unreleased] — v2.x
+
+## [v2.3] — 2026-06-11 — AgentTeam Hardening
+
+### Added
+- **Typed lifecycle audit metadata**: `team_created`, `team_approved`, `team_cancelled` audit event types, aligned with `teamMatch.sub` on approve/cancel endpoints.
+- **Provider capability validation**: `provider-capability.ts` enforces each provider's supported isolation/mode/execution at TeamSpec create time; explicitly rejects WorkBuddy as executor.
+- **SlotArtifact redaction guard**: `recordArtifact()` now rejects artifacts with `rawProviderOutput` and `outputRedacted: false`, aligned with `validateSlotArtifact()`.
+- **Hydrate validation parity**: `hydrateArtifact()` now reuses `validateSlotArtifact()` plus `outputRedacted` redaction check, matching the write-time guard.
+
+### Changed
+- **Conflict detection optimization**: `detectFileConflicts()` now uses sort-first O(n log n) approach, avoiding O(n²) prefix scan in the inner loop.
+
+### Fixed
+- Approve/cancel endpoints now correctly write `team_approved` / `team_cancelled` audit events (previously all wrote `team_created`).
+- Cross-project isolation: approve/cancel endpoints return 404 when team's projectId doesn't match the URL project key.
+- Goal project isolation: team create rejects goals from a different project with a clear error message.
+- Duplicate team ID now returns 409 across projects without overwriting existing teams.
+
+### Documented
+- `currentSlotIndex` sentinel semantics (stays at last index after completion; use `team.status === 'done'` for completion detection).
+- `cancel()` lifecycle: orchestrator cleanup responsibility when cancelling an executing team.
+
+## [v2.0] — feat/v2.0-goal-data-model
 
 ### Added
 
