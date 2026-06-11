@@ -2,15 +2,17 @@
 
 ## 0. Status
 
-Status: V2.3 SPIKE COMPLETE — Implementation handoff allowed (2026-06-11).
+Status: V2.3 SPIKE COMPLETE — Implementation handoff created (2026-06-11).
 
 The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
-concluded:
+concluded; the implementation handoff (`CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`)
+is now available for review. Key decisions:
 - Sequential, single-provider, patch-only AgentTeam is feasible with current bridge architecture.
-- Bridge-governed parallel slots are not available in v2.3 because cli-bridge lacks the slot governance contract; provider-native parallelism is a separate question (Claude Code reported supported pending citation verification, Codex unknown pending evidence reconciliation).
-- Worktree/branch isolation requires separate ADRs; deferred past v2.3.
-- WorkBuddy remains a non-executing task system.
-- Minimum viable v2.3 scope: sequential slot orchestrator using existing plan step infrastructure.
+- Bridge-governed parallel slots are not available in v2.3 because cli-bridge lacks the slot governance contract.
+- Claude Code product-native parallelism: reported by official docs, pending citation verification.
+- Codex product-native parallelism: unknown / requires evidence.
+- Minimum viable v2.3 scope: sequential slot orchestrator, TeamSpec data model, patch conflict detection.
+- Worktree/branch isolation deferred past v2.3. WorkBuddy remains non-executing.
 
 This document remains the architectural reference. The spike is the gate decision artifact.
 

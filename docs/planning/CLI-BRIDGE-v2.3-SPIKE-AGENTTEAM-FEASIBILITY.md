@@ -1,8 +1,8 @@
 # CLI Bridge v2.3 Spike — Single-Provider Multi-Slot Feasibility
 
-**Status**: SPIKE COMPLETE (revised 2026-06-11 — parallelism terminology clarification)
+**Status**: SPIKE COMPLETE — Implementation handoff created (2026-06-11)
 **Date**: 2026-06-11
-**Branch**: feat/v2.3-spike-agentteam-feasibility
+**Handoff**: `CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`
 **Spans**: PLANS only. No implementation code.
 
 ---
@@ -374,7 +374,9 @@ The spike document may discuss these as future capabilities, but must not imply 
 
 ### Recommended next step
 
-Write `CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md` covering all §8 prerequisites. Do not open an implementation branch until the handoff is reviewed and approved.
+✅ **Done.** `CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md` has been created. It covers all §8 prerequisites: evidence reconciliation, TeamSpec schema, sequential state machine, patch conflict detection, provider capability declaration, PolicyEngine invariants, test plan, and forbidden list.
+
+After the handoff is reviewed and approved, open `feat/v2.3-agentteam-sequential` as an implementation branch.
 
 ---
 
