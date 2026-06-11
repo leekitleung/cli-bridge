@@ -399,3 +399,80 @@ test('inline edit sends PATCH to update project label', async () => {
   assert.ok(patchCall, 'must send PATCH request');
   assert.equal(patchCall.body.label, 'Updated Bridge');
 });
+
+// B3: stale cache after project switch with partial observability failure.
+test('project switch clears old observability cache when fetches fail', async () => {
+  const { window, document, setFixture } = setupConsole();
+
+  // Set up metrics so connect works.
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+
+  // Initial project (cli-bridge) fixtures — needed because console starts on cli-bridge.
+  setFixture('/bridge/projects/cli-bridge', {
+    ok: true,
+    payload: { project: { key: 'cli-bridge', label: 'CLI Bridge' }, summary: { status: 'unknown', goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0 }, goals: [], reviews: [], pendingPrompts: [], auditEvents: [], status: { progress: null, activeGoal: null, goalsSummary: [], blockedGate: null, latestAudit: null, memory: [] } },
+  });
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, returning: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', records: [], status: 'unavailable' } });
+
+  // Seed alpha project with timeline/audit/memory data.
+  setFixture('/bridge/projects', {
+    ok: true,
+    payload: {
+      projects: [
+        { project: { key: 'cli-bridge', label: 'CLI Bridge', createdAt: 1 }, goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0, status: 'unknown' },
+        { project: { key: 'alpha', label: 'Alpha', createdAt: 1 }, goalCount: 1, activeGoalCount: 1, reviewCount: 0, promptCount: 0, status: 'active' },
+        { project: { key: 'beta', label: 'Beta', createdAt: 1 }, goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0, status: 'unknown' },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/alpha', {
+    ok: true,
+    payload: { project: { key: 'alpha', label: 'Alpha' }, summary: { status: 'active', goalCount: 1, activeGoalCount: 1, reviewCount: 0, promptCount: 0 }, goals: [], reviews: [], pendingPrompts: [], auditEvents: [], status: { progress: null, activeGoal: null, goalsSummary: [], blockedGate: null, latestAudit: null, memory: [] } },
+  });
+  setFixture('/bridge/projects/alpha/timeline', {
+    ok: true,
+    payload: { projectId: 'alpha', entries: [{ id: 't1', projectId: 'alpha', source: 'goal', kind: 'goal_created', label: 'Alpha Goal', timestamp: 1, links: {} }] },
+  });
+  setFixture('/bridge/projects/alpha/audit', { ok: true, payload: { projectId: 'alpha', total: 1, returning: 1, entries: [] } });
+  setFixture('/bridge/projects/alpha/memory', { ok: true, payload: { projectId: 'alpha', entries: [{ sourceKind: 'goal', sourceId: 'g1', timestamp: 1, fact: '1 active goal' }] } });
+  setFixture('/bridge/projects/alpha/verification', { ok: true, payload: { projectId: 'alpha', records: [], status: 'unavailable' } });
+
+  // Beta: projects list + detail OK, but observability endpoints fail.
+  setFixture('/bridge/projects/beta', {
+    ok: true,
+    payload: { project: { key: 'beta', label: 'Beta' }, summary: { status: 'unknown', goalCount: 0, activeGoalCount: 0, reviewCount: 0, promptCount: 0 }, goals: [], reviews: [], pendingPrompts: [], auditEvents: [], status: { progress: null, activeGoal: null, goalsSummary: [], blockedGate: null, latestAudit: null, memory: [] } },
+  });
+  setFixture('/bridge/projects/beta/timeline', { ok: false, status: 500, payload: {} });
+  setFixture('/bridge/projects/beta/audit', { ok: false, status: 500, payload: {} });
+  setFixture('/bridge/projects/beta/memory', { ok: false, status: 500, payload: {} });
+  setFixture('/bridge/projects/beta/verification', { ok: false, status: 500, payload: {} });
+
+  // Connect first.
+  const tokenInput = document.getElementById('token');
+  tokenInput.value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Switch to beta by clicking the beta project item.
+  const betaItem = document.querySelector('[data-key="beta"]');
+  assert.ok(betaItem, 'beta project item must exist');
+  betaItem.click();
+  await new Promise(r => setTimeout(r, 200));
+
+  // After switching to beta with failed observability fetches, the timeline
+  // should not contain alpha's data.
+  const timeline = document.getElementById('timeline');
+  assert.ok(timeline, 'timeline element must exist');
+  const html = timeline.innerHTML;
+  assert.equal(html.includes('Alpha Goal'), false,
+    'alpha timeline data must not appear after switching to beta with failed fetches');
+
+  // Memory should not show alpha's data.
+  const memory = document.getElementById('status-memory');
+  assert.ok(memory, 'status-memory element must exist');
+  assert.equal(memory.innerHTML.includes('1 active goal'), false,
+    'alpha memory must not appear after switching to beta');
+});

@@ -426,6 +426,10 @@ function renderProjectList() {
       // Show loading indicator before the async fetch.
       store.switchingProject = true;
       store.cache.detail = null;
+      store.cache.timeline = null;
+      store.cache.audit = null;
+      store.cache.memory = null;
+      store.cache.verification = null;
       renderWorkspace();
       try {
         await refreshAll();
@@ -885,6 +889,12 @@ $('btn-new-proj').addEventListener('click', async () => {
     $('new-proj-status').textContent = 'created';
     store.activeProjectKey = res.data.project.key;
     localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
+    // Clear old project-scoped cache so a partial refresh failure does not display stale data.
+    store.cache.detail = null;
+    store.cache.timeline = null;
+    store.cache.audit = null;
+    store.cache.memory = null;
+    store.cache.verification = null;
     await refreshAll();
   } else {
     $('new-proj-status').textContent = res.data?.message || 'failed';
