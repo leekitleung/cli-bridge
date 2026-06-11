@@ -694,24 +694,35 @@ export function validateSlotArtifact(value: Record<string, unknown>): TeamSpecVa
 
 export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedFiles: string[] }>): { clean: boolean; conflicts: Array<{ path: string; slotA: string; slotB: string }> } {
   const conflicts: Array<{ path: string; slotA: string; slotB: string }> = [];
-  const fileOwners = new Map<string, string>(); // path -> slotId
+  const entries: Array<{ path: string; slotId: string }> = [];
 
   for (const artifact of artifacts) {
     for (const file of artifact.proposedFiles) {
-      const normalized = file.startsWith('/') ? file : '/' + file;
-      // Check direct overlap.
-      if (fileOwners.has(normalized)) {
-        conflicts.push({ path: normalized, slotA: fileOwners.get(normalized)!, slotB: artifact.slotId });
-        continue;
-      }
-      // Check directory prefix overlap.
-      for (const [existingPath, owner] of fileOwners) {
-        if (normalized.startsWith(existingPath + '/') || existingPath.startsWith(normalized + '/')) {
-          conflicts.push({ path: normalized + ' ⇄ ' + existingPath, slotA: owner, slotB: artifact.slotId });
-        }
-      }
-      if (!fileOwners.has(normalized)) {
-        fileOwners.set(normalized, artifact.slotId);
+      entries.push({ path: file.startsWith('/') ? file : '/' + file, slotId: artifact.slotId });
+    }
+  }
+
+  // Sort lexicographically — parent dirs always precede children.
+  entries.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+  const seen = new Map<string, string>(); // path -> slotId (for exact duplicates)
+
+  for (let i = 0; i < entries.length; i++) {
+    const { path, slotId } = entries[i];
+
+    // Check direct overlap.
+    if (seen.has(path)) {
+      conflicts.push({ path, slotA: seen.get(path)!, slotB: slotId });
+      continue;
+    }
+    seen.set(path, slotId);
+
+    // Check directory prefix overlap — only look backwards at the immediately preceding sorted entries.
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = entries[j].path;
+      if (!path.startsWith(prev.substring(0, prev.lastIndexOf('/') + 1)) && prev !== path) break;
+      if (path.startsWith(prev + '/')) {
+        conflicts.push({ path: path + ' ⇄ ' + prev, slotA: entries[j].slotId, slotB: slotId });
       }
     }
   }

@@ -80,6 +80,10 @@ export class InMemoryTeamSpecStore {
     return clone(t);
   }
 
+  /**
+   * Cancel a team. Store-layer only — transitions state without side effects.
+   * Orchestrator must ensure active slots are terminated/cleaned up before calling.
+   */
   cancel(teamId: string): TeamSpec | null {
     const t = this.teams.get(teamId);
     if (!t || (t.status !== 'pending-approval' && t.status !== 'approved' && t.status !== 'executing')) return null;
@@ -99,6 +103,7 @@ export class InMemoryTeamSpecStore {
     t.updatedAt = Date.now();
 
     // Update currentSlotIndex if slot completed.
+    // NOTE: stays at last index (not length) when all done — use team.status === 'done' to detect completion.
     if (nextStatus === 'done') {
       t.currentSlotIndex = Math.min(t.currentSlotIndex + 1, t.logicalSlots.length - 1);
     }
@@ -160,7 +165,9 @@ export class InMemoryTeamSpecStore {
   }
 
   hydrateArtifact(a: SlotArtifact): void {
-    if (!a.teamId || !a.slotId) return;
+    const val = validateSlotArtifact(a as unknown as Record<string, unknown>);
+    if (!val.ok) return;
+    if (a.rawProviderOutput && !a.outputRedacted) return;
     if (!this.artifacts.has(a.teamId)) this.artifacts.set(a.teamId, []);
     this.artifacts.get(a.teamId)!.push(clone(a));
   }
