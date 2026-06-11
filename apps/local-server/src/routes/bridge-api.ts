@@ -1366,7 +1366,7 @@ export async function handleBridgeRequest(
     runtime.auditLog.createAndAppend({
       sessionId: 'team-' + teamMatch.sub + '-' + team.id,
       projectId: teamMatch.key,
-      type: 'team_created',
+      type: teamMatch.sub === 'approve' ? 'team_approved' : 'team_cancelled',
       source: 'team-orchestrator',
       target: 'team-' + team.id,
       teamId: team.id,

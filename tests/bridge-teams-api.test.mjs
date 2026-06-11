@@ -395,6 +395,8 @@ test('POST /teams/:teamId/approve approves a pending team', async () => {
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-approve/approve');
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.team.status, 'approved');
+  const event = runtime.auditLog.exportEvents().find(e => e.teamId === 't-approve' && e.type === 'team_approved');
+  assert.ok(event, 'should emit team_approved audit event');
 });
 
 test('POST /teams/:teamId/cancel cancels a pending team', async () => {
@@ -411,6 +413,8 @@ test('POST /teams/:teamId/cancel cancels a pending team', async () => {
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-cancel/cancel');
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.team.status, 'cancelled');
+  const event = runtime.auditLog.exportEvents().find(e => e.teamId === 't-cancel' && e.type === 'team_cancelled');
+  assert.ok(event, 'should emit team_cancelled audit event');
 });
 
 test('approve non-existent team returns 404', async () => {
