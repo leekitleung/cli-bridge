@@ -103,7 +103,8 @@ Before the implementation batch is considered ready for review:
 - [ ] `npm test` pass (no regression on existing 498+ tests).
 - [ ] New model API tests cover: happy path, missing key, network failure,
   schema validation rejection, step ceiling enforcement, budget enforcement,
-  audit events, redaction of raw model output.
+  audit events, redaction of raw model output, and PlannerModel failure not
+  advancing or mutating existing goal/plan/step state.
 - [ ] Console show model-suggested label with no execute/dispatch button.
 - [ ] API key never appears in snapshot files, audit records, or HTTP responses.
 - [ ] Existing goal/plan/step workflows work unchanged when model API is

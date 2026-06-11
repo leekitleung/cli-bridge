@@ -85,7 +85,8 @@ Model API calls produce advisory output only. They cannot:
 - The bridge MUST validate that model output conforms to the expected schema
   (PlanStep shape, tier constraints, step ceiling) before accepting it.
 - Model output that violates schema or ADR-0003 invariants MUST be rejected
-  silently (no retry without explicit opt-in).
+  fail-closed, with an audit event and a user-visible generic failure reason.
+  The bridge MUST NOT retry policy or schema failures without explicit opt-in.
 
 ### 6. Budget, retry, timeout, failure-stop
 
@@ -97,8 +98,9 @@ Model API calls produce advisory output only. They cannot:
 - **Timeout**: per-call timeout (default 30s). On timeout, the bridge returns
   the failure to the caller without fallback.
 - **Failure-stop**: if PlannerModel fails (network, timeout, schema rejection),
-  the current goal workflow stops and surfaces the failure to the user. No
-  automatic replanning without human approval.
+  the model planning attempt stops and surfaces the failure to the user. Existing
+  manual goal/plan workflows remain available. No automatic replanning without
+  human approval.
 
 ### 7. Offline behavior
 
@@ -144,7 +146,7 @@ ADR-0004 MUST NOT weaken any ADR-0003 invariant:
 | Step ceiling (hard 10) | Unchanged. Model output exceeding 10 steps is rejected. |
 | Per-step gate for state-changing steps | Unchanged. Model cannot bypass the gate. |
 | Audit for every operation | Extended: model calls add model_plan_request / model_plan_result events. |
-| Failure-stop on consecutive failures | Unchanged. Model failure counts as a step failure. |
+| Failure-stop on consecutive failures | Unchanged for execution steps. PlannerModel failure does not advance or mutate step state unless a later approved implementation explicitly invokes it inside a PlanStep. |
 | WorkBuddy non-executing | Unchanged. |
 | No shell/exec/run/command endpoint | Unchanged. |
 | No auto-apply/commit/push/merge | Unchanged. |
