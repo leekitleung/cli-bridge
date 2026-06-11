@@ -135,6 +135,22 @@ export class InMemoryProjectStore {
     return clone(project);
   }
 
+  /** Create a project strictly — returns null if key already exists.
+   *  Unlike upsert(), this never overwrites metadata. */
+  create(input: CreateProjectInput): Project | null {
+    const key = resolveProjectKey(input.key);
+    if (this.projects.has(key)) return null;
+    const project: Project = {
+      key,
+      label: input.label ?? key,
+      description: input.description,
+      createdAt: input.now ?? Date.now(),
+    };
+    assertProject(project);
+    this.projects.set(key, clone(project));
+    return clone(project);
+  }
+
   get(key: string): Project | undefined {
     const project = this.projects.get(key);
     return project ? clone(project) : undefined;

@@ -880,6 +880,33 @@ export async function handleBridgeRequest(
     return ok({ projects });
   }
 
+  // B3: POST /bridge/projects — explicit project creation.
+  if (pathname === BRIDGE_PROJECTS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const rawKey = parsed.body.key;
+    if (typeof rawKey !== 'string' || rawKey.trim().length === 0) {
+      return error(400, 'key is required and must be a non-empty string');
+    }
+    const key = validateProjectKey(rawKey.trim());
+    if (!key) return error(400, 'Invalid project key');
+    // Reject disallowed fields.
+    if ('createdAt' in parsed.body || 'archivedAt' in parsed.body) {
+      return error(400, 'createdAt and archivedAt cannot be set on creation');
+    }
+    const label = typeof parsed.body.label === 'string' && parsed.body.label.trim().length > 0
+      ? parsed.body.label.trim() : key;
+    const description = typeof parsed.body.description === 'string'
+      ? parsed.body.description : undefined;
+    // Explicit create — must not already exist (including archived).
+    const existing = runtime.projectStore.get(key);
+    if (existing) return error(409, 'Project already exists');
+    const project = runtime.projectStore.create({ key, label, description });
+    if (!project) return error(409, 'Project already exists');
+    runtime.persist();
+    return created({ project });
+  }
+
   const projectKey = projectDetailPathKey(pathname);
   if (projectKey && method === 'GET') {
     const detail = buildProjectDetail(runtime, projectKey);
@@ -966,7 +993,9 @@ export async function handleBridgeRequest(
     if (obsPath.sub === BRIDGE_PROJECT_AUDIT_SUFFIX) {
       const rawLimit = query?.get('limit');
       let limit: number | undefined;
-      if (typeof rawLimit === 'string' && rawLimit.length > 0) {
+      if (typeof rawLimit === 'string') {
+        // Empty string is invalid — parameter present but empty.
+        if (rawLimit.length === 0) return error(400, 'Invalid limit parameter');
         const parsed = Number(rawLimit);
         // Reject non-integer, trailing garbage, and out-of-range values.
         if (!Number.isInteger(parsed) || String(parsed) !== rawLimit || parsed < 1) {
@@ -977,9 +1006,6 @@ export async function handleBridgeRequest(
       const rawType = query?.get('type');
       const type = typeof rawType === 'string' && rawType.length > 0
         ? rawType : undefined;
-      if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
-        return error(400, 'Invalid limit parameter');
-      }
       return ok(buildProjectAuditView(obsInput, limit, type));
     }
     if (obsPath.sub === BRIDGE_PROJECT_MEMORY_SUFFIX) {

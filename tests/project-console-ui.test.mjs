@@ -260,3 +260,14 @@ test('all bridge paths in console are within the allowed set', () => {
   // Still no shell/exec/run/command paths anywhere.
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
 });
+
+// B3: new project create control must be present and use allowlisted POST.
+test('new project create UI is present and calls POST /bridge/projects', () => {
+  const html = renderProjectConsoleHtml();
+  assert.ok(html.includes('btn-new-proj'), 'new project button should exist');
+  assert.ok(html.includes('new-proj-key'), 'new project key input should exist');
+  // Must call POST /bridge/projects — already in the allowlist.
+  assert.ok(html.includes("'/bridge/projects'"), 'should reference /bridge/projects');
+  // No /exec, /shell additions.
+  assert.equal(/\/(exec|shell)['"`]/.test(html), false);
+});

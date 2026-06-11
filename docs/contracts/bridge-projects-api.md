@@ -189,6 +189,62 @@ Returned when the project key is unknown AND no records reference it.
 
 ---
 
+## POST /bridge/projects
+
+Create a project explicitly (B3). Only project metadata is created — no goals,
+reviews, or execution artifacts are created.
+
+### Request body
+
+```json
+{
+  "key": "my-project",
+  "label": "My Project",
+  "description": "Optional description"
+}
+```
+
+| Field | Required | Type | Constraints |
+|-------|----------|------|-------------|
+| `key` | **Yes** | string | Must pass `validateProjectKey()`: 1-64 chars, lowercase alphanumeric/hyphen/underscore, starts with a-z0-9 |
+| `label` | No | string | Non-empty; defaults to `key` if omitted |
+| `description` | No | string | Any string; defaults to undefined |
+
+Disallowed fields: `createdAt`, `archivedAt`.
+
+### Response (201)
+
+```json
+{
+  "project": {
+    "key": "my-project",
+    "label": "My Project",
+    "description": "Optional description",
+    "createdAt": 1234567890
+  }
+}
+```
+
+### Error cases
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Missing or invalid `key` |
+| 400 | Disallowed fields present (`createdAt`, `archivedAt`) |
+| 409 | Project key already exists (including archived projects — never implicitly unarchives) |
+| 405 | Non-POST/GET method |
+
+### Behavior
+
+- `key` is immutable after creation.
+- Duplicate create returns 409 and does **not** overwrite existing metadata.
+- Archived duplicate create returns 409 and does **not** unarchive.
+- Default project `"cli-bridge"` already exists; POST returns 409.
+- On success, `runtime.persist()` is called.
+- The created project appears in `GET /bridge/projects` immediately.
+
+---
+
 ## PATCH /bridge/projects/:key
 
 Update a project's `label` and/or `description`.

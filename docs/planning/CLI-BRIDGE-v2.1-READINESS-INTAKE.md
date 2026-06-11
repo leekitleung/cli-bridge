@@ -1,8 +1,8 @@
 # CLI Bridge v2.1 — Readiness Intake
 
-**Date**: 2026-06-10 (updated 2026-06-11 — v2.1 read-only observability baseline implemented)
+**Date**: 2026-06-10 (updated 2026-06-11 — B3 explicit project creation + v2.1.1 hardening delivered)
 **Based on**: `docs/reviews/CLI-BRIDGE-v2.0-REAL-USE-VALIDATION.md`
-**Status**: BASELINE IMPLEMENTED — v2.1 read-only observability delivered
+**Status**: B3 RESOLVED — B3 Resolution + v2.1.1 observability hardening implemented
 
 ## 0. v2.1 Readiness Verdict
 
@@ -167,3 +167,19 @@ Per v2.1 directional review §3.9:
 
 *This readiness note updates and supersedes no prior document. It is an intake
 assessment based on v2.0 real-use validation evidence.*
+
+---
+
+## B3 Resolution + v2.1.1 Hardening (2026-06-11)
+
+B3 (explicit project creation) resolved with the following additions:
+
+| Feature | Detail |
+|---------|--------|
+| `POST /bridge/projects` | Explicit project creation with `key` (required), `label`, `description` |
+| `InMemoryProjectStore.create()` | Strict create — returns null on duplicate (never overwrites) |
+| Console "New Project" UI | Minimal key input + "+ New" button in project nav |
+| v2.1.1: `ObservabilityInput.reviews.packetId` | Type declaration now includes `packetId: string` |
+| v2.1.1: audit `limit=` strictness | Empty string now returns 400; `5abc`/`1.5` already rejected |
+| v2.1.1: console `refreshAll()` resilience | Uses `Promise.allSettled` — single fetch failure doesn't block rendering |
+| `docs/contracts/bridge-projects-api.md` | Updated with POST /bridge/projects section |

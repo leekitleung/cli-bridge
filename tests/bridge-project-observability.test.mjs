@@ -297,3 +297,11 @@ test('audit limit rejects non-integer and trailing-garbage values', async () => 
     new URLSearchParams('limit=1.5'));
   assert.equal(res2.statusCode, 400);
 });
+
+test('audit limit=empty string returns 400', async () => {
+  const runtime = createBridgeRuntime();
+  await seedGoal(runtime, 'sle', 'Empty limit test', 'empty-lim-proj');
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/empty-lim-proj/audit', undefined,
+    new URLSearchParams('limit='));
+  assert.equal(res.statusCode, 400);
+});

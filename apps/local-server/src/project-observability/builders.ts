@@ -46,6 +46,7 @@ export interface ObservabilityInput {
   }>;
   reviews: Array<{
     id: string;
+    packetId: string;
     projectId?: string;
     prompt: string;
     status: string;

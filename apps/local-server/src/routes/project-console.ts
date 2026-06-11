@@ -226,6 +226,11 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 <!-- Left Nav -->
 <nav aria-label="Project navigation">
   <h2>Projects</h2>
+  <div style="padding:0 16px 8px;display:flex;gap:6px;">
+    <input id="new-proj-key" type="text" placeholder="project-key" size="18" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);" />
+    <button id="btn-new-proj" style="font-size:11px;padding:4px 8px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);">+ New</button>
+    <span id="new-proj-status" style="font-size:10px;color:var(--muted);"></span>
+  </div>
   <ul class="project-list" id="project-list">
     <li class="empty-state" id="project-empty">No projects yet</li>
   </ul>
@@ -356,7 +361,8 @@ async function refreshAll() {
   const listUrl = includeArchived ? '/bridge/projects?includeArchived=true' : '/bridge/projects';
   const encodedKey = encodeURIComponent(store.activeProjectKey);
   const base = '/bridge/projects/' + encodedKey;
-  const [projectsRes, detailRes, timelineRes, auditRes, memoryRes, verificationRes] = await Promise.all([
+  // Use allSettled so a single failure does not block rendering of successful data.
+  const results = await Promise.allSettled([
     api(listUrl),
     api(base),
     api(base + '/timeline'),
@@ -364,12 +370,13 @@ async function refreshAll() {
     api(base + '/memory'),
     api(base + '/verification'),
   ]);
-  if (projectsRes.ok) store.cache.projects = projectsRes.data.projects || [];
-  if (detailRes.ok) store.cache.detail = detailRes.data;
-  if (timelineRes.ok) store.cache.timeline = timelineRes.data;
-  if (auditRes.ok) store.cache.audit = auditRes.data;
-  if (memoryRes.ok) store.cache.memory = memoryRes.data;
-  if (verificationRes.ok) store.cache.verification = verificationRes.data;
+  const [prR, deR, tiR, auR, meR, veR] = results;
+  if (prR.status === 'fulfilled' && prR.value.ok) store.cache.projects = prR.value.data.projects || [];
+  if (deR.status === 'fulfilled' && deR.value.ok) store.cache.detail = deR.value.data;
+  if (tiR.status === 'fulfilled' && tiR.value.ok) store.cache.timeline = tiR.value.data;
+  if (auR.status === 'fulfilled' && auR.value.ok) store.cache.audit = auR.value.data;
+  if (meR.status === 'fulfilled' && meR.value.ok) store.cache.memory = meR.value.data;
+  if (veR.status === 'fulfilled' && veR.value.ok) store.cache.verification = veR.value.data;
   renderAll();
 }
 
@@ -866,6 +873,23 @@ function beginInlineEdit(key, label, description, onSave) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }
+
+// ─── New Project ───
+$('btn-new-proj').addEventListener('click', async () => {
+  const key = $('new-proj-key').value.trim();
+  if (!key) { $('new-proj-status').textContent = 'enter a key'; return; }
+  $('new-proj-status').textContent = 'creating…';
+  const res = await api('/bridge/projects', 'POST', { key });
+  if (res.ok) {
+    $('new-proj-key').value = '';
+    $('new-proj-status').textContent = 'created';
+    store.activeProjectKey = res.data.project.key;
+    localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
+    await refreshAll();
+  } else {
+    $('new-proj-status').textContent = res.data?.message || 'failed';
+  }
+});
 </script>
 </body>
 </html>`;

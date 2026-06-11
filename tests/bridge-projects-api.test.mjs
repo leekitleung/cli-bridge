@@ -216,14 +216,20 @@ test('GET /bridge/projects/:key returns 404 for unknown projects with no records
   assert.equal(res.payload.status, 'error');
 });
 
-test('project aggregation endpoints are read-only and reject POST', async () => {
+test('project aggregation endpoints reject unregistered methods', async () => {
   const runtime = createBridgeRuntime();
 
-  const listPost = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { projectId: 'new' });
+  // POST /bridge/projects is now a valid endpoint (B3 explicit project creation).
+  // Other methods on the listing path and POST on detail paths are still rejected.
+  const putList = await call(runtime, 'PUT', BRIDGE_PROJECTS_PATH);
+  const delList = await call(runtime, 'DELETE', BRIDGE_PROJECTS_PATH);
   const detailPost = await call(runtime, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha`, { label: 'Alpha' });
+  const detailPut = await call(runtime, 'PUT', `${BRIDGE_PROJECTS_PATH}/alpha`);
 
-  assert.equal(listPost.statusCode, 405);
+  assert.equal(putList.statusCode, 405);
+  assert.equal(delList.statusCode, 405);
   assert.equal(detailPost.statusCode, 405);
+  assert.equal(detailPut.statusCode, 405);
 });
 
 // projectId input validation: invalid characters, too long, slashes.
@@ -620,4 +626,74 @@ test('PATCH archived project preserves archivedAt', async () => {
     new URLSearchParams('includeArchived=true'));
   const inArchiveList = includeRes.payload.projects.some(p => p.project.key === 'archived-proj');
   assert.equal(inArchiveList, true, 'archived project visible with includeArchived=true');
+});
+
+// ════════════════════════════════════════════════════════════════════
+// B3: POST /bridge/projects — explicit project creation
+// ════════════════════════════════════════════════════════════════════
+
+test('POST /bridge/projects creates explicit project', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'my-proj', label: 'My Project' });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.project.key, 'my-proj');
+  assert.equal(res.payload.project.label, 'My Project');
+  assert.ok(res.payload.project.createdAt > 0);
+  assert.equal(res.payload.project.archivedAt, undefined);
+
+  // Verify in listing.
+  const list = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH);
+  const found = list.payload.projects.find(p => p.project.key === 'my-proj');
+  assert.ok(found, 'new project should appear in listing');
+});
+
+test('POST /bridge/projects with only key uses key as label', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'label-as-key' });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.project.label, 'label-as-key');
+});
+
+test('POST /bridge/projects rejects duplicate key (409)', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'dup', label: 'First' });
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'dup', label: 'Second' });
+  assert.equal(res.statusCode, 409);
+  // Metadata should not be overwritten.
+  assert.equal(runtime.projectStore.get('dup').label, 'First');
+});
+
+test('POST /bridge/projects rejects duplicate archived key (409)', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'arch-dup' });
+  runtime.projectStore.archive('arch-dup');
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'arch-dup' });
+  assert.equal(res.statusCode, 409);
+  // Should still be archived (not implicitly unarchived).
+  assert.ok(runtime.projectStore.get('arch-dup').archivedAt);
+});
+
+test('POST /bridge/projects rejects cli-bridge (default exists)', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'cli-bridge' });
+  assert.equal(res.statusCode, 409);
+});
+
+test('POST /bridge/projects rejects missing key', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { label: 'NoKey' });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /bridge/projects rejects invalid key', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: '' });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /bridge/projects rejects disallowed fields', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'bad', createdAt: 1 });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('createdAt'));
 });
