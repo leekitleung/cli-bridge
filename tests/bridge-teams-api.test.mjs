@@ -559,3 +559,95 @@ test('duplicate team id across projects does not overwrite', async () => {
   assert.equal(runtime.teamStore.listByProject('alpha').length, 1);
   assert.equal(runtime.teamStore.listByProject('alpha')[0].provider, 'claude');
 });
+// Provider capability tests
+test('reject unknown provider', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-unk', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'no-such', endpointId: 'fake',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('Unknown provider'));
+});
+test('reject WorkBuddy as executor via capability', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-wb', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'workbuddy', endpointId: 'workbuddy',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('execute') || res.payload.message.includes('WorkBuddy') || res.payload.message.includes('cannot'));
+});
+test('reject unsupported isolation via capability', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-iso2', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'worktree',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+});
+test('reject unsupported mode via capability', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-mod2', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'invalid-mode', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+});
+test('team create writes audit with teamId', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-aud', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  const events = runtime.auditLog.exportEvents();
+  const teamEvent = events.find(e => e.teamId === 't-aud');
+  assert.ok(teamEvent, 'should find audit event with teamId');
+  assert.equal(teamEvent.type, 'team_created');
+});
+test('recordArtifact rejects unredacted raw output', () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const result = runtime.teamStore.recordArtifact('tx', {
+    teamId: 'tx', slotId: 's0', planStepId: 'p0',
+    summary: 'Done', proposedFiles: ['src/x.ts'],
+    rawProviderOutput: 'secret', outputRedacted: false, createdAt: 1,
+  });
+  assert.equal(result, null);
+});
+test('recordArtifact accepts redacted output', () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const result = runtime.teamStore.recordArtifact('tr', {
+    teamId: 'tr', slotId: 's0', planStepId: 'p0',
+    summary: 'Done', proposedFiles: ['src/x.ts'],
+    rawProviderOutput: '[redacted]', outputRedacted: true, createdAt: 1,
+  });
+  assert.ok(result);
+  assert.equal(result.summary, 'Done');
+});

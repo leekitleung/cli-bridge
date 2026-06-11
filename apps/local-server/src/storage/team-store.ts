@@ -3,6 +3,7 @@
 // Stores TeamSpec instances. All mutations are pure state transitions;
 // no execution, no CLI spawn, no background dispatch.
 
+import { validateSlotArtifact } from "../../../../packages/shared/src/schemas.ts";
 import type {
   TeamSpec,
   AgentSlot,
@@ -125,7 +126,12 @@ export class InMemoryTeamSpecStore {
   }
 
   /** Record a slot's output artifact. */
-  recordArtifact(teamId: string, artifact: SlotArtifact): SlotArtifact {
+  recordArtifact(teamId: string, artifact: SlotArtifact): SlotArtifact | null {
+    // Validate schema and redaction boundary.
+    const val = validateSlotArtifact(artifact as unknown as Record<string, unknown>);
+    if (!val.ok) return null;
+    // Require outputRedacted if rawProviderOutput is present.
+    if (artifact.rawProviderOutput && !artifact.outputRedacted) return null;
     if (!this.artifacts.has(teamId)) this.artifacts.set(teamId, []);
     this.artifacts.get(teamId)!.push(clone(artifact));
     return clone(artifact);
