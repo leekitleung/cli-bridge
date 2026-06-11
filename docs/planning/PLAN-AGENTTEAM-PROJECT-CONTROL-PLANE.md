@@ -7,7 +7,7 @@ Status: V2.3 SPIKE COMPLETE — Implementation handoff allowed (2026-06-11).
 The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
 concluded:
 - Sequential, single-provider, patch-only AgentTeam is feasible with current bridge architecture.
-- Native parallel multi-slot is NOT available (Codex/Claude Code are single-process CLI tools).
+- Bridge-governed parallel slots are not available in v2.3 because cli-bridge lacks the slot governance contract; provider-native parallelism is a separate question (Claude Code reported supported pending citation verification, Codex unknown pending evidence reconciliation).
 - Worktree/branch isolation requires separate ADRs; deferred past v2.3.
 - WorkBuddy remains a non-executing task system.
 - Minimum viable v2.3 scope: sequential slot orchestrator using existing plan step infrastructure.
