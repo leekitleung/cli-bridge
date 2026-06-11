@@ -236,6 +236,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <li data-view="prompts" role="tab" tabindex="0" aria-selected="false">Prompts</li>
     <li data-view="audit" role="tab" tabindex="0" aria-selected="false">Audit</li>
     <li data-view="memory" role="tab" tabindex="0" aria-selected="false">Memory</li>
+    <li data-view="verification" role="tab" tabindex="0" aria-selected="false">Verification</li>
   </ul>
 </nav>
 
@@ -290,6 +291,12 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <span class="unavailable">not yet available</span>
     </div>
   </div>
+  <div>
+    <h2>Verification</h2>
+    <div class="status-card" id="status-verification">
+      <span class="unavailable">not yet available</span>
+    </div>
+  </div>
 </aside>
 
 <!-- Bottom Command Bar -->
@@ -306,7 +313,7 @@ const store = {
   connected: false,
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
   view: 'workspace',
-  cache: { projects: [], detail: null, metrics: null },
+  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null },
   switchingProject: false,
 };
 
@@ -347,12 +354,22 @@ $('connect').addEventListener('click', async () => {
 async function refreshAll() {
   const includeArchived = document.getElementById('toggle-archived')?.checked;
   const listUrl = includeArchived ? '/bridge/projects?includeArchived=true' : '/bridge/projects';
-  const [projectsRes, detailRes] = await Promise.all([
+  const encodedKey = encodeURIComponent(store.activeProjectKey);
+  const base = '/bridge/projects/' + encodedKey;
+  const [projectsRes, detailRes, timelineRes, auditRes, memoryRes, verificationRes] = await Promise.all([
     api(listUrl),
-    api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey)),
+    api(base),
+    api(base + '/timeline'),
+    api(base + '/audit'),
+    api(base + '/memory'),
+    api(base + '/verification'),
   ]);
   if (projectsRes.ok) store.cache.projects = projectsRes.data.projects || [];
   if (detailRes.ok) store.cache.detail = detailRes.data;
+  if (timelineRes.ok) store.cache.timeline = timelineRes.data;
+  if (auditRes.ok) store.cache.audit = auditRes.data;
+  if (memoryRes.ok) store.cache.memory = memoryRes.data;
+  if (verificationRes.ok) store.cache.verification = verificationRes.data;
   renderAll();
 }
 
@@ -503,13 +520,31 @@ function renderStatusPanel() {
     $('status-goals').innerHTML = '<span class="unavailable">no goals</span>';
   }
 
-  // Audit
-  if (detail && detail.auditEvents && detail.auditEvents.length) {
+  // Audit — from server-derived audit view.
+  if (store.cache.audit && store.cache.audit.total !== undefined) {
+    $('status-audit').innerHTML = '<div>' + store.cache.audit.total + ' audit events</div>';
+  } else if (detail && detail.auditEvents && detail.auditEvents.length) {
     $('status-audit').innerHTML = '<div>' + detail.auditEvents.length + ' audit events</div>';
   }
 
-  // Memory
-  $('status-memory').innerHTML = '<span class="unavailable">not yet available</span>';
+  // Memory — from server-derived memory view.
+  const memoryView = store.cache.memory;
+  if (memoryView && memoryView.entries && memoryView.entries.length) {
+    $('status-memory').innerHTML = memoryView.entries.slice(0, 8).map(m =>
+      '<div style="font-size:11px;margin:2px 0;">' + escapeHtml(m.fact) + '</div>'
+    ).join('');
+  } else {
+    $('status-memory').innerHTML = '<span class="unavailable">no derived memory</span>';
+  }
+
+  // Verification — from server-derived verification view.
+  const verView = store.cache.verification;
+  if (verView) {
+    const recCount = (verView.records || []).length;
+    $('status-verification').innerHTML = '<span class="unavailable">' + escapeHtml(verView.status || 'unavailable') + (recCount > 0 ? ' (' + recCount + ' step records)' : '') + '</span>';
+  } else {
+    $('status-verification').innerHTML = '<span class="unavailable">not yet available</span>';
+  }
 }
 
 function renderWorkspace() {
@@ -595,33 +630,28 @@ async function goalAction(path, body, msg) {
 }
 
 function renderTimeline() {
-  const detail = store.cache.detail;
-  if (!detail) {
+  const timeline = store.cache.timeline;
+  if (!timeline || !timeline.entries) {
     $('timeline').innerHTML = '<div class="loading">Connect to load activity timeline…</div>';
     return;
   }
-  const entries = [];
-  (detail.goals || []).forEach(g => {
-    entries.push({ ts: g.goal.createdAt, origin: 'user', text: 'Goal created: ' + g.goal.description });
-    if (g.plan) {
-      entries.push({ ts: g.plan.createdAt, origin: 'system', text: 'Plan generated (' + g.plan.steps.length + ' steps)' });
-      if (g.plan.approvedAt) entries.push({ ts: g.plan.approvedAt, origin: 'user', text: 'Plan approved' });
-      (g.plan.steps || []).filter(s => s.status === 'done').forEach(s => {
-        entries.push({ ts: g.plan.updatedAt, origin: 'system', text: 'Step ' + s.index + ' completed: ' + s.intent });
-      });
-    }
-  });
-  (detail.reviews || []).forEach(r => {
-    entries.push({ ts: r.createdAt, origin: 'user', text: 'Review created → ' + r.targetEndpointId + ' [' + r.status + ']' });
-  });
-  entries.sort((a, b) => b.ts - a.ts);
+  const entries = timeline.entries || [];
   if (entries.length === 0) {
     $('timeline').innerHTML = '<div class="loading">No activity yet — create a goal to begin.</div>';
     return;
   }
-  $('timeline').innerHTML = entries.slice(0, 50).map(e =>
-    '<div class="timeline-entry"><div class="origin ' + e.origin + '">' + (e.origin === 'user' ? 'You' : 'Bridge') + '</div><div class="body">' + escapeHtml(e.text) + '</div></div>'
-  ).join('');
+  // Show first 50 entries from server-derived timeline.
+  const shown = entries.slice(0, 50);
+  $('timeline').innerHTML = shown.map(e => {
+    let originClass = 'system';
+    if (e.source === 'goal') originClass = 'user';
+    if (e.source === 'review') originClass = 'user';
+    if (e.source === 'audit') originClass = 'system';
+    const originLabel = (e.source === 'goal' || e.source === 'review') ? 'You' : 'Bridge';
+    const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+    let pill = e.statusLabel ? '<span class="pill">' + escapeHtml(e.statusLabel) + '</span>' : '';
+    return '<div class="timeline-entry"><div class="origin ' + originClass + '">' + originLabel + '</div><div class="body">' + escapeHtml(e.label) + ' ' + pill + '<div class="time">' + timeStr + '</div></div></div>';
+  }).join('');
 }
 
 function renderSectionView() {
@@ -661,15 +691,48 @@ function renderSectionView() {
     html += '</div>';
   } else if (store.view === 'audit') {
     html = '<div class="card"><h3>Audit Log</h3>';
-    const auditEvents = detail ? (detail.auditEvents || []) : [];
-    if (auditEvents.length) {
-      html += '<pre id="audit-pre">' + escapeHtml(JSON.stringify(auditEvents.slice(0, 20), null, 2)) + '</pre>';
+    const auditView = store.cache.audit;
+    if (auditView && auditView.entries && auditView.entries.length) {
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + auditView.returning + ' of ' + auditView.total + ' events shown</div>';
+      html += '<table><thead><tr><th>type</th><th>source</th><th>target</th><th>status</th></tr></thead><tbody>';
+      auditView.entries.forEach(e => {
+        html += '<tr><td>' + escapeHtml(e.type || '') + '</td><td>' + escapeHtml(e.source || '') + '</td><td>' + escapeHtml(e.target || '') + '</td><td>' + (e.ok === true ? '<span class="pill done">ok</span>' : e.ok === false ? '<span class="pill failed">failed</span>' : '<span class="pill">-</span>') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    } else if (detail && detail.auditEvents && detail.auditEvents.length) {
+      html += '<pre id="audit-pre">' + escapeHtml(JSON.stringify(detail.auditEvents.slice(0, 20), null, 2)) + '</pre>';
     } else {
       html += '<span class="unavailable">No audit events recorded yet.</span><pre id="audit-pre">—</pre>';
     }
     html += '</div>';
   } else if (store.view === 'memory') {
-    html = '<div class="card"><h3>Memory</h3><span class="unavailable">Not yet available. This section will show project knowledge once a backend memory store is added.</span></div>';
+    html = '<div class="card"><h3>Derived Memory</h3>';
+    const memoryView = store.cache.memory;
+    if (memoryView && memoryView.entries && memoryView.entries.length) {
+      html += '<p style="font-size:11px;color:var(--muted);">Deterministically derived from project data. No separate memory store — these facts are recomputed on each refresh.</p>';
+      html += '<table><thead><tr><th>source</th><th>fact</th></tr></thead><tbody>';
+      memoryView.entries.forEach(m => {
+        html += '<tr><td><span class="pill">' + escapeHtml(m.sourceKind) + '</span></td><td>' + escapeHtml(m.fact) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<span class="unavailable">No derived memory available — create goals and plans to populate.</span></div>';
+    }
+    html += '</div>';
+  } else if (store.view === 'verification') {
+    html = '<div class="card"><h3>Harness Verification (v2.1 placeholder baseline)</h3>';
+    const verView = store.cache.verification;
+    html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
+    if (verView && verView.records && verView.records.length) {
+      html += '<table><thead><tr><th>step #</th><th>intent</th><th>harness</th></tr></thead><tbody>';
+      verView.records.forEach(r => {
+        html += '<tr><td>' + (r.stepIndex != null ? r.stepIndex : '-') + '</td><td>' + escapeHtml(r.stepIntent || '') + '</td><td><span class="unavailable">' + escapeHtml(r.harnessStatus) + '</span></td></tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<span class="unavailable">No completed plan steps — nothing to verify.</span>';
+    }
+    html += '</div>';
   }
   const existing = document.getElementById('section-panel');
   if (existing) existing.remove();

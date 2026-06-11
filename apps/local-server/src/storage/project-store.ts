@@ -118,7 +118,8 @@ export class InMemoryProjectStore {
     });
   }
 
-  /** Create a project if it doesn't exist; update label/description if it does. */
+  /** Create a project if it doesn't exist; update label/description if it does.
+   *  Preserves existing archivedAt so PATCH metadata does not unarchive. */
   upsert(input: CreateProjectInput): Project {
     const key = resolveProjectKey(input.key);
     const existing = this.projects.get(key);
@@ -127,6 +128,7 @@ export class InMemoryProjectStore {
       label: input.label ?? existing?.label ?? key,
       description: input.description ?? existing?.description,
       createdAt: input.now ?? existing?.createdAt ?? Date.now(),
+      ...(existing?.archivedAt !== undefined ? { archivedAt: existing.archivedAt } : {}),
     };
     assertProject(project);
     this.projects.set(key, clone(project));

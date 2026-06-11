@@ -2,11 +2,19 @@
 
 ## 0. 状态
 
-Status: PLAN（构想记录，非活跃切片）。
+Status: v2.1 BASELINE IMPLEMENTED (2026-06-11) — 只读 observability 子集已实现。
 
-为每个项目维护一条统一的对话/事件时间线，把分散在各端发生过的开发上下文收拢到项目
-视图里。**目标不是控制终端，而是 observability** —— 让上下文可被看见、可延续，无论
-开发发生在哪个端。
+v2.1 可只读观测基线已实现 ConversationTimeline（从已有 goals / plans / reviews /
+prompts / audit events 派生）、DerivedMemory、Audit View、Harness Verification
+placeholder。所有视图均为纯派生，不新增执行权限。
+
+未实现部分保留为 future：
+- transcript import
+- 长期 MemoryStore
+- AgentTeam 集成
+- Model API 派生 summary
+
+方向性评审仍有效；v2.1 只实现只读子集，AgentTeam / Model API 仍是 FUTURE / NOT BASELINE。
 
 本功能独立于受控执行层（ADR-0003 / v2.0）：它是只读的上下文聚合，不持有任何执行
 权限。可与执行层并行规划。

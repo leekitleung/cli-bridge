@@ -97,7 +97,8 @@ test('project console is honest about data that is not yet available', () => {
 
   assert.match(html, /not yet available/);
   assert.match(html, /No audit events recorded yet/);
-  assert.match(html, /Not yet available\. This section will show project knowledge/);
+  assert.match(html, /No derived memory|create goals and plans/);
+  assert.match(html, /placeholder baseline/);
 
   assert.equal(html.includes('tests 297/297'), false);
   assert.equal(html.includes('ahead 4 commits'), false);

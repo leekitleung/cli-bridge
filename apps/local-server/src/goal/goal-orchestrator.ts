@@ -16,7 +16,7 @@
 //
 // Scope constraints (§7.3):
 //   ✅ Advance state via InMemoryGoalStore.
-//   ✅ Step ceiling enforcement (default 20).
+//   ✅ Step ceiling enforcement (default 10, ADR-0003 hard ceiling).
 //   ✅ Mutating gate dispatch (blocked-needs-gate).
 //   ✅ Tier permission check per plan.permittedTiers.
 //   ✅ Fail-stop on step failure.
@@ -37,7 +37,7 @@ import type { InMemoryGoalStore } from '../storage/goal-store.ts';
 export interface GoalOrchestratorOptions {
   /** Maximum number of steps this orchestrator instance will advance
    *  across all advance() / runAll() calls. Once reached, all further
-   *  advance calls return ceiling-reached. Default: 20.
+   *  advance calls return ceiling-reached. Default: 10 (ADR-0003 hard ceiling).
    *
    *  This is a hard, instance-scoped ceiling: the counter is cumulative
    *  across multiple calls, not per-invocation. Create a fresh instance
@@ -114,7 +114,8 @@ export interface AdvanceStepOptions {
 
 // ---- Defaults ----
 
-const DEFAULT_STEP_CEILING = 20;
+/** Hard ceiling per ADR-0003 resolved decision and v2.0 handoff §2. */
+const DEFAULT_STEP_CEILING = 10;
 
 // ---- Orchestrator ----
 

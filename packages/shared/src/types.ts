@@ -504,6 +504,48 @@ export interface Plan {
   approvedAt?: number;
 }
 
+
+// --- v2.1 Read-Only Project Observability DTOs ---
+
+/** A single entry in a project conversation timeline. */
+export interface ConversationTimelineEntry {
+  id: string; projectId: string; source: string; kind: string;
+  label: string; timestamp: number; links: Record<string, string>;
+  statusLabel?: string;
+}
+
+export interface ConversationTimelineView {
+  projectId: string; entries: ConversationTimelineEntry[];
+}
+
+export interface DerivedMemoryEntry {
+  sourceKind: string; sourceId: string; timestamp: number; fact: string;
+}
+
+export interface DerivedMemoryView {
+  projectId: string; entries: DerivedMemoryEntry[];
+}
+
+export interface ProjectAuditEntry {
+  id: string; type: string; source: string; target: string;
+  timestamp: number; ok: boolean | null;
+}
+
+export interface ProjectAuditView {
+  projectId: string; total: number; returning: number;
+  entries: ProjectAuditEntry[];
+}
+
+export interface HarnessVerificationRecord {
+  stepId?: string; stepIndex?: number; stepIntent?: string;
+  stepStatus?: string; harnessStatus: string;
+}
+
+export interface HarnessVerificationView {
+  projectId: string; records: HarnessVerificationRecord[];
+  status: string;
+}
+
 // --- Phase B: Project workspace model ---
 
 export interface Project {

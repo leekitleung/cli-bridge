@@ -339,10 +339,10 @@ test('[§7.3-5a] step ceiling stops advance() after N runs', () => {
   assert.equal(r5.type, 'ceiling-reached');
 });
 
-test('[§7.3-5b] default step ceiling is 20', () => {
+test('[§7.3-5b] default step ceiling is 10 (ADR-0003 hard ceiling)', () => {
   const { store } = setup();
   const { goalId } = createApprovedPlan(store,
-    Array.from({ length: 25 }, (_, i) => ({
+    Array.from({ length: 15 }, (_, i) => ({
       intent: `Step ${i}`, kind: 'review', targetEndpointId: 'c1',
     })),
   );
@@ -351,12 +351,12 @@ test('[§7.3-5b] default step ceiling is 20', () => {
   const results = orch.runAll(goalId);
 
   const completions = results.filter((r) => r.type === 'step-completed');
-  assert.equal(completions.length, 20); // ceiling at 20
+  assert.equal(completions.length, 10); // hard ceiling at 10
 
   const last = results[results.length - 1];
   assert.equal(last.type, 'ceiling-reached');
 
-  assert.equal(orch.stepsAdvanced, 20);
+  assert.equal(orch.stepsAdvanced, 10);
 });
 
 test('[§7.3-5c] ceiling applies across advance() and runAll() calls', () => {

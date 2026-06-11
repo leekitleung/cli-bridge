@@ -63,6 +63,11 @@ export interface ParseOptions {
   tierEnforcement?: TierEnforcementMode;
   /** If true, also strip JSON markdown fences before parsing. Default: true. */
   stripFences?: boolean;
+  /** Maximum number of steps allowed in a single plan. Plans exceeding this
+   *  limit are rejected at parse time. Default: 10 (ADR-0003 hard ceiling).
+   *  This enforces the step ceiling structurally at plan creation time so it
+   *  cannot be bypassed via HTTP request fan-out. */
+  maxSteps?: number;
 }
 
 // --- Internal helpers ---
@@ -77,6 +82,12 @@ const FORBIDDEN_EXECUTION_FIELDS = [
 ] as const;
 
 const DEFAULT_PERMITTED_TIERS: ExecutionTier[] = ['patch-proposal'];
+
+/** Maximum number of steps in a single plan. Hard ceiling at 10
+ *  per ADR-0003 resolved decision and v2.0 implementation handoff §2.
+ *  This is enforced at parse time so that the ceiling cannot be bypassed
+ *  by repeatedly calling /bridge/goals/step with fresh orchestrator instances. */
+const DEFAULT_MAX_STEPS = 10;
 
 // Canonical set of state-mutating step kinds (mirrors goal-store STATE_MUTATING_KINDS).
 // Any step whose kind is in this set MUST carry tier='workspace-write' and the
@@ -245,6 +256,24 @@ export function parseGoalPlanResult(
 
   // Normalise steps: force status to 'pending', fill in planId.
   const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
+
+  // ── 2b. Enforce step ceiling at parse time ─────────────────────────
+  //
+  // The ceiling is enforced here (not in the orchestrator alone) so that a
+  // plan with more than maxSteps steps never enters the store. This prevents
+  // the HTTP cross-request bypass where a fresh orchestrator per /bridge/goals/step
+  // call would have its own independent step counter.
+  const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+  if (rawSteps.length > maxSteps) {
+    return {
+      ok: false,
+      failureReason:
+        `plan-step-ceiling-exceeded: plan has ${rawSteps.length} steps` +
+        ` but the maximum is ${maxSteps}.` +
+        ` Split the goal into smaller sub-goals, or reduce the plan scope.`,
+    };
+  }
+
   const steps: PlanStep[] = rawSteps.map((s: unknown, index: number) => {
     if (!isRecord(s)) {
       // Will be caught by schema validation.

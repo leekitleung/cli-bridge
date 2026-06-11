@@ -539,3 +539,85 @@ test('PATCH /bridge/projects/:key is idempotent', async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.project.label, 'Alpha');
 });
+
+// ════════════════════════════════════════════════════════════════════
+// P1 code-review regression: implicit project upsert + archivedAt pres.
+// ════════════════════════════════════════════════════════════════════
+
+test('implicit project via goal creation is PATCH-able and archivable', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_GOALS_PATH, {
+    sessionId: 'implicit-goal',
+    description: 'Test implicit project',
+    projectId: 'implicit-goal-proj',
+  });
+  assert.equal(res.statusCode, 201);
+
+  const patchRes = await call(runtime, 'PATCH', BRIDGE_PROJECTS_PATH + '/implicit-goal-proj', {
+    label: 'Implicit Goal Proj',
+  });
+  assert.equal(patchRes.statusCode, 200, 'PATCH should succeed on implicit project');
+  assert.equal(patchRes.payload.project.label, 'Implicit Goal Proj');
+
+  const archiveRes = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH + '/implicit-goal-proj/archive');
+  assert.equal(archiveRes.statusCode, 200);
+  assert.ok(archiveRes.payload.project.archivedAt, 'should have archivedAt');
+
+  const unarchiveRes = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH + '/implicit-goal-proj/unarchive');
+  assert.equal(unarchiveRes.statusCode, 200);
+  assert.equal(unarchiveRes.payload.project.archivedAt, undefined);
+});
+
+test('implicit project via review creation is PATCH-able', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_REVIEWS_PATH, {
+    sessionId: 'implicit-review',
+    sourceEndpointId: 'claude-code-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'Review this',
+    projectId: 'implicit-review-proj',
+  });
+  assert.equal(res.statusCode, 201);
+
+  const patchRes = await call(runtime, 'PATCH', BRIDGE_PROJECTS_PATH + '/implicit-review-proj', {
+    label: 'Implicit Review Proj',
+  });
+  assert.equal(patchRes.statusCode, 200, 'PATCH should work for review-created project');
+});
+
+test('implicit project via prompt creation is PATCH-able', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'POST', BRIDGE_PENDING_PROMPTS_PATH, {
+    sessionId: 'implicit-prompt',
+    prompt: 'Test prompt',
+    projectId: 'implicit-prompt-proj',
+  });
+  assert.equal(res.statusCode, 201);
+
+  const patchRes = await call(runtime, 'PATCH', BRIDGE_PROJECTS_PATH + '/implicit-prompt-proj', {
+    label: 'Implicit Prompt Proj',
+  });
+  assert.equal(patchRes.statusCode, 200, 'PATCH should work for prompt-created project');
+});
+
+test('PATCH archived project preserves archivedAt', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'archived-proj', label: 'Archived' });
+  await call(runtime, 'POST', BRIDGE_PROJECTS_PATH + '/archived-proj/archive');
+
+  const patchRes = await call(runtime, 'PATCH', BRIDGE_PROJECTS_PATH + '/archived-proj', {
+    label: 'Still Archived',
+  });
+  assert.equal(patchRes.statusCode, 200);
+  assert.equal(patchRes.payload.project.label, 'Still Archived');
+  assert.ok(patchRes.payload.project.archivedAt, 'archivedAt should survive PATCH');
+
+  const listRes = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH);
+  const visible = listRes.payload.projects.some(p => p.project.key === 'archived-proj');
+  assert.equal(visible, false, 'archived project hidden from default listing');
+
+  const includeRes = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH, undefined,
+    new URLSearchParams('includeArchived=true'));
+  const inArchiveList = includeRes.payload.projects.some(p => p.project.key === 'archived-proj');
+  assert.equal(inArchiveList, true, 'archived project visible with includeArchived=true');
+});

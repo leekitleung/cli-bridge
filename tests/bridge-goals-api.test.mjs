@@ -585,3 +585,107 @@ test('bridge path returns 405 for unregistered method on recognized path', async
   const res = await handleBridgeRequest(runtime, 'PUT', BRIDGE_GOALS_PATH, jsonRequest());
   assert.equal(res.statusCode, 405);
 });
+
+// ════════════════════════════════════════════════════════════════════
+// §P1 code-review regression tests
+// ════════════════════════════════════════════════════════════════════
+
+test('goal-plan command config includes claude review-only safety args', async () => {
+  // Capture the actual command execution to assert safety argv.
+  let capturedArgs = null;
+  const runtime = createBridgeRuntime({
+    goalPlanCommandOptions: {
+      runner: {
+        async run(execution) {
+          capturedArgs = [...execution.args];
+          return okRun(validPlanJson('goal-safety'));
+        },
+      },
+      launcherResolver: fakeLauncherResolver,
+    },
+  });
+
+  // Create a goal and generate a plan.
+  const createRes = await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PATH, jsonRequest({
+    sessionId: 'safety-test',
+    description: 'Safety args test',
+  }));
+  const goalId = createRes.payload.goal.id;
+
+  await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PLAN_PATH, jsonRequest({
+    goalId,
+  }));
+
+  assert.ok(capturedArgs, 'command args should have been captured');
+  assert.ok(capturedArgs.includes('--tools'), 'should include --tools flag');
+  assert.ok(capturedArgs.includes('--disallowed-tools'), 'should include --disallowed-tools flag');
+  assert.ok(capturedArgs.includes('--permission-mode'), 'should include --permission-mode flag');
+  assert.ok(capturedArgs.includes('plan'), 'should set permission mode to plan');
+  assert.ok(capturedArgs.includes('--no-session-persistence'), 'should disable session persistence');
+});
+
+test('POST /bridge/goals/plan rejects cwd from request body', async () => {
+  const runtime = createBridgeRuntime();
+  // Create a goal first.
+  const createRes = await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PATH, jsonRequest({
+    sessionId: 'cwd-reject',
+    description: 'CWD should be rejected from body',
+  }));
+  const goalId = createRes.payload.goal.id;
+
+  const res = await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PLAN_PATH, jsonRequest({
+    goalId,
+    cwd: '/tmp/evil',
+  }));
+  assert.equal(res.statusCode, 400);
+  assert.ok(
+    res.payload.message.includes('cwd'),
+    `expected cwd rejection; got: ${JSON.stringify(res.payload)}`,
+  );
+});
+
+test('goal plan with 11 steps rejected at parse time (ADR-0003 hard ceiling=10)', async () => {
+  // Build a plan JSON with 11 non-mutating review steps — exceeds ADR-0003 hard ceiling of 10.
+  function bigPlanBuilder(goalId) {
+    const steps = [];
+    for (let i = 0; i < 11; i += 1) {
+      steps.push({
+        id: `step-${i}`,
+        planId: `plan-${goalId}`,
+        index: i,
+        intent: `Review item ${i}`,
+        kind: 'review',
+        targetEndpointId: 'claude-code-command',
+        tier: 'patch-proposal',
+        isStateMutating: false,
+        status: 'pending',
+      });
+    }
+    return JSON.stringify({
+      id: `plan-${goalId}`,
+      goalId,
+      status: 'awaiting-approval',
+      permittedTiers: ['patch-proposal'],
+      steps,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const runtime = runtimeWithDynamicPlan(bigPlanBuilder);
+
+  const createRes = await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PATH, jsonRequest({
+    sessionId: 'ceiling-test',
+    description: 'Too many steps',
+  }));
+  const goalId = createRes.payload.goal.id;
+
+  const res = await handleBridgeRequest(runtime, 'POST', BRIDGE_GOALS_PLAN_PATH, jsonRequest({
+    goalId,
+  }));
+  assert.equal(res.statusCode, 409, '11-step plan should be rejected at parse time');
+  assert.ok(
+    res.payload.message.includes('step-ceiling-exceeded'),
+    `expected step-ceiling-exceeded; got: ${JSON.stringify(res.payload)}`,
+  );
+});

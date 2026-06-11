@@ -5,6 +5,7 @@ import type {
 
 import { MockAgentAdapter } from '../adapters/MockAgentAdapter.ts';
 import {
+  CLAUDE_REVIEW_ARGS,
   createClaudeReviewCommandAdapter,
   createCodexReviewCommandAdapter,
   type CommandReviewAdapter,
@@ -21,6 +22,13 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
 import type { CommandRunOptions } from '../adapters/command-runner.ts';
+import {
+  buildConversationTimeline,
+  buildProjectAuditView,
+  buildDerivedMemory,
+  buildHarnessVerification,
+  type ObservabilityInput,
+} from '../project-observability/builders.ts';
 import {
   buildSnapshot,
   JsonSnapshotStore,
@@ -57,13 +65,14 @@ const REVIEW_COMMAND_ADAPTERS: Record<string, () => CommandReviewAdapter> = {
   'codex-command': createCodexReviewCommandAdapter,
 };
 
-// Default command config for goal→plan generation. Production routes
-// through the same review-only CLI that the review endpoints use; tests
-// override it via BridgeRuntimeOptions.goalPlanCommandOptions.
+// Default command config for goal→plan generation. Uses the SAME safety argv
+// as the existing Claude review-only adapter: all tools disabled, plan permission
+// mode, no session persistence. The prompt is passed via stdin, never
+// interpolated into argv.
 const DEFAULT_GOAL_PLAN_COMMAND_CONFIG: GeneratePlanInput['commandConfig'] = {
   adapterName: 'goal-plan-generator',
   command: 'claude',
-  argv: ['-p', '--output-format', 'json'],
+  argv: [...CLAUDE_REVIEW_ARGS],
 };
 
 export interface BridgeRuntime {
@@ -365,6 +374,65 @@ function projectActionPathKey(
   return { matched: true, key: decoded ? (validateProjectKey(decoded) ?? undefined) : undefined };
 }
 
+/** Gathers all project-scoped data into an ObservabilityInput for the builders. */
+function buildObservabilityInput(
+  runtime: BridgeRuntime,
+  projectKey: string,
+): ObservabilityInput | undefined {
+  const summary = buildProjectSummaries(runtime).find(s => s.project.key === projectKey);
+  if (!summary) return undefined;
+
+  const goals = runtime.goalStore.listGoals()
+    .filter(g => projectMatches({ projectId: g.projectId }, projectKey))
+    .map(g => ({
+      id: g.id, projectId: g.projectId, description: g.description,
+      status: g.status, createdAt: g.createdAt, updatedAt: g.updatedAt,
+    }));
+
+  const plans = goals
+    .map(g => runtime.goalStore.getPlanByGoal(g.id))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map(p => ({
+      id: p.id, goalId: p.goalId,
+      steps: p.steps.map(s => ({
+        id: s.id, index: s.index, intent: s.intent, kind: s.kind,
+        status: s.status, isStateMutating: s.isStateMutating,
+      })),
+      status: p.status,
+    }));
+
+  const reviews = runtime.pendingReviewStore.list()
+    .filter(r => projectMatches({ projectId: r.projectId }, projectKey))
+    .map(r => ({
+      id: r.id, packetId: r.packetId, projectId: r.projectId, prompt: r.prompt,
+      status: r.status, createdAt: r.createdAt, updatedAt: r.updatedAt,
+    }));
+
+  const pendingPrompts = runtime.pendingPromptStore.listPrompts()
+    .filter(p => projectMatches({ projectId: p.projectId }, projectKey))
+    .map(p => ({
+      packetId: p.packetId, projectId: p.projectId, prompt: p.prompt,
+      status: p.status, createdAt: p.createdAt,
+    }));
+
+  const scopedRecordIds = new Set<string>();
+  for (const g of goals) scopedRecordIds.add(g.id);
+  for (const r of reviews) scopedRecordIds.add(r.packetId);
+  for (const p of pendingPrompts) scopedRecordIds.add(p.packetId);
+  const auditEvents = runtime.auditLog.listEvents()
+    .filter(e => {
+      if (e.projectId) return e.projectId === projectKey;
+      return e.packetId ? scopedRecordIds.has(e.packetId) : false;
+    })
+    .map(e => ({
+      id: e.id, projectId: e.projectId, type: e.type,
+      source: e.source, target: e.target, timestamp: e.timestamp,
+      ok: e.result?.ok,
+    }));
+
+  return { projectId: projectKey, goals, plans, reviews, pendingPrompts, auditEvents };
+}
+
 export async function readJsonBody(request: IncomingMessage): Promise<
   { ok: true; body: Record<string, unknown> } | { ok: false; message: string }
 > {
@@ -422,6 +490,36 @@ export const BRIDGE_GOALS_APPROVE_PATH = '/bridge/goals/approve';
 export const BRIDGE_GOALS_STEP_PATH = '/bridge/goals/step';
 export const BRIDGE_GOALS_GATE_PATH = '/bridge/goals/gate';
 export const BRIDGE_GOALS_CANCEL_PATH = '/bridge/goals/cancel';
+
+// v2.1 Read-only project observability endpoints.
+export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
+export const BRIDGE_PROJECT_AUDIT_SUFFIX = '/audit';
+export const BRIDGE_PROJECT_MEMORY_SUFFIX = '/memory';
+export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
+
+  /** Matches /bridge/projects/:key/{timeline|audit|memory|verification}. */
+function matchProjectObservabilityPath(pathname: string): {
+  matched: true; key: string | undefined; sub: string;
+} | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  for (const sub of [BRIDGE_PROJECT_TIMELINE_SUFFIX, BRIDGE_PROJECT_AUDIT_SUFFIX,
+    BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX]) {
+    if (rest.endsWith(sub)) {
+      const raw = rest.slice(0, -sub.length);
+      if (raw.length === 0 || raw.includes('/')) continue;
+      let decoded: string | undefined;
+      try { decoded = decodeURIComponent(raw); } catch {
+        // Malformed encoding — treat as matched but invalid key → 400.
+        return { matched: true, key: undefined, sub };
+      }
+      const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
+      return { matched: true, key, sub };
+    }
+  }
+  return { matched: false };
+}
 
 export function isBridgePath(pathname: string): boolean {
   return pathname === BRIDGE_PACKETS_PATH ||
@@ -563,6 +661,7 @@ export async function handleBridgeRequest(
       transport: 'clipboard',
       projectId: projectId ?? undefined,
     });
+    if (projectId) runtime.projectStore.upsert({ key: projectId });
     runtime.persist();
     return created({ pendingPrompt });
   }
@@ -668,6 +767,7 @@ export async function handleBridgeRequest(
         prompt,
         projectId: projectId ?? undefined,
       });
+      if (projectId) runtime.projectStore.upsert({ key: projectId });
     } catch {
       return error(400, 'Unable to create review for the given endpoints');
     }
@@ -852,6 +952,46 @@ export async function handleBridgeRequest(
     return ok({ project: unarchived });
   }
 
+  // ── v2.1 Read-only project observability (§timeline/audit/memory/verification) ──
+
+  const obsPath = matchProjectObservabilityPath(pathname);
+  if (obsPath.matched && method === 'GET') {
+    if (!obsPath.key) return error(400, 'Invalid project key');
+    const obsInput = buildObservabilityInput(runtime, obsPath.key);
+    if (!obsInput) return error(404, 'Project not found');
+
+    if (obsPath.sub === BRIDGE_PROJECT_TIMELINE_SUFFIX) {
+      return ok(buildConversationTimeline(obsInput));
+    }
+    if (obsPath.sub === BRIDGE_PROJECT_AUDIT_SUFFIX) {
+      const rawLimit = query?.get('limit');
+      let limit: number | undefined;
+      if (typeof rawLimit === 'string' && rawLimit.length > 0) {
+        const parsed = Number(rawLimit);
+        // Reject non-integer, trailing garbage, and out-of-range values.
+        if (!Number.isInteger(parsed) || String(parsed) !== rawLimit || parsed < 1) {
+          return error(400, 'Invalid limit parameter');
+        }
+        limit = parsed;
+      }
+      const rawType = query?.get('type');
+      const type = typeof rawType === 'string' && rawType.length > 0
+        ? rawType : undefined;
+      if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+        return error(400, 'Invalid limit parameter');
+      }
+      return ok(buildProjectAuditView(obsInput, limit, type));
+    }
+    if (obsPath.sub === BRIDGE_PROJECT_MEMORY_SUFFIX) {
+      return ok(buildDerivedMemory(obsInput));
+    }
+    if (obsPath.sub === BRIDGE_PROJECT_VERIFICATION_SUFFIX) {
+      return ok(buildHarnessVerification(obsInput));
+    }
+    return error(404, 'Not found');
+  }
+  if (obsPath.matched) return error(405, 'Method not allowed');
+
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
 
   if (pathname === BRIDGE_GOALS_PATH && method === 'GET') {
@@ -885,6 +1025,7 @@ export async function handleBridgeRequest(
       }
     }
     const goal = runtime.goalStore.createGoal({ sessionId, description, projectId: projectId ?? undefined });
+    if (projectId) runtime.projectStore.upsert({ key: projectId });
     runtime.persist();
     return created({ goal });
   }
@@ -898,7 +1039,11 @@ export async function handleBridgeRequest(
     if (!goalId) {
       return error(400, 'goalId is required');
     }
-    const cwd = requireString(parsed.body, 'cwd');
+    // cwd MUST NOT come from untrusted request input (command-runner §safety).
+    // Reject the field if present; the server uses its own working directory.
+    if ('cwd' in parsed.body) {
+      return error(400, 'cwd must not be set from request input');
+    }
     const availableEndpoints = Array.isArray(parsed.body.availableEndpoints)
       ? (parsed.body.availableEndpoints as string[]).filter(
         (v: unknown) => typeof v === 'string' && v.length > 0,
@@ -915,7 +1060,7 @@ export async function handleBridgeRequest(
       {
         goalId,
         commandConfig: DEFAULT_GOAL_PLAN_COMMAND_CONFIG,
-        cwd: cwd ?? undefined,
+        cwd: process.cwd(),
         availableEndpoints,
         permittedTiers: permittedTiers as GeneratePlanInput['permittedTiers'],
         commandOptions: runtime.goalPlanCommandOptions,
