@@ -413,11 +413,11 @@ test('POST /teams/:teamId/cancel cancels a pending team', async () => {
   assert.equal(res.payload.team.status, 'cancelled');
 });
 
-test('approve non-existent team returns 409', async () => {
+test('approve non-existent team returns 404', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/no-such/approve');
-  assert.equal(res.statusCode, 409);
+  assert.equal(res.statusCode, 404);
 });
 
 test('approve archived project team returns 409', async () => {
@@ -434,4 +434,49 @@ test('approve archived project team returns 409', async () => {
   runtime.projectStore.archive('arch-team');
   const res = await call(runtime, 'POST', TEAMS('arch-team') + '/t-arch/approve');
   assert.equal(res.statusCode, 409);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Cross-project isolation: approve/cancel must check team.projectId
+// ════════════════════════════════════════════════════════════════════
+
+test('alpha path cannot approve beta team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+  const gb = await seedApprovedGoalPlan(runtime, 'beta');
+  if (!gb) { assert.fail('seed failed'); return; }
+
+  // Create team in beta project
+  await call(runtime, 'POST', TEAMS('beta'), {
+    action: 'create', id: 'team-beta', goalId: gb.goalId, planId: gb.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  // Try to approve beta's team via alpha project path
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/team-beta/approve');
+  assert.equal(res.statusCode, 404);
+  // Verify beta team was NOT approved
+  assert.equal(runtime.teamStore.get('team-beta').status, 'pending-approval');
+});
+
+test('alpha path cannot cancel beta team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+  const gb = await seedApprovedGoalPlan(runtime, 'beta');
+  if (!gb) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('beta'), {
+    action: 'create', id: 'team-beta2', goalId: gb.goalId, planId: gb.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/team-beta2/cancel');
+  assert.equal(res.statusCode, 404);
+  assert.equal(runtime.teamStore.get('team-beta2').status, 'pending-approval');
 });

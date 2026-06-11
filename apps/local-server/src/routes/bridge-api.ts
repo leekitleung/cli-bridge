@@ -1331,6 +1331,10 @@ export async function handleBridgeRequest(
     const proj = runtime.projectStore.get(teamMatch.key);
     if (!proj) return error(404, 'Project not found');
     if (proj.archivedAt) return error(409, 'Project is archived');
+    // Team must belong to the URL project.
+    const existing = runtime.teamStore.get(teamMatch.teamId);
+    if (!existing) return error(404, 'Team not found');
+    if (existing.projectId !== teamMatch.key) return error(404, 'Team not found');
     const team = teamMatch.sub === 'approve'
       ? runtime.teamStore.approve(teamMatch.teamId)
       : runtime.teamStore.cancel(teamMatch.teamId);
