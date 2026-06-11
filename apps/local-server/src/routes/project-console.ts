@@ -372,8 +372,9 @@ async function refreshAll() {
     api(base + '/memory'),
     api(base + '/verification'),
     api(base + '/workbuddy'),
+    api(base + '/teams'),
   ]);
-  const [prR, deR, tiR, auR, meR, veR, wbR] = results;
+  const [prR, deR, tiR, auR, meR, veR, wbR, tsR] = results;
   if (prR.status === 'fulfilled' && prR.value.ok) store.cache.projects = prR.value.data.projects || [];
   if (deR.status === 'fulfilled' && deR.value.ok) store.cache.detail = deR.value.data;
   if (tiR.status === 'fulfilled' && tiR.value.ok) store.cache.timeline = tiR.value.data;
@@ -381,6 +382,7 @@ async function refreshAll() {
   if (meR.status === 'fulfilled' && meR.value.ok) store.cache.memory = meR.value.data;
   if (veR.status === 'fulfilled' && veR.value.ok) store.cache.verification = veR.value.data;
   if (wbR.status === 'fulfilled' && wbR.value.ok) store.cache.workbuddy = wbR.value.data;
+  if (tsR.status === 'fulfilled' && tsR.value.ok) store.cache.teams = tsR.value.data;
   renderAll();
 }
 

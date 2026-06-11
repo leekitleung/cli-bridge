@@ -115,22 +115,42 @@ export interface BridgeRuntimeOptions {
 }
 
 
-/** Matches /bridge/projects/:key/teams (exact path only). */
+/** Matches /bridge/projects/:key/teams and /bridge/projects/:key/teams/:teamId/{approve|cancel}. */
 function matchProjectTeamPath(pathname: string): {
-  matched: true; key: string | undefined;
+  matched: true; key: string | undefined; sub: '' | 'approve' | 'cancel'; teamId?: string;
 } | { matched: false } {
   const prefix = BRIDGE_PROJECTS_PATH + '/';
   if (!pathname.startsWith(prefix)) return { matched: false };
   const rest = pathname.slice(prefix.length);
-  // Expect: :key/teams — key has no slashes, ends with /teams
+  // Check sub-actions: :key/teams/:teamId/approve or :key/teams/:teamId/cancel
+  for (const action of ['approve', 'cancel'] as const) {
+    const actionSuffix = '/teams/';
+    const idx = rest.indexOf(actionSuffix);
+    if (idx !== -1) {
+      const raw = rest.slice(0, idx);
+      if (raw.length === 0 || raw.includes('/')) continue;
+      const remaining = rest.slice(idx + actionSuffix.length);
+      const slashIdx = remaining.lastIndexOf('/' + action);
+      if (slashIdx !== -1 && remaining === remaining.slice(0, slashIdx) + '/' + action) {
+        const teamId = remaining.slice(0, slashIdx);
+        if (teamId.length === 0) continue;
+        try {
+          const decoded = decodeURIComponent(raw);
+          const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
+          return { matched: true, key, sub: action, teamId: decodeURIComponent(teamId) };
+        } catch { return { matched: true, key: undefined, sub: action, teamId }; }
+      }
+    }
+  }
+  // Basic /teams path: :key/teams or :key/teams (exact)
   if (!rest.endsWith('/teams')) return { matched: false };
-  const raw = rest.slice(0, -6); // remove '/teams'
+  const raw = rest.slice(0, -6);
   if (raw.length === 0 || raw.includes('/')) return { matched: false };
   try {
     const decoded = decodeURIComponent(raw);
     const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
-    return { matched: true, key };
-  } catch { return { matched: true, key: undefined }; }
+    return { matched: true, key, sub: '' };
+  } catch { return { matched: true, key: undefined, sub: '' }; }
 }
 
 async function handleTeamsPost(
@@ -162,6 +182,24 @@ async function handleTeamsPost(
   if (!plan) return error(400, 'Plan not found for goal');
   if (plan.status !== 'approved') return error(400, 'Plan must be approved');
   if (plan.goalId !== goal.id) return error(400, 'Plan does not belong to goal');
+
+  // planId must match the actual approved plan
+  const bodyPlanId = body.planId;
+  if (typeof bodyPlanId !== 'string' || bodyPlanId !== plan.id) {
+    return error(400, 'planId must match the approved plan for this goal');
+  }
+
+  // Validate stepIndex range against actual plan steps
+  const logicalSlots = body.logicalSlots as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(logicalSlots)) {
+    for (let i = 0; i < logicalSlots.length; i++) {
+      const slot = logicalSlots[i];
+      const idx = slot?.stepIndex;
+      if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= plan.steps.length) {
+        return error(400, `logicalSlots[${i}].stepIndex out of range (0..${plan.steps.length - 1})`);
+      }
+    }
+  }
 
   try {
     const team = runtime.teamStore.create({
@@ -1277,15 +1315,28 @@ export async function handleBridgeRequest(
   // ── v2.3 AgentTeam Sequential MVP ─────────────────────────────────
 
   const teamMatch = matchProjectTeamPath(pathname);
-  if (teamMatch.matched && method === 'GET') {
+  if (teamMatch.matched && method === 'GET' && teamMatch.sub === '') {
     if (!teamMatch.key) return error(400, 'Invalid project key');
     const proj = runtime.projectStore.get(teamMatch.key);
     if (!proj) return error(404, 'Project not found');
     return ok({ teams: runtime.teamStore.listByProject(teamMatch.key) });
   }
-  if (teamMatch.matched && method === 'POST') {
+  if (teamMatch.matched && method === 'POST' && teamMatch.sub === '') {
     if (!teamMatch.key) return error(400, 'Invalid project key');
     return handleTeamsPost(runtime, teamMatch.key, request);
+  }
+  // Approve / cancel sub-routes
+  if (teamMatch.matched && method === 'POST' && (teamMatch.sub === 'approve' || teamMatch.sub === 'cancel')) {
+    if (!teamMatch.key || !teamMatch.teamId) return error(400, 'Invalid project key or team id');
+    const proj = runtime.projectStore.get(teamMatch.key);
+    if (!proj) return error(404, 'Project not found');
+    if (proj.archivedAt) return error(409, 'Project is archived');
+    const team = teamMatch.sub === 'approve'
+      ? runtime.teamStore.approve(teamMatch.teamId)
+      : runtime.teamStore.cancel(teamMatch.teamId);
+    if (!team) return error(409, teamMatch.sub === 'approve' ? 'Team not found or not pending approval' : 'Team not found or not cancellable');
+    runtime.persist();
+    return ok({ team });
   }
   if (teamMatch.matched) return error(405, 'Method not allowed');
 

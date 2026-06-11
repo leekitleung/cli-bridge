@@ -54,7 +54,7 @@ test('POST /bridge/projects/:key/teams creates a valid TeamSpec', async () => {
   if (!g) { assert.fail('seed failed'); return; }
 
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 'team-1', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 'team-1', goalId: g.goalId, planId: g.planId,
     logicalSlots: [
       { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
       { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
@@ -84,7 +84,7 @@ test('reject maxConcurrentBridgeSlots > 1', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's2');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 2, mode: 'sequential', isolation: 'patch-only',
     provider: 'claude', endpointId: 'claude-code-command',
@@ -98,7 +98,7 @@ test('reject mode !== sequential', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's3');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 1, mode: 'parallel', isolation: 'patch-only',
     provider: 'claude', endpointId: 'claude-code-command',
@@ -112,7 +112,7 @@ test('reject isolation !== patch-only', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's4');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'worktree' }],
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'worktree',
     provider: 'claude', endpointId: 'claude-code-command',
@@ -126,7 +126,7 @@ test('reject WorkBuddy as executor', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's5');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
     provider: 'workbuddy', endpointId: 'workbuddy-connector',
@@ -141,7 +141,7 @@ test('accept logicalSlots > 1 with maxConcurrentBridgeSlots = 1', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's6');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-multi', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-multi', goalId: g.goalId, planId: g.planId,
     logicalSlots: [
       { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
       { id: 's1', role: 'executor', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
@@ -209,7 +209,7 @@ test('approve and cancel team lifecycle', async () => {
 
   // Create
   await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-life', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-life', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
     provider: 'claude', endpointId: 'claude-code-command',
@@ -233,7 +233,7 @@ test('slot progression: sequential order', async () => {
   if (!g) return;
 
   await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-seq', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-seq', goalId: g.goalId, planId: g.planId,
     logicalSlots: [
       { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
       { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
@@ -264,7 +264,7 @@ test('failed slot stops team', async () => {
   if (!g) return;
 
   await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-fail', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-fail', goalId: g.goalId, planId: g.planId,
     logicalSlots: [
       { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
       { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
@@ -326,7 +326,7 @@ test('Slot artifact recording', async () => {
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 'sa-art');
   if (!g) return;
   await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-art', goalId: g.goalId, planId: g.goalId,
+    action: 'create', id: 't-art', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
     provider: 'claude', endpointId: 'claude-code-command',
@@ -339,4 +339,99 @@ test('Slot artifact recording', async () => {
   const artifacts = runtime.teamStore.listArtifacts('t-art');
   assert.equal(artifacts.length, 1);
   assert.equal(artifacts[0].summary, 'Patched auth');
+});
+
+// ════════════════════════════════════════════════════════════════════
+// planId mismatch + stepIndex range
+// ════════════════════════════════════════════════════════════════════
+
+test('reject planId that does not match approved plan', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-planid', goalId: g.goalId, planId: 'wrong-plan-id',
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('planId'));
+});
+
+test('reject stepIndex out of plan steps range', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-stepout', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 99, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('stepIndex'));
+});
+
+// ════════════════════════════════════════════════════════════════════
+// HTTP approve / cancel endpoints
+// ════════════════════════════════════════════════════════════════════
+
+test('POST /teams/:teamId/approve approves a pending team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+  // Create team
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-approve', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  // Approve
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-approve/approve');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.team.status, 'approved');
+});
+
+test('POST /teams/:teamId/cancel cancels a pending team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-cancel', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-cancel/cancel');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.team.status, 'cancelled');
+});
+
+test('approve non-existent team returns 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/no-such/approve');
+  assert.equal(res.statusCode, 409);
+});
+
+test('approve archived project team returns 409', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'arch-team' });
+  const g = await seedApprovedGoalPlan(runtime, 'arch-team');
+  if (!g) { assert.fail('seed failed'); return; }
+  await call(runtime, 'POST', TEAMS('arch-team'), {
+    action: 'create', id: 't-arch', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  runtime.projectStore.archive('arch-team');
+  const res = await call(runtime, 'POST', TEAMS('arch-team') + '/t-arch/approve');
+  assert.equal(res.statusCode, 409);
 });
