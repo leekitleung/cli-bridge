@@ -112,6 +112,9 @@ export class InMemoryTeamSpecStore {
     if (nextStatus === 'failed') {
       t.status = 'failed';
     }
+    if (nextStatus === 'cancelled') {
+      t.status = 'cancelled';
+    }
     if (t.logicalSlots.every(s => s.status === 'done')) {
       t.status = 'done';
     }

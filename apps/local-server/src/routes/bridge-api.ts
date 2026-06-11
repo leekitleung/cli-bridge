@@ -155,10 +155,10 @@ function matchProjectTeamPath(pathname: string): {
     // remaining = "teamId/slots/slotId/advance"
     const parts = remaining.split('/');
     if (parts.length !== 4 || parts[1] !== 'slots' || parts[3] !== 'advance') return null;
-    const teamId = decodeURIComponent(parts[0]);
-    const slotId = decodeURIComponent(parts[2]);
-    if (teamId.length === 0 || slotId.length === 0) return null;
     try {
+      const teamId = decodeURIComponent(parts[0]);
+      const slotId = decodeURIComponent(parts[2]);
+      if (teamId.length === 0 || slotId.length === 0) return null;
       const decodedKey = decodeURIComponent(raw);
       const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
       return { key, teamId, slotId };
@@ -302,20 +302,30 @@ async function handleArtifactPost(
   // Validate required fields.
   const slotId = body.slotId;
   if (typeof slotId !== 'string' || slotId.length === 0) return error(400, 'slotId is required');
-  const planStepId = body.planStepId;
-  if (typeof planStepId !== 'string' || planStepId.length === 0) return error(400, 'planStepId is required');
-  const summary = body.summary;
-  if (typeof summary !== 'string' || summary.trim().length === 0) return error(400, 'summary is required');
-
-  // Slot must belong to this team.
   const slot = team.logicalSlots.find(s => s.id === slotId);
   if (!slot) return error(400, 'slotId does not belong to this team');
+
+  // planStepId must match the slot's stepIndex in the approved plan.
+  const plan = runtime.goalStore.getPlanByGoal(team.goalId);
+  if (!plan) return error(400, 'Plan not found for team goal');
+  const expectedPlanStepId = plan.steps?.[slot.stepIndex]?.id;
+  if (!expectedPlanStepId) return error(400, 'Plan step not found for slot stepIndex ' + slot.stepIndex);
+  const planStepId = body.planStepId;
+  if (typeof planStepId === 'string' && planStepId.length > 0) {
+    if (planStepId !== expectedPlanStepId) return error(400, 'planStepId does not match slot stepIndex in plan');
+  } else if (typeof planStepId !== 'string' || planStepId.length === 0) {
+    // Auto-fill from plan when omitted/empty — caller cannot supply a fake value.
+  }
+  const resolvedPlanStepId = typeof planStepId === 'string' && planStepId.length > 0 ? planStepId : expectedPlanStepId;
+
+  const summary = body.summary;
+  if (typeof summary !== 'string' || summary.trim().length === 0) return error(400, 'summary is required');
 
   // Build artifact.
   const artifact: Record<string, unknown> = {
     teamId,
     slotId,
-    planStepId,
+    planStepId: resolvedPlanStepId,
     summary,
     proposedFiles: Array.isArray(body.proposedFiles) ? body.proposedFiles.filter((f: unknown) => typeof f === 'string') : [],
     outputRedacted: typeof body.outputRedacted === 'boolean' ? body.outputRedacted : false,
@@ -342,7 +352,7 @@ async function handleArtifactPost(
     target: 'team-' + teamId,
     teamId,
     slotId,
-    planStepId,
+    planStepId: resolvedPlanStepId,
     result: { ok: true },
   });
 
@@ -394,7 +404,7 @@ async function handleSlotAdvancePost(
   // Status must be one of the valid slot statuses.
   const nextStatus = body.status;
   if (typeof nextStatus !== 'string') return error(400, 'status is required');
-  const allowed = ['ready', 'executing', 'done', 'failed', 'cancelled'] as const;
+  const allowed = ['ready', 'executing', 'blocked-needs-gate', 'done', 'failed', 'cancelled'] as const;
   if (!(allowed as readonly string[]).includes(nextStatus)) {
     return error(400, 'status must be one of: ' + allowed.join(', '));
   }
@@ -431,14 +441,14 @@ async function handleSlotAdvancePost(
     if (alreadyExecuting) return error(409, 'A slot is already executing');
   }
 
-  // Transition team to executing if approving first slot.
+  // Transition team to executing if needed, and audit slot_started only on executing.
   if (team.status === 'approved') {
     const setExec = runtime.teamStore.setExecuting(teamId);
     if (!setExec) return error(409, 'Cannot transition team to executing');
-    // Resolve planStepId from stepIndex for audit.
+  }
+  if (nextStatus === 'executing') {
     const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
     const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
-    // Audit slot_started on transition to executing.
     runtime.auditLog.createAndAppend({
       sessionId: 'slot-start-' + teamId + '-' + slotId,
       projectId: projectKey,
@@ -458,27 +468,24 @@ async function handleSlotAdvancePost(
 
   runtime.persist();
 
-  // Resolve planStepId for audit.
-  const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
-  const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
+  // Only write terminal audit for done/failed/gated; ready/executing are intermediate states.
+  if (nextStatus === 'done' || nextStatus === 'failed' || nextStatus === 'blocked-needs-gate') {
+    const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
+    const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
+    const auditType = nextStatus === 'done' ? 'slot_done' : nextStatus === 'failed' ? 'slot_failed' : 'slot_gated';
 
-  // Audit the slot lifecycle event.
-  let auditType: 'slot_done' | 'slot_failed' | 'slot_gated';
-  if (nextStatus === 'done') auditType = 'slot_done';
-  else if (nextStatus === 'failed') auditType = 'slot_failed';
-  else auditType = 'slot_gated';
-
-  runtime.auditLog.createAndAppend({
-    sessionId: 'slot-' + nextStatus + '-' + teamId + '-' + slotId,
-    projectId: projectKey,
-    type: auditType,
-    source: 'team-orchestrator',
-    target: 'team-' + teamId,
-    teamId,
-    slotId,
-    planStepId: pStepId,
-    result: { ok: true },
-  });
+    runtime.auditLog.createAndAppend({
+      sessionId: 'slot-' + nextStatus + '-' + teamId + '-' + slotId,
+      projectId: projectKey,
+      type: auditType,
+      source: 'team-orchestrator',
+      target: 'team-' + teamId,
+      teamId,
+      slotId,
+      planStepId: pStepId,
+      result: { ok: true },
+    });
+  }
 
   return ok({ team: updated });
 }

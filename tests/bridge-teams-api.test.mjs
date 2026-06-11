@@ -674,8 +674,9 @@ test('POST /teams/:teamId/artifacts records a valid artifact', async () => {
   });
   await call(runtime, 'POST', TEAMS('alpha') + '/t-art-api/approve');
 
+  // planStepId auto-filled from plan — omit to test auto-fill
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-art-api/artifacts', {
-    slotId: 's0', planStepId: 'ps0',
+    slotId: 's0',
     summary: 'Patched auth module', proposedFiles: ['src/auth.ts'],
     verificationNotes: 'tests pass', outputRedacted: true, createdAt: 200,
   });
@@ -686,6 +687,29 @@ test('POST /teams/:teamId/artifacts records a valid artifact', async () => {
   // Verify artifact in store
   const artifacts = runtime.teamStore.listArtifacts('t-art-api');
   assert.equal(artifacts.length, 1);
+});
+
+test('POST /teams/:teamId/artifacts rejects mismatched planStepId', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-planstep-mismatch', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-planstep-mismatch/approve');
+
+  // Supply a fake planStepId not matching the actual plan step.
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-planstep-mismatch/artifacts', {
+    slotId: 's0', planStepId: 'wrong-id',
+    summary: 'Done', proposedFiles: [], outputRedacted: true, createdAt: 1,
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('planStepId'));
 });
 
 test('POST /teams/:teamId/artifacts rejects unredacted raw output', async () => {
@@ -702,8 +726,9 @@ test('POST /teams/:teamId/artifacts rejects unredacted raw output', async () => 
   });
   await call(runtime, 'POST', TEAMS('alpha') + '/t-raw/approve');
 
+  // planStepId omitted — auto-fills; but rawProviderOutput without outputRedacted should still fail.
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-raw/artifacts', {
-    slotId: 's0', planStepId: 'ps0',
+    slotId: 's0',
     summary: 'Done', proposedFiles: ['src/x.ts'],
     rawProviderOutput: 'sensitive data', outputRedacted: false, createdAt: 1,
   });
@@ -768,15 +793,18 @@ test('POST /teams/:teamId/artifacts writes artifact_recorded audit', async () =>
   });
   await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-art/approve');
 
+  // planStepId auto-filled, sends correct value
   await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-art/artifacts', {
-    slotId: 's0', planStepId: 'ps0',
+    slotId: 's0',
     summary: 'Done', proposedFiles: ['src/auth.ts'], outputRedacted: true, createdAt: 1,
   });
 
   const event = runtime.auditLog.exportEvents().find(e => e.teamId === 't-aud-art' && e.type === 'artifact_recorded');
   assert.ok(event, 'should emit artifact_recorded audit event');
   assert.equal(event.slotId, 's0');
-  assert.equal(event.planStepId, 'ps0');
+  // planStepId is derived from plan — not a fake value
+  assert.equal(typeof event.planStepId, 'string');
+  assert.ok(event.planStepId.length > 0);
   assert.equal(event.projectId, 'alpha');
 });
 
@@ -994,8 +1022,10 @@ test('POST /slots/:slotId/advance writes slot audit events', async () => {
   });
   await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-slot/approve');
 
-  // Advance to done (first advance auto-transitions to executing, triggers slot_started)
-  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-slot/slots/s0/advance', { status: 'done' });
+  // Advance to executing (triggers slot_started), then to done (triggers slot_done).
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-slot/slots/s0/advance', { status: 'executing' });
+  assert.equal(res.statusCode, 200);
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-aud-slot/slots/s0/advance', { status: 'done' });
   assert.equal(res.statusCode, 200);
 
   const events = runtime.auditLog.exportEvents().filter(e => e.teamId === 't-aud-slot');
@@ -1042,4 +1072,82 @@ test('POST /slots/:slotId/advance rejects cross-project', async () => {
 
   const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-beta-slot/slots/s0/advance', { status: 'done' });
   assert.equal(res.statusCode, 404);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// P1/P2 fix coverage: blocked-needs-gate, slot cancelled, malformed ids
+// ════════════════════════════════════════════════════════════════════
+
+test('POST /slots/:slotId/advance blocked-needs-gate writes slot_gated audit', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-gate', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-gate/approve');
+
+  // Advance to executing then blocked-needs-gate
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-gate/slots/s0/advance', { status: 'executing' });
+  assert.equal(res.statusCode, 200);
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-gate/slots/s0/advance', { status: 'blocked-needs-gate' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.team.logicalSlots[0].status, 'blocked-needs-gate');
+
+  const event = runtime.auditLog.exportEvents().find(e => e.teamId === 't-gate' && e.type === 'slot_gated');
+  assert.ok(event, 'should emit slot_gated audit event');
+  assert.equal(event.slotId, 's0');
+});
+
+test('POST /slots/:slotId/advance cancelled slot stops team', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-slot-cancel', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-slot-cancel/approve');
+
+  // Cancel the current slot — team should become cancelled too.
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-slot-cancel/slots/s0/advance', { status: 'cancelled' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.team.status, 'cancelled');
+  assert.equal(res.payload.team.logicalSlots[0].status, 'cancelled');
+
+  // Cannot advance slot 1 on cancelled team
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-slot-cancel/slots/s1/advance', { status: 'done' });
+  assert.equal(res.statusCode, 409);
+});
+
+test('POST /slots/:slotId/advance malformed encoded slotId returns 400', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-mal', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-mal/approve');
+
+  // Use a malformed percent-encoded slotId — should return controlled error, not 500.
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-mal/slots/%ZZ/advance', { status: 'done' });
+  assert.ok(res.statusCode === 400 || res.statusCode === 404 || res.statusCode === 405, 'malformed path should not crash');
+  assert.notEqual(res.statusCode, 500);
 });
