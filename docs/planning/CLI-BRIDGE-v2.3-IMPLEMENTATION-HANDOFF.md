@@ -1,6 +1,6 @@
 # CLI Bridge v2.3 — Implementation Handoff
 
-**Status**: HANFOFF DRAFT — Pending review before implementation branch opens
+**Status**: HANDOFF DRAFT — Pending review before implementation branch opens
 **Date**: 2026-06-11
 **Based on**: `CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md` (v2.3 spike)
 **Spans**: DESIGN ONLY. No implementation code.
