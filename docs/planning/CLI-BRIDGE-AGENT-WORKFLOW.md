@@ -72,7 +72,7 @@ those findings only.
 
 ## Current v2.4a Application
 
-Current sequence:
+Completed sequence:
 
 ```text
 RP-2.4a-1: ADR-0004 senior review
@@ -80,7 +80,11 @@ RP-2.4a-1: ADR-0004 senior review
   -> RP-2.4a-2: v2.4a handoff review
   -> EX-2.4a-2: PlannerModel implementation batch, only after ADR acceptance and handoff approval
   -> REVIEW-2.4a-2: PlannerModel implementation review
+  -> EX-2.4a-3: closeout documentation sync
+  -> EX-2.4a-3b: closeout documentation consistency follow-up
+  -> REVIEW-2.4a-3b: approved
 ```
 
-The v2.4a implementation batch must not start until ADR-0004 is accepted and the
-v2.4a handoff review is approved.
+v2.4a PlannerModel closeout is approved and published in commit `1eb6200`.
+Further v2.4b/v2.5+ work must return to `RP-*` planning before any execution
+batch is authorized.

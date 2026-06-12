@@ -2,7 +2,7 @@
 
 ## 0. Status
 
-Status: V2.3 CLOSEOUT COMPLETE — ADR-0004 ACCEPTED — v2.4a handoff awaiting review (2026-06-12).
+Status: V2.3 CLOSEOUT COMPLETE — ADR-0004 ACCEPTED — v2.4a PlannerModel closeout approved (2026-06-12, `1eb6200`).
 
 The v2.3 feasibility spike (`CLI-BRIDGE-v2.3-SPIKE-AGENTTEAM-FEASIBILITY.md`) has
 concluded; the implementation handoff (`CLI-BRIDGE-v2.3-IMPLEMENTATION-HANDOFF.md`)
@@ -16,7 +16,7 @@ Key decisions:
 - Minimum viable v2.3 scope is implemented: TeamSpec, sequential slot state, patch artifact recording, read-only conflict reporting, audit, and console visibility.
 - Worktree/branch isolation deferred past v2.3. WorkBuddy remains non-executing.
 
-This document remains the architectural reference. The spike is the feasibility artifact; the closeout review is the v2.3 implementation evidence; the post-v2.3 handoff is the next planning gate.
+This document remains the architectural reference. The spike is the feasibility artifact; the v2.3 and v2.4a closeout reviews are the implementation evidence; the post-v2.3 handoff tracks remaining planning gates.
 
 This plan is intentionally **not** a v2.1 implementation baseline. v2.0 must
 first run real Goal -> Plan -> approve -> bounded step progression -> gate ->
@@ -368,18 +368,19 @@ and offline-mode implications.
 
 **Status update (2026-06-12)**: ADR-0004 is ACCEPTED
 (`docs/planning/ADR-0004-model-api-middle-layer.md`). The v2.4a PlannerModel
-implementation handoff is at `docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`
-and is awaiting handoff review before any code. Implementation has NOT begun.
-Track B in the post-v2.3 planning handoff now reflects these statuses.
+implementation is complete and closeout-approved in commit `1eb6200`
+(`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`,
+`docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md`).
+Track B in the post-v2.3 planning handoff now reflects closeout status.
 
-Before implementation, create a dedicated ADR-0004-style decision:
+Before any additional model-role implementation, create a dedicated ADR-style decision:
 
 ```text
 model API in middle layer: yes/no, scope, provider/key handling, billing,
 prompt-injection controls, offline behavior, and non-goals
 ```
 
-If accepted later, the first allowed scope should be minimal and explicit:
+The accepted and implemented v2.4a scope is minimal and explicit:
 
 ```text
 PlannerModel only
@@ -579,9 +580,11 @@ v2.3
   slot capability detection
   patch-proposal fanout
 
-v2.4a (requires ADR for model API)
-  model API planner/critic/arbiter
-  bounded replan and self-iteration
+v2.4a (ADR-0004 accepted; closeout approved)
+  PlannerModel only
+  in-memory user-provided key
+  advisory plan suggestions
+  no gate bypass
 
 v2.4b
   multi-provider AgentTeam

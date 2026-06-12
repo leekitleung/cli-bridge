@@ -64,25 +64,26 @@ Constraints:
 ### Track B — ADR-0004 Model API Decision
 
 **Status update (2026-06-12)**: ADR-0004 ACCEPTED
-(`docs/planning/ADR-0004-model-api-middle-layer.md`). v2.4a handoff drafted
-(`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`), awaiting
-handoff review. No implementation has begun.
+(`docs/planning/ADR-0004-model-api-middle-layer.md`). v2.4a PlannerModel
+implementation is complete and closeout-approved in commit `1eb6200`
+(`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`,
+`docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md`).
 
-Required before v2.4a implementation.
+Track B v2.4a is closed. Any follow-on model role or execution expansion
+requires a new ADR or implementation handoff.
 
-Potential scope if approved later:
-- planner / critic / arbiter model calls
-- bounded replan
-- non-mutating self-iteration
+Implemented v2.4a scope:
+- PlannerModel only.
+- User-provided in-memory key.
+- Advisory plan suggestions with `canExecute=false`.
+- Schema and PolicyEngine validation before display.
 
-This track must first decide:
-- whether the bridge should hold model API credentials;
-- redaction and retention rules for model calls;
-- budget, retry, and failure thresholds;
-- which outputs are advisory vs gate-affecting;
-- how ADR-0003 mutation gates remain binding.
+Remaining future candidates, not authorized by v2.4a:
+- CriticModel / ArbiterModel / ReplannerModel.
+- Bounded replan or self-iteration.
+- Any model output that affects gates without human approval.
 
-No Model API implementation should begin before this ADR is accepted.
+ADR-0003 mutation gates remain binding.
 
 ### Track C — Multi-provider AgentTeam Planning
 
@@ -118,16 +119,17 @@ Post-v2.3 Planning Closeout + Next-slice Selection
 ```
 
 Deliverables:
-- keep v2.3 closeout docs synchronized with review outcome;
+- keep v2.3 and v2.4a closeout docs synchronized with review outcome;
 - choose one next implementation track;
-- create either an implementation handoff for a read-only observability slice or an ADR draft for Model API;
+- create either an implementation handoff for a read-only observability slice,
+  an ADR draft for v2.4b/v2.5+ expansion, or another separately bounded slice;
 - explicitly restate the forbidden list and ADR-0003 invariants.
 
 Recommended implementation order:
 
 1. Finish planning/doc synchronization.
 2. Choose Track A if the next goal is low-risk product polish.
-3. Choose Track B if the next goal is v2.4a capability planning.
+3. Treat Track B v2.4a as closed; choose a new ADR/handoff if expanding model roles.
 4. Choose Track C only after provider/session/failure policy is written.
 5. Keep Track D deferred until there is an approved workspace-isolation ADR.
 
@@ -140,7 +142,7 @@ Recommended implementation order:
 - Real CLI dispatch as an execution provider beyond existing approved boundaries.
 - Auto-apply / auto-commit / auto-push / auto-merge.
 - WorkBuddy executor promotion.
-- Model API / PlannerModel / CriticModel implementation without ADR approval.
+- Any model role beyond v2.4a PlannerModel without separate approval.
 - Scheduler / queue / daemon.
 - Shell / exec / run / command endpoint.
 - Any bypass of ADR-0003 plan approval, step ceiling, per-step gate, audit, or failure-stop behavior.

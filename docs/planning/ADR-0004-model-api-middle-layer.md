@@ -23,11 +23,11 @@ identifies this as Track B — ADR-0004 Model API Decision.
 This ADR decides whether, and under what minimum boundary, model API calls may
 enter the bridge middle layer. It does NOT implement any model API runtime.
 
-## Decision (proposed)
+## Decision
 
 ### 1. Whether the bridge may hold model API credentials
 
-**Proposed**: PERMIT, under strict constraints.
+**Decision**: PERMIT, under strict constraints.
 
 The bridge MAY hold a user-provided API key (OpenAI-compatible endpoint), but
 only under these conditions:
@@ -43,7 +43,7 @@ only under these conditions:
 
 ### 2. Minimum allowed scope
 
-**Proposed**: PlannerModel only, in the first slice.
+**Decision**: PlannerModel only, in the first slice.
 
 The first allowed Model API role is:
 
@@ -60,7 +60,7 @@ ADR or an explicit amendment to ADR-0004 after PlannerModel evidence is gathered
 
 ### 3. canExecute boundary
 
-**Proposed**: Model API endpoints register as `canExecute: false`.
+**Decision**: Model API endpoints register as `canExecute: false`.
 
 Model API calls produce advisory output only. They cannot:
 
@@ -173,16 +173,14 @@ ADR-0004 MUST NOT weaken any ADR-0003 invariant:
 
 ## Consequences
 
-If accepted:
+Accepted consequences:
 
-- A new `ModelProvider` abstraction (interface only — no runtime implementation
-  until a v2.4a implementation handoff) is authorized.
-- PlannerModel as the first role is authorized for implementation planning.
-- The drafted v2.4a implementation handoff may proceed through review, but must reference this ADR and
-  await explicit approval before code.
+- A new `ModelProvider` abstraction is authorized within the v2.4a PlannerModel boundary.
+- PlannerModel as the first role is authorized and implemented under the v2.4a handoff.
+- The v2.4a implementation handoff proceeded through review and closeout.
 - ADR-0003 invariants remain binding and are not weakened.
 
-If rejected:
+Rejected alternative, retained for decision history:
 
 - Model API remains entirely outside the bridge.
 - Plan generation continues through the existing review-only command transport
@@ -192,7 +190,10 @@ If rejected:
 
 ## Status / Next
 
-ACCEPTED. Senior review passed (2026-06-12).
+ACCEPTED. Senior review passed (2026-06-12). v2.4a PlannerModel closeout is
+approved in commit `1eb6200`.
 
-1. The drafted v2.4a PlannerModel implementation handoff is awaiting review.
-2. Implementation begins only after the handoff is reviewed and approved.
+1. v2.4a PlannerModel implementation is complete and closeout-approved.
+2. CriticModel, ArbiterModel, ReplannerModel, multi-provider AgentTeam,
+   workspace-write, and auto-apply/commit/push/merge remain outside this ADR's
+   implemented scope and require separate approval.
