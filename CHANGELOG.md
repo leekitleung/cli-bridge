@@ -106,6 +106,15 @@ All notable changes to CLI Bridge are documented here.
 - **Boundary**: no pre-apply baseline, no diff/classification, no main-tree
   write, no `git`/VCS, no spawn, no "apply from preview", no new dependency.
 
+### Fixed — v2.5 Presentation Hardening (EX-2.5-4)
+- **Error paths**: added tests for wrong project/team → 404 on all three presentation
+  endpoints; verified consistent error shape across endpoints.
+- **Console viewer**: improved null-safety in manifest rendering, hardened error
+  messages (no internal details leaked), cleaned up loading/failure states.
+- **Tests**: 3 new fail-closed error-path tests (wrong project, wrong team, consistent error shape). Total: 580/580 passing tests.
+- **Boundary**: confirmed no baseline/diff/classification/apply-from-preview/git/
+  spawn/VCS language or implementation in console or routes.
+
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
   - `"review-cli"` (default): existing behavior unchanged.

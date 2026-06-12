@@ -889,20 +889,32 @@ async function viewApplyResult() {
     + '/apply-requests/' + encodeURIComponent(applyId.trim());
   if (statusEl) { statusEl.textContent = 'loading…'; statusEl.style.color = 'var(--muted)'; }
   const man = await api(base);
-  if (!man.ok) { if (statusEl) { statusEl.textContent = 'failed: ' + (man.data?.message || man.status); statusEl.style.color = '#f87171'; } return; }
+  if (!man.ok) {
+    if (statusEl) { statusEl.textContent = 'Not found or apply not enabled'; statusEl.style.color = '#f87171'; }
+    return;
+  }
   const m = man.data.apply;
+  if (!m) {
+    if (statusEl) { statusEl.textContent = 'apply data unavailable'; statusEl.style.color = '#f87171'; }
+    return;
+  }
   if (manifestEl) {
     manifestEl.innerHTML = '<table><tbody>'
-      + '<tr><td>applyId</td><td>' + escapeHtml(m.applyId) + '</td></tr>'
-      + '<tr><td>status</td><td><span class="pill">' + escapeHtml(m.status) + '</span></td></tr>'
+      + '<tr><td>applyId</td><td>' + escapeHtml(m.applyId || '—') + '</td></tr>'
+      + '<tr><td>status</td><td><span class="pill">' + escapeHtml(m.status || '—') + '</span></td></tr>'
       + '<tr><td>isolatedDirId</td><td>' + escapeHtml(m.isolatedDirId || '—') + '</td></tr>'
       + '<tr><td>fileCount</td><td>' + escapeHtml(String(m.fileCount ?? '—')) + '</td></tr>'
       + '<tr><td>byteTotal</td><td>' + escapeHtml(String(m.byteTotal ?? '—')) + '</td></tr>'
       + '</tbody></table>';
   }
   const fl = await api(base + '/files');
-  if (statusEl) { statusEl.textContent = fl.ok ? 'loaded' : ('files: ' + (fl.data?.message || fl.status)); statusEl.style.color = fl.ok ? 'var(--muted)' : '#f87171'; }
-  if (fl.ok && filesEl) {
+  if (statusEl) {
+    const flMsg = fl.ok ? 'loaded' : ('error loading files');
+    statusEl.textContent = flMsg;
+    statusEl.style.color = fl.ok ? 'var(--muted)' : '#f87171';
+  }
+  if (!fl.ok) return;
+  if (filesEl) {
     const files = fl.data.files || [];
     if (!files.length) { filesEl.innerHTML = '<span class="unavailable">No files</span>'; return; }
     let t = '<table><thead><tr><th>path</th><th>size</th><th></th></tr></thead><tbody>';
@@ -924,7 +936,10 @@ async function loadApplyPreview(base, relPath) {
   previewEl.style.display = '';
   previewEl.textContent = 'loading preview…';
   const res = await api(base + '/files/preview?path=' + encodeURIComponent(relPath));
-  if (!res.ok) { previewEl.textContent = 'preview failed: ' + (res.data?.message || res.status); return; }
+  if (!res.ok) {
+    previewEl.textContent = 'preview unavailable';
+    return;
+  }
   const d = res.data;
   previewEl.textContent = '# ' + d.path + '  (size ' + d.size + (d.truncated ? ', truncated' : '') + (d.redacted ? ', redacted' : '') + ')\\n\\n' + d.content;
 }

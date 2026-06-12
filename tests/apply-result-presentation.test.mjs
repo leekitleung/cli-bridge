@@ -422,3 +422,52 @@ test('AC8 no apply-from-preview: console viewer exposes no apply/promote/write a
   assert.equal(/apply-requests[^\n]*\/confirm/.test(consoleSrc), false, 'console must not call apply confirm');
   assert.equal(/apply-requests[^\n]*\/discard/.test(consoleSrc), false, 'console must not call apply discard');
 });
+
+// ── Additional fail-closed error paths (EX-2.5-4 hardening) ───────
+
+test('fail-closed: wrong project id on all three endpoints → 404', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  runtime.projectStore.upsert({ key: 'beta', label: 'Beta', workspaceApplyEnabled: true });
+  const { team, applyId } = await seedAppliedApply(runtime, 'alpha');
+
+  // Use the correct applyId but wrong projectKey.
+  const base = applyBase('beta', team.id, applyId);
+  assert.equal((await call(runtime, 'GET', base)).statusCode, 404, 'manifest with wrong project → 404');
+  assert.equal((await call(runtime, 'GET', base + '/files')).statusCode, 404, 'files with wrong project → 404');
+  assert.equal((await call(runtime, 'GET', base + '/files/preview', undefined, new URLSearchParams({ path: 'src/app.ts' }))).statusCode, 404, 'preview with wrong project → 404');
+});
+
+test('fail-closed: wrong team id on all three endpoints → 404', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, applyId } = await seedAppliedApply(runtime, 'alpha');
+
+  // Create a second team and use its id with the wrong apply.
+  const base = applyBase('alpha', 't-nonexistent-' + randomUUID().slice(0,8), applyId);
+  assert.equal((await call(runtime, 'GET', base)).statusCode, 404, 'manifest with wrong team → 404');
+  assert.equal((await call(runtime, 'GET', base + '/files')).statusCode, 404, 'files with wrong team → 404');
+  assert.equal((await call(runtime, 'GET', base + '/files/preview', undefined, new URLSearchParams({ path: 'src/app.ts' }))).statusCode, 404, 'preview with wrong team → 404');
+});
+
+test('fail-closed: consistent error shape across endpoints', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, applyId } = await seedAppliedApply(runtime, 'alpha');
+
+  // Apply disabled mid-flight.
+  runtime.projectStore.upsert({ key: 'alpha', workspaceApplyEnabled: false });
+  const base = applyBase('alpha', team.id, applyId);
+  for (const sub of ['', '/files']) {
+    const res = await call(runtime, 'GET', base + sub);
+    assert.equal(res.statusCode, 409);
+    assert.ok(res.payload.status === 'error', 'error shape: { status: "error" }');
+    assert.ok(typeof res.payload.message === 'string', 'error shape: has message');
+  }
+  const prev = await call(runtime, 'GET', base + '/files/preview', undefined, new URLSearchParams({ path: 'src/app.ts' }));
+  assert.equal(prev.statusCode, 409);
+  assert.equal(prev.payload.status, 'error');
+});
