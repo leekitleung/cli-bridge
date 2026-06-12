@@ -50,6 +50,17 @@ All notable changes to CLI Bridge are documented here.
   isolated scratch dir via contained `fs` ops; no `git`, no spawn, no VCS).
   Approach B (git worktree + `git apply`) remains out of scope pending a separate
   ADR.
+- Drafted **ADR-0009 Read-only Apply-result Export / Presentation** as PROPOSED
+  (v2.5 follow-up). A strictly read-only presentation slice over existing
+  isolated apply results, bounded to data the `WorkspaceApplyStore` already
+  records: a read-only apply manifest, the isolated-directory file list, and a
+  size-capped, secret-redacted per-file content preview. It authorizes no
+  implementation. It does NOT authorize pre-apply baseline/diff capture (there is
+  no stored baseline today — diff and modified/unchanged classification are
+  explicitly deferred to a future ADR), and it does NOT authorize any
+  write/main-tree mutation, `git`/VCS action (commit/push/merge/PR/merge queue),
+  auto-apply, "apply from preview", parallelism, or scheduler/model-triggered
+  presentation. Awaits explicit human accept/reject before any code.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
