@@ -134,23 +134,25 @@ Minimum requirements for the preamble:
 
 ---
 
-## 4. Verification criteria
+## 4. Closeout verification evidence
 
-Before the implementation batch is considered ready for review:
+Implementation and closeout review evidence:
 
-- [ ] `npm run typecheck` pass.
-- [ ] `npm run lint` pass.
-- [ ] `npm test` pass (no regression on existing 498+ tests).
-- [ ] New model API tests cover: happy path, missing key, network failure,
+- [x] `npm run typecheck` passed.
+- [x] `npm run lint` passed.
+- [x] `npm test` passed with 523/523 passing tests.
+- [x] Model API tests cover: happy path, missing key, network failure,
   schema validation rejection, step ceiling enforcement, budget enforcement,
   audit events, redaction of raw model output, and PlannerModel failure not
   advancing or mutating existing goal/plan/step state.
-- [ ] Console show model-suggested label with no execute/dispatch button.
-- [ ] API key never appears in snapshot files, audit records, or HTTP responses.
-- [ ] Existing goal/plan/step workflows work unchanged when model API is
+- [x] Console shows model API availability as read-only status with no
+  execute/dispatch/apply button.
+- [x] API key never appears in snapshot files, audit records, or HTTP responses.
+- [x] Existing goal/plan/step workflows work unchanged when model API is
   unavailable.
-- [ ] No new shell/exec/run/command endpoint, no auto-apply, no gate bypass.
-- [ ] `git diff --check` pass.
+- [x] No new endpoint, no npm dependencies, no shell/exec/run/command endpoint,
+  no auto-apply, no gate bypass.
+- [x] `git diff --check` passed.
 
 ---
 

@@ -96,7 +96,7 @@ model-api behavior:
 ```
 typecheck:  pass
 lint:       pass
-npm test:   523/523 pass
+npm test:   523/523 passing tests
 git diff --check: pass
 boundary check: clean (no forbidden patterns)
 ```

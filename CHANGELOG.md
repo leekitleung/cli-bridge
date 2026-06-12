@@ -33,9 +33,10 @@ All notable changes to CLI Bridge are documented here.
   sending; JSON parse errors classified as non-retryable model output failures.
 - **Console**: minimal read-only "Model API: unavailable" status display; no
   execute/dispatch/apply actions.
-- **Tests**: 16 model API tests. Total: 523/523 pass.
-- **No new endpoint, no npm dependencies, no auto-apply/commit/push/merge,
-  no parallel slots, no WorkBuddy executor, no CriticModel/ArbiterModel.**
+- **Tests**: 16 model API tests. Total: 523/523 passing tests.
+- **No new endpoint, no npm dependencies, no shell/exec/run/command,
+  no auto-apply/commit/push/merge, no parallel slots, no WorkBuddy executor,
+  no CriticModel/ArbiterModel.**
 - **Closeout**: `docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md` approved.
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
