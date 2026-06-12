@@ -29,6 +29,11 @@ All notable changes to CLI Bridge are documented here.
   the prerequisites, open questions, and risks any future workspace-write ADR
   must resolve. All v2.5+ capabilities (workspace-write, worktree isolation,
   merge queue, auto-commit/push/merge, advanced executors) remain forbidden.
+- Drafted **ADR-0008 Patch Apply to Isolated Worktree** as PROPOSED — the first
+  focused v2.5 workspace-write capability. Scope is the smallest possible: opt-in,
+  human-gated, reversible apply of an approved patch into a bridge-managed
+  isolated worktree (never the main tree), with no VCS mutation, no parallelism,
+  and no autonomy. Requires explicit human accept/reject before any code.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
