@@ -1,7 +1,7 @@
 // v2.4a — PlannerModel: calls ModelProvider, parses and validates output.
 //
 // Output is advisory-only. Never attached to a goal without human approval.
-// Model failure never mutates goal/plan/step state.
+// Schema/policy rejection fails closed — no 200 with invalid draft.
 
 import type { ModelProvider, PlanResult, PlanError } from './provider-interface.ts';
 import type {
@@ -18,24 +18,18 @@ export interface PlannerModelInput {
   maxSteps: number;
 }
 
-export interface ValidatedPlanDraft {
-  steps: Array<{
-    intent: string;
-    kind: PlanStepKind;
-    tier: ExecutionTier;
-    isStateMutating: boolean;
-    targetEndpointId: string;
-  }>;
-  rationale?: string;
-  /** Validation issues found during schema/PolicyEngine checks. */
-  validationIssues: string[];
-  /** Whether the draft passed all validation checks. */
-  valid: boolean;
-}
-
 export interface PlannerModelResult {
   ok: true;
-  draft: ValidatedPlanDraft;
+  draft: {
+    steps: Array<{
+      intent: string;
+      kind: PlanStepKind;
+      tier: ExecutionTier;
+      isStateMutating: boolean;
+      targetEndpointId: string;
+    }>;
+    rationale?: string;
+  };
   provider: string;
   usage: { promptTokens: number; completionTokens: number };
   latencyMs: number;
@@ -44,10 +38,14 @@ export interface PlannerModelResult {
 export interface PlannerModelFailure {
   ok: false;
   reason: string;
+  /** Whether the failure is due to provider error vs schema/policy rejection. */
+  kind: 'provider-error' | 'schema-rejection' | 'policy-rejection' | 'budget-exceeded';
   latencyMs: number;
+  usage?: { promptTokens: number; completionTokens: number };
 }
 
 const HARD_STEP_CEILING = 10;
+const FORBIDDEN_KINDS = new Set(['git-commit', 'git-push', 'run-command']);
 
 export async function generateModelPlan(
   provider: ModelProvider,
@@ -62,75 +60,111 @@ export async function generateModelPlan(
   });
 
   if (!result.ok) {
-    return { ok: false, reason: result.reason, latencyMs: result.latencyMs };
+    return { ok: false, reason: result.reason, kind: 'provider-error', latencyMs: result.latencyMs };
   }
 
-  // Schema validate + PolicyEngine check.
-  const validationIssues: string[] = [];
-  const validSteps: ValidatedPlanDraft['steps'] = [];
-
+  // ════════════════════════════════════════════════
+  // Schema validate + PolicyEngine check — FAIL CLOSED
+  // ════════════════════════════════════════════════
+  const issues: string[] = [];
   const validTiers = EXECUTION_TIERS as readonly string[];
   const validKinds = PLAN_STEP_KINDS as readonly string[];
   const allowedTiers = input.permittedTiers;
   const endpointIds = new Set(input.endpoints.map(e => e.id));
 
+  // Step ceiling check.
   if (result.draft.steps.length > HARD_STEP_CEILING) {
-    validationIssues.push(`Step count ${result.draft.steps.length} exceeds hard ceiling ${HARD_STEP_CEILING}`);
+    return {
+      ok: false,
+      reason: `Step count ${result.draft.steps.length} exceeds hard ceiling ${HARD_STEP_CEILING}`,
+      kind: 'policy-rejection',
+      latencyMs: result.latencyMs,
+      usage: result.usage,
+    };
   }
 
-  for (let i = 0; i < Math.min(result.draft.steps.length, HARD_STEP_CEILING); i++) {
+  if (result.draft.steps.length === 0) {
+    return {
+      ok: false,
+      reason: 'Model returned empty plan (0 steps)',
+      kind: 'schema-rejection',
+      latencyMs: result.latencyMs,
+      usage: result.usage,
+    };
+  }
+
+  const validSteps: PlannerModelResult['draft']['steps'] = [];
+
+  for (let i = 0; i < result.draft.steps.length; i++) {
     const s = result.draft.steps[i];
-    const issues: string[] = [];
 
     if (typeof s.intent !== 'string' || s.intent.trim().length === 0) {
-      issues.push('missing intent');
+      return {
+        ok: false,
+        reason: `step[${i}]: missing intent`,
+        kind: 'schema-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
     if (!validKinds.includes(s.kind as PlanStepKind)) {
-      issues.push(`invalid kind: ${String(s.kind)}`);
+      return {
+        ok: false,
+        reason: `step[${i}]: invalid kind "${String(s.kind)}"`,
+        kind: 'schema-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
     if (!validTiers.includes(s.tier as ExecutionTier)) {
-      issues.push(`invalid tier: ${String(s.tier)}`);
+      return {
+        ok: false,
+        reason: `step[${i}]: invalid tier "${String(s.tier)}"`,
+        kind: 'schema-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
     if (!allowedTiers.includes(s.tier)) {
-      issues.push(`tier ${String(s.tier)} not in permitted tiers`);
+      return {
+        ok: false,
+        reason: `step[${i}]: tier "${String(s.tier)}" not in permitted tiers`,
+        kind: 'policy-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
     if (typeof s.targetEndpointId !== 'string' || !endpointIds.has(s.targetEndpointId)) {
-      issues.push(`unknown endpoint: ${String(s.targetEndpointId)}`);
+      return {
+        ok: false,
+        reason: `step[${i}]: unknown endpoint "${String(s.targetEndpointId)}"`,
+        kind: 'schema-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
-    // Reject forbidden kinds: git-commit, git-push, run-command.
-    if (s.kind === 'git-commit' || s.kind === 'git-push' || s.kind === 'run-command') {
-      issues.push(`forbidden step kind: ${s.kind}`);
+    if (FORBIDDEN_KINDS.has(s.kind)) {
+      return {
+        ok: false,
+        reason: `step[${i}]: forbidden kind "${s.kind}" (git-commit/git-push/run-command not allowed)`,
+        kind: 'policy-rejection',
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+      };
     }
 
-    if (issues.length > 0) {
-      validationIssues.push(`step[${i}]: ${issues.join(', ')}`);
-      // Still include the step with issues noted, but not valid.
-      validSteps.push({
-        intent: typeof s.intent === 'string' ? s.intent : '',
-        kind: (validKinds.includes(s.kind as PlanStepKind) ? s.kind : 'review') as PlanStepKind,
-        tier: (validTiers.includes(s.tier as ExecutionTier) ? s.tier : 'patch-proposal') as ExecutionTier,
-        isStateMutating: Boolean(s.isStateMutating),
-        targetEndpointId: typeof s.targetEndpointId === 'string' ? s.targetEndpointId : '',
-      });
-    } else {
-      validSteps.push({
-        intent: s.intent,
-        kind: s.kind as PlanStepKind,
-        tier: s.tier as ExecutionTier,
-        isStateMutating: Boolean(s.isStateMutating),
-        targetEndpointId: s.targetEndpointId,
-      });
-    }
+    validSteps.push({
+      intent: s.intent,
+      kind: s.kind as PlanStepKind,
+      tier: s.tier as ExecutionTier,
+      isStateMutating: Boolean(s.isStateMutating),
+      targetEndpointId: s.targetEndpointId,
+    });
   }
 
   return {
     ok: true,
-    draft: {
-      steps: validSteps,
-      rationale: result.draft.rationale,
-      validationIssues,
-      valid: validationIssues.length === 0 && validSteps.length > 0 && validSteps.length <= HARD_STEP_CEILING,
-    },
+    draft: { steps: validSteps, rationale: result.draft.rationale },
     provider: result.provider,
     usage: result.usage,
     latencyMs: result.latencyMs,

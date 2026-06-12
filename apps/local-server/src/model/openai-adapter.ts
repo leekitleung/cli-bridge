@@ -2,6 +2,8 @@
 //
 // Implements ModelProvider for OpenAI chat/completions API.
 // No npm dependencies. No raw prompt/response logging.
+// Parse failures are classified as non-retryable (not network errors).
+// Input budget enforced before sending.
 
 import type { ModelProvider, PlanRequestInput, PlanResult, PlanError } from './provider-interface.ts';
 import { PLANNER_SYSTEM_PREAMBLE } from './planner-prompt.ts';
@@ -28,6 +30,11 @@ const DEFAULTS: Required<Omit<OpenAiAdapterOptions, 'baseUrl'>> = {
   timeoutMs: 30000,
   maxRetries: 3,
 };
+
+/** Conservative token estimate: ~4 chars per token for English text. */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 
 export class OpenAiAdapter implements ModelProvider {
   private readonly apiKey: string;
@@ -70,18 +77,57 @@ export class OpenAiAdapter implements ModelProvider {
       'Generate the plan JSON now.',
     ].join('\n');
 
+    // ════════════════════════════════════════════════
+    // Budget enforcement — estimate input tokens
+    // ════════════════════════════════════════════════
+    const totalInputText = PLANNER_SYSTEM_PREAMBLE + userMessage;
+    const estimatedTokens = estimateTokens(totalInputText);
+    if (estimatedTokens > this.options.maxInputTokens) {
+      return {
+        ok: false,
+        reason: `Input too large: estimated ${estimatedTokens} tokens exceeds budget ${this.options.maxInputTokens}`,
+        retryable: false,
+        latencyMs: Math.round(performance.now() - start),
+      };
+    }
+
     const messages = [
       { role: 'system', content: PLANNER_SYSTEM_PREAMBLE },
       { role: 'user', content: userMessage },
     ];
 
-    return this.sendWithRetry(messages, start);
+    const networkResult = await this.sendWithRetry(messages, start);
+    if (networkResult.kind === 'error') return networkResult.error;
+
+    // ════════════════════════════════════════════════
+    // Parse model output — parse failures are non-retryable
+    // ════════════════════════════════════════════════
+    try {
+      const draft = this.parseModelOutput(networkResult.content);
+      return {
+        ok: true,
+        draft,
+        provider: networkResult.provider,
+        usage: networkResult.usage,
+        latencyMs: networkResult.latencyMs,
+      };
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        reason: `Model output parse error: ${(err as Error)?.message ?? 'unknown'}`,
+        retryable: false,
+        latencyMs: Math.round(performance.now() - start),
+      };
+    }
   }
 
   private async sendWithRetry(
     messages: Array<{ role: string; content: string }>,
     start: number,
-  ): Promise<PlanResult | PlanError> {
+  ): Promise<
+    | { kind: 'ok'; content: string; provider: string; usage: { promptTokens: number; completionTokens: number }; latencyMs: number }
+    | { kind: 'error'; error: PlanError }
+  > {
     let lastError: PlanError | null = null;
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
@@ -105,21 +151,13 @@ export class OpenAiAdapter implements ModelProvider {
         });
 
         clearTimeout(timeoutId);
-
         const latencyMs = Math.round(performance.now() - start);
 
         if (!response.ok) {
           const status = response.status;
-          // 4xx errors are not retryable.
           if (status >= 400 && status < 500) {
-            return {
-              ok: false,
-              reason: `API error ${status}: ${response.statusText}`,
-              retryable: false,
-              latencyMs,
-            };
+            return { kind: 'error', error: { ok: false, reason: `API error ${status}: ${response.statusText}`, retryable: false, latencyMs } };
           }
-          // 5xx may be retried.
           throw new Error(`API error ${status}`);
         }
 
@@ -127,13 +165,13 @@ export class OpenAiAdapter implements ModelProvider {
         const choice = (data.choices as Array<Record<string, unknown>>)?.[0];
         const content = (choice?.message as Record<string, unknown>)?.content as string | undefined;
         if (!content) {
-          return { ok: false, reason: 'Empty model response', retryable: false, latencyMs };
+          return { kind: 'error', error: { ok: false, reason: 'Empty model response', retryable: false, latencyMs } };
         }
 
         const usage = data.usage as Record<string, number> | undefined;
         return {
-          ok: true,
-          draft: this.parseModelOutput(content),
+          kind: 'ok',
+          content,
           provider: `openai/${this.options.model}`,
           usage: {
             promptTokens: usage?.prompt_tokens ?? 0,
@@ -141,10 +179,11 @@ export class OpenAiAdapter implements ModelProvider {
           },
           latencyMs,
         };
+
       } catch (err: unknown) {
         const latencyMs = Math.round(performance.now() - start);
         if (err instanceof DOMException && err.name === 'AbortError') {
-          return { ok: false, reason: 'Request timed out', retryable: true, latencyMs };
+          return { kind: 'error', error: { ok: false, reason: 'Request timed out', retryable: true, latencyMs } };
         }
         lastError = {
           ok: false,
@@ -152,7 +191,6 @@ export class OpenAiAdapter implements ModelProvider {
           retryable: true,
           latencyMs,
         };
-        // Only retry on transient errors.
         if (attempt < this.options.maxRetries) {
           await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 500));
           continue;
@@ -160,11 +198,10 @@ export class OpenAiAdapter implements ModelProvider {
       }
     }
 
-    return lastError!;
+    return { kind: 'error', error: lastError! };
   }
 
   private parseModelOutput(raw: string): PlanResult['draft'] {
-    // Strip markdown code fences if present.
     let json = raw.trim();
     const fenceMatch = json.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fenceMatch) json = fenceMatch[1].trim();

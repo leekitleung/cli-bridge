@@ -1745,7 +1745,20 @@ export async function handleBridgeRequest(
         ? runtime.modelProviderFor(apiKey)
         : new (await import('../model/openai-adapter.ts')).OpenAiAdapter(apiKey);
 
-      const start = Date.now();
+      // ════════════════════════════════════════════════
+      // Audit: model_plan_request (before provider call)
+      // ════════════════════════════════════════════════
+      const requestStart = Date.now();
+      runtime.auditLog.createAndAppend({
+        sessionId: 'model-plan-' + goalId,
+        projectId,
+        type: 'model_plan_request',
+        source: 'planner-model',
+        target: 'goal-' + goalId,
+        goalId,
+        result: { ok: true },
+      });
+
       const modelResult = await generateModelPlan(provider, {
         goalDescription: goal.description,
         endpoints: (Array.isArray(parsed.body.availableEndpoints)
@@ -1758,22 +1771,12 @@ export async function handleBridgeRequest(
         maxSteps: 10,
       });
 
-      // Audit: model_plan_request
-      runtime.auditLog.createAndAppend({
-        sessionId: 'model-plan-' + goalId,
-        projectId,
-        type: 'model_plan_request',
-        source: 'planner-model',
-        target: 'goal-' + goalId,
-        goalId,
-        result: { ok: modelResult.ok },
-      });
-
-      if (!modelResult.ok) {
-        return error(409, 'Model plan generation failed: ' + modelResult.reason);
-      }
-
-      // Audit: model_plan_result
+      // ════════════════════════════════════════════════
+      // Audit: model_plan_result (all outcomes)
+      // ════════════════════════════════════════════════
+      const auditResultMeta = modelResult.ok
+        ? { provider: modelResult.provider, usage: modelResult.usage, accepted: true }
+        : { provider: 'unknown', failureReason: modelResult.reason, rejected: true, kind: modelResult.kind, usage: modelResult.usage };
       runtime.auditLog.createAndAppend({
         sessionId: 'model-plan-result-' + goalId,
         projectId,
@@ -1781,8 +1784,22 @@ export async function handleBridgeRequest(
         source: 'planner-model',
         target: 'goal-' + goalId,
         goalId,
-        result: { ok: true },
+        result: {
+          ok: modelResult.ok,
+          failureReason: modelResult.ok ? undefined : modelResult.reason,
+        },
       });
+
+      if (!modelResult.ok) {
+        // Fail-closed: schema/policy rejection, provider error, or budget exceeded.
+        // Return generic error — do not expose internal rejection details via HTTP.
+        let httpMessage = 'Model plan generation failed';
+        if (modelResult.kind === 'schema-rejection') httpMessage += ': model output did not pass schema validation';
+        else if (modelResult.kind === 'policy-rejection') httpMessage += ': model output violated policy constraints';
+        else if (modelResult.kind === 'budget-exceeded') httpMessage += ': input exceeds token budget';
+        else httpMessage += ': provider error';
+        return error(409, httpMessage);
+      }
 
       return ok({
         draft: modelResult.draft,
@@ -1793,7 +1810,6 @@ export async function handleBridgeRequest(
           provider: modelResult.provider,
           usage: modelResult.usage,
           latencyMs: modelResult.latencyMs,
-          validationIssues: modelResult.draft.validationIssues,
         },
       });
     }

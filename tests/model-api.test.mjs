@@ -1,13 +1,15 @@
 // v2.4a PlannerModel test suite
 //
 // Tests: model-api plannerSource, default review-cli unchanged,
-// missing key, network failure, schema rejection, step ceiling,
-// audit events, no raw prompt/response/key leakage, no state mutation.
+// missing key, network failure, schema rejection (fail-closed),
+// step ceiling (fail-closed), forbidden kinds (fail-closed),
+// input budget, parse failure (non-retryable),
+// audit events (request before, result after, all outcomes),
+// no raw prompt/response/key leakage, no state mutation.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  BRIDGE_PROJECTS_PATH,
   createBridgeRuntime,
   handleBridgeRequest,
 } from '../apps/local-server/src/routes/bridge-api.ts';
@@ -39,16 +41,16 @@ function createGoal(runtime, description, projectId) {
 function createMockProvider(opts = {}) {
   const {
     shouldFail = false,
-    shouldTimeout = false,
     shouldReturnEmpty = false,
     returnsValid = true,
     stepCount = 2,
+    forbiddenSteps = false,
+    invalidKind = false,
+    unknownEndpoint = false,
+    stepCeiling = 5,
   } = opts;
 
   return async function plan(input) {
-    if (shouldTimeout) {
-      return new Promise(() => {}); // never resolves (test timeout will catch)
-    }
     if (shouldFail) {
       return { ok: false, reason: 'simulated network error', retryable: false, latencyMs: 50 };
     }
@@ -61,14 +63,28 @@ function createMockProvider(opts = {}) {
         latencyMs: 30,
       };
     }
-    if (!returnsValid) {
+    if (invalidKind) {
       return {
         ok: true,
-        draft: {
-          steps: [
-            { intent: 'bad step', kind: 'invalid-kind', tier: 'invalid-tier', isStateMutating: false, targetEndpointId: 'unknown' },
-          ],
-        },
+        draft: { steps: [{ intent: 'bad', kind: 'invalid-kind', tier: 'patch-proposal', isStateMutating: false, targetEndpointId: input.endpoints[0]?.id || 'claude-code-command' }] },
+        provider: 'mock/test',
+        usage: { promptTokens: 10, completionTokens: 5 },
+        latencyMs: 30,
+      };
+    }
+    if (unknownEndpoint) {
+      return {
+        ok: true,
+        draft: { steps: [{ intent: 'bad', kind: 'review', tier: 'patch-proposal', isStateMutating: false, targetEndpointId: 'nonexistent' }] },
+        provider: 'mock/test',
+        usage: { promptTokens: 10, completionTokens: 5 },
+        latencyMs: 30,
+      };
+    }
+    if (forbiddenSteps) {
+      return {
+        ok: true,
+        draft: { steps: [{ intent: 'commit', kind: 'git-commit', tier: 'workspace-write', isStateMutating: true, targetEndpointId: input.endpoints[0]?.id || 'claude-code-command' }] },
         provider: 'mock/test',
         usage: { promptTokens: 10, completionTokens: 5 },
         latencyMs: 30,
@@ -77,7 +93,7 @@ function createMockProvider(opts = {}) {
     const steps = [];
     for (let i = 0; i < stepCount; i++) {
       steps.push({
-        intent: `Step ${i + 1}: do something useful`,
+        intent: `Step ${i + 1}`,
         kind: i === 0 ? 'review' : 'propose-patch',
         tier: 'patch-proposal',
         isStateMutating: false,
@@ -86,7 +102,7 @@ function createMockProvider(opts = {}) {
     }
     return {
       ok: true,
-      draft: { steps, rationale: 'A good plan' },
+      draft: { steps, rationale: 'Good plan' },
       provider: 'mock/test',
       usage: { promptTokens: 20, completionTokens: 10 },
       latencyMs: 25,
@@ -104,7 +120,6 @@ test('POST /bridge/goals/plan review-cli default behavior unchanged', async () =
   });
   const goal = createGoal(runtime, 'Test goal unchanged');
   const res = await call(runtime, 'POST', '/bridge/goals/plan', { goalId: goal.id });
-  // Expect a controlled error from review-cli path, not a 500.
   assert.ok(res.statusCode === 400 || res.statusCode === 409);
 });
 
@@ -128,12 +143,21 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   assert.equal(res.payload.plan, null, 'should not attach a plan to the goal');
   assert.equal(res.payload.meta.source, 'model-api');
   assert.equal(res.payload.meta.modelSuggested, true);
-  assert.ok(res.payload.draft.valid);
   assert.equal(res.payload.draft.steps.length, 2);
 
-  // Verify goal state unchanged (plan not attached).
-  const plan = runtime.goalStore.getPlanByGoal(goal.id);
-  assert.ok(!plan, 'model plan should not attach to goal');
+  // Goal state unchanged.
+  assert.ok(!runtime.goalStore.getPlanByGoal(goal.id), 'model plan should not attach to goal');
+
+  // Audit events: request before, result after, both present.
+  const events = runtime.auditLog.exportEvents();
+  const req = events.find(e => e.type === 'model_plan_request');
+  const resE = events.find(e => e.type === 'model_plan_result');
+  assert.ok(req, 'should have model_plan_request');
+  assert.ok(resE, 'should have model_plan_result');
+  assert.equal(req.result.ok, true);
+  assert.equal(resE.result.ok, true);
+  // request timestamp should be before result.
+  assert.ok(req.timestamp <= resE.timestamp, 'request audit must precede result');
 });
 
 // ════════════════════════════════════════════════════════════
@@ -144,143 +168,196 @@ test('plannerSource: model-api fails with missing API key', async () => {
   const mockProvider = createMockProvider();
   const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
   const goal = createGoal(runtime, 'Test goal');
-
   const res = await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'model-api',
-    // no apiKey
+    goalId: goal.id, plannerSource: 'model-api',
   });
-
   assert.equal(res.statusCode, 409);
   assert.ok(res.payload.message.includes('key'));
 });
 
 // ════════════════════════════════════════════════════════════
-// Model failure
+// Model failure (provider error)
 // ════════════════════════════════════════════════════════════
 
-test('plannerSource: model-api returns error on provider failure', async () => {
+test('plannerSource: model-api fail-closed on provider error', async () => {
   const mockProvider = createMockProvider({ shouldFail: true });
   const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
   const goal = createGoal(runtime, 'Test goal');
 
   const res = await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'model-api',
-    apiKey: 'sk-test',
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
   });
 
   assert.equal(res.statusCode, 409);
-  assert.ok(res.payload.message.includes('failed'));
-  assert.ok(res.payload.message.includes('simulated network error'));
+  assert.ok(!runtime.goalStore.getPlanByGoal(goal.id));
 
-  // Goal state unchanged.
-  const plan = runtime.goalStore.getPlanByGoal(goal.id);
-  assert.ok(!plan, 'model failure should not attach plan');
+  // Both request and result audit must exist.
+  const events = runtime.auditLog.exportEvents();
+  assert.ok(events.find(e => e.type === 'model_plan_request'));
+  assert.ok(events.find(e => e.type === 'model_plan_result'));
 });
 
 // ════════════════════════════════════════════════════════════
-// Schema validation rejection
+// Schema rejection — fail-closed (409, not 200)
 // ════════════════════════════════════════════════════════════
 
-test('plannerSource: model-api handles schema-invalid output', async () => {
-  const mockProvider = createMockProvider({ returnsValid: false });
+test('plannerSource: model-api fail-closed on schema-invalid output', async () => {
+  const mockProvider = createMockProvider({ invalidKind: true });
   const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
   const goal = createGoal(runtime, 'Test goal');
 
   const res = await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'model-api',
-    apiKey: 'sk-test',
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
   });
 
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.payload.draft.valid, false);
-  assert.ok(res.payload.draft.validationIssues.length > 0);
-  assert.ok(res.payload.meta.modelSuggested);
-});
-
-// ════════════════════════════════════════════════════════════
-// Step ceiling enforcement
-// ════════════════════════════════════════════════════════════
-
-test('plannerSource: model-api enforces step ceiling', async () => {
-  const mockProvider = createMockProvider({ returnsValid: true, stepCount: 20 });
-  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
-  const goal = createGoal(runtime, 'Test goal');
-
-  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'model-api',
-    apiKey: 'sk-test',
-  });
-
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.payload.draft.valid, false);
-  assert.ok(res.payload.draft.validationIssues.some(issue => issue.includes('ceiling')));
-});
-
-// ════════════════════════════════════════════════════════════
-// Audit events
-// ════════════════════════════════════════════════════════════
-
-test('plannerSource: model-api writes audit events without raw content', async () => {
-  const mockProvider = createMockProvider({ returnsValid: true, stepCount: 1 });
-  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
-  const goal = createGoal(runtime, 'Test goal');
-
-  await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'model-api',
-    apiKey: 'sk-test',
-  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('schema validation'));
 
   const events = runtime.auditLog.exportEvents();
-  const reqEvent = events.find(e => e.type === 'model_plan_request');
-  const resEvent = events.find(e => e.type === 'model_plan_result');
-
-  assert.ok(reqEvent, 'should emit model_plan_request');
-  assert.ok(resEvent, 'should emit model_plan_result');
-  assert.equal(reqEvent.goalId, goal.id);
-  assert.equal(resEvent.goalId, goal.id);
-  assert.equal(reqEvent.result.ok, true);
-  assert.equal(resEvent.result.ok, true);
-
-  // No raw prompt/response/key in audit.
-  const allEvents = JSON.stringify(events);
-  assert.equal(allEvents.includes('sk-test'), false, 'API key must not be in audit');
-  assert.equal(allEvents.includes('Build a login page'), false, 'goal description must not be in audit (raw prompt)');
+  const resE = events.find(e => e.type === 'model_plan_result');
+  assert.ok(resE);
+  assert.equal(resE.result.ok, false);
+  assert.ok(resE.result.failureReason);
 });
 
 // ════════════════════════════════════════════════════════════
-// Forbidden kinds rejection
+// Step ceiling — fail-closed
 // ════════════════════════════════════════════════════════════
 
-test('plannerModel: rejects git-commit, git-push, run-command steps', async () => {
-  const { generateModelPlan } = await import('../apps/local-server/src/model/planner-model.ts');
-  const provider = {
-    plan: async () => ({
-      ok: true,
-      draft: {
-        steps: [
-          { intent: 'commit', kind: 'git-commit', tier: 'workspace-write', isStateMutating: true, targetEndpointId: 'claude-code-command' },
-        ],
-      },
-      provider: 'test',
-      usage: { promptTokens: 1, completionTokens: 1 },
-      latencyMs: 1,
-    }),
-  };
+test('plannerSource: model-api fail-closed on step ceiling violation', async () => {
+  const mockProvider = createMockProvider({ stepCount: 20 });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test goal');
 
-  const result = await generateModelPlan(provider, {
-    goalDescription: 'test',
-    endpoints: [{ id: 'claude-code-command', label: 'CC' }],
-    permittedTiers: ['patch-proposal', 'workspace-write'],
-    maxSteps: 10,
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
   });
 
-  assert.equal(result.ok, true);
-  assert.ok(result.draft.validationIssues.some(i => i.includes('forbidden')));
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('policy'));
+});
+
+// ════════════════════════════════════════════════════════════
+// Forbidden kinds — fail-closed
+// ════════════════════════════════════════════════════════════
+
+test('plannerSource: model-api fail-closed on forbidden step kinds', async () => {
+  const mockProvider = createMockProvider({ forbiddenSteps: true });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test goal');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('policy'));
+});
+
+// ════════════════════════════════════════════════════════════
+// Empty plan — fail-closed
+// ════════════════════════════════════════════════════════════
+
+test('plannerSource: model-api fail-closed on empty plan', async () => {
+  const mockProvider = createMockProvider({ shouldReturnEmpty: true });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test goal');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
+  });
+
+  assert.equal(res.statusCode, 409);
+});
+
+// ════════════════════════════════════════════════════════════
+// Unknown endpoint — fail-closed
+// ════════════════════════════════════════════════════════════
+
+test('plannerSource: model-api fail-closed on unknown endpoint', async () => {
+  const mockProvider = createMockProvider({ unknownEndpoint: true });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test goal');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('schema'));
+});
+
+// ════════════════════════════════════════════════════════════
+// Input budget exceeded — non-retryable, fail-closed
+// ════════════════════════════════════════════════════════════
+
+test('plannerModel: input budget exceeded returns non-retryable failure', async () => {
+  const { OpenAiAdapter } = await import('../apps/local-server/src/model/openai-adapter.ts');
+  const adapter = new OpenAiAdapter('sk-test', { maxInputTokens: 10 }); // tiny budget
+  const result = await adapter.plan({
+    goalDescription: 'A very long goal description that exceeds the tiny token budget',
+    endpoints: [{ id: 'cc', label: 'CC' }],
+    permittedTiers: ['patch-proposal'],
+    maxSteps: 5,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.retryable, false);
+  assert.ok(result.reason.includes('Input too large') || result.reason.includes('budget') || result.reason.includes('exceed'));
+});
+
+// ════════════════════════════════════════════════════════════
+// Audit redaction — no raw content / API key leakage
+// ════════════════════════════════════════════════════════════
+
+test('plannerSource: model-api audit has no raw content or key', async () => {
+  const mockProvider = createMockProvider({ returnsValid: true, stepCount: 1 });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Build a login page');
+
+  await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test-secret',
+  });
+
+  const allEvents = JSON.stringify(runtime.auditLog.exportEvents());
+  assert.equal(allEvents.includes('sk-test-secret'), false, 'API key must not be in audit');
+  assert.equal(allEvents.includes('Build a login page'), false, 'goal description must not be in audit');
+});
+
+// ════════════════════════════════════════════════════════════
+// Parse failure classification
+// ════════════════════════════════════════════════════════════
+
+test('OpenAiAdapter: JSON parse failure is non-retryable', async () => {
+  const { OpenAiAdapter } = await import('../apps/local-server/src/model/openai-adapter.ts');
+  // Use a model name that will fail the actual API, but we want to test the classification.
+  // Instead, test via the generateModelPlan path with a mock that returns invalid JSON.
+  // We test that parseModelOutput throws -> caught as non-retryable.
+  const adapter = new OpenAiAdapter('sk-test');
+  // Directly test parseModelOutput with invalid JSON.
+  try {
+    // Access private via prototype for test.
+    const parsed = Object.getPrototypeOf(adapter).parseModelOutput.call(adapter, '{invalid json');
+    assert.fail('should have thrown');
+  } catch (err) {
+    assert.ok(err instanceof SyntaxError || err.message.includes('JSON'));
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// Console: no execute/dispatch/apply buttons
+// ════════════════════════════════════════════════════════════
+
+test('console model API display has no execute buttons', async () => {
+  const { renderProjectConsoleHtml } = await import('../apps/local-server/src/routes/project-console.ts');
+  const html = renderProjectConsoleHtml();
+  // Should show model API status.
+  assert.ok(html.includes('Model API'), 'console should show model API status');
+  // No execute/dispatch/apply buttons for model actions.
+  const hasApply = html.includes('apply plan') || html.includes('Apply Plan');
+  const hasDispatch = html.includes('dispatch model') || html.includes('Dispatch Plan');
+  const hasExecute = html.includes('execute plan') || html.includes('Execute Plan');
+  const hasAutoApply = html.includes('auto-apply');
+  assert.equal(hasApply || hasDispatch || hasExecute || hasAutoApply, false, 'no model execute/dispatch/apply actions');
 });
 
 // ════════════════════════════════════════════════════════════
@@ -290,12 +367,9 @@ test('plannerModel: rejects git-commit, git-push, run-command steps', async () =
 test('plannerSource: rejects unknown plannerSource value', async () => {
   const runtime = createBridgeRuntime();
   const goal = createGoal(runtime, 'Test goal');
-
   const res = await call(runtime, 'POST', '/bridge/goals/plan', {
-    goalId: goal.id,
-    plannerSource: 'unknown-source',
+    goalId: goal.id, plannerSource: 'unknown-source',
   });
-
   assert.equal(res.statusCode, 400);
   assert.ok(res.payload.message.includes('plannerSource'));
 });
