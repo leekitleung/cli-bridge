@@ -808,6 +808,7 @@ function renderSectionView() {
     html += '<span class="action-status" id="apply-view-status" aria-live="polite" role="status"></span>';
     html += '</div>';
     html += '<div id="apply-view-manifest" style="margin-top:10px;"></div>';
+    html += '<div id="apply-view-classification" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-files" style="margin-top:10px;"></div>';
     html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
     html += '</div>';
@@ -875,10 +876,12 @@ async function viewApplyResult() {
   const applyId = (document.getElementById('apply-view-id') || {}).value;
   const statusEl = document.getElementById('apply-view-status');
   const manifestEl = document.getElementById('apply-view-manifest');
+  const classEl = document.getElementById('apply-view-classification');
   const filesEl = document.getElementById('apply-view-files');
   const previewEl = document.getElementById('apply-view-preview');
   if (previewEl) { previewEl.style.display = 'none'; previewEl.textContent = ''; }
   if (manifestEl) manifestEl.innerHTML = '';
+  if (classEl) classEl.innerHTML = '';
   if (filesEl) filesEl.innerHTML = '';
   if (!teamId || !teamId.trim() || !applyId || !applyId.trim()) {
     if (statusEl) { statusEl.textContent = 'enter team id and apply id'; statusEl.style.color = '#f87171'; }
@@ -907,6 +910,33 @@ async function viewApplyResult() {
       + '<tr><td>byteTotal</td><td>' + escapeHtml(String(m.byteTotal ?? '—')) + '</td></tr>'
       + '</tbody></table>';
   }
+
+  // ── v2.7 ADR-0012: Classification fetch (non-blocking) ───
+  // Fetches classification. Failure (409/404) must NOT block files/preview.
+  let classificationData = null;
+  try {
+    const cl = await api(base + '/classification');
+    if (cl.ok && cl.data) {
+      classificationData = cl.data;
+      if (classEl) {
+        const s = cl.data.summary;
+        classEl.innerHTML = '<div style="margin-bottom:8px;">'
+          + '<span style="font-size:12px;font-weight:500;">Classification</span>'
+          + ' <span class="pill" style="background:var(--accent);color:#fff;">new ' + escapeHtml(String(s.new)) + '</span>'
+          + ' <span class="pill" style="background:var(--accent);color:#fff;">modified ' + escapeHtml(String(s.modified)) + '</span>'
+          + ' <span class="pill" style="background:var(--accent);color:#fff;">unchanged ' + escapeHtml(String(s.unchanged)) + '</span>'
+          + (s.unreadableBaseline > 0 ? ' <span class="pill" style="background:#f87171;color:#fff;">unreadable ' + escapeHtml(String(s.unreadableBaseline)) + '</span>' : '')
+          + '</div>';
+      }
+    } else if (cl.status === 409) {
+      if (classEl) classEl.innerHTML = '<span class="unavailable">Classification unavailable — baseline not captured</span>';
+    } else {
+      if (classEl) classEl.innerHTML = '<span class="unavailable">Classification unavailable</span>';
+    }
+  } catch {
+    if (classEl) classEl.innerHTML = '<span class="unavailable">Classification unavailable</span>';
+  }
+
   const fl = await api(base + '/files');
   if (statusEl) {
     const flMsg = fl.ok ? 'loaded' : ('error loading files');
@@ -917,9 +947,16 @@ async function viewApplyResult() {
   if (filesEl) {
     const files = fl.data.files || [];
     if (!files.length) { filesEl.innerHTML = '<span class="unavailable">No files</span>'; return; }
-    let t = '<table><thead><tr><th>path</th><th>size</th><th></th></tr></thead><tbody>';
+    // Build a lookup map for classification labels if available.
+    const classMap = classificationData ? new Map(
+      (classificationData.files || []).map(cf => [cf.path, cf.classification])
+    ) : new Map();
+    const hasClass = classificationData && classMap.size > 0;
+    let t = '<table><thead><tr><th>path</th><th>size</th>' + (hasClass ? '<th>class</th>' : '') + '<th></th></tr></thead><tbody>';
     files.forEach(f => {
+      const label = hasClass ? (classMap.get(f.path) || '—') : null;
       t += '<tr><td>' + escapeHtml(f.path) + '</td><td>' + escapeHtml(String(f.size)) + '</td>'
+        + (hasClass ? '<td><span class="pill">' + escapeHtml(label) + '</span></td>' : '')
         + '<td><button class="secondary apply-preview-btn" data-path="' + escapeHtml(f.path) + '" style="font-size:11px;padding:2px 8px;">Preview</button></td></tr>';
     });
     t += '</tbody></table>';

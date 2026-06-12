@@ -476,3 +476,187 @@ test('project switch clears old observability cache when fetches fail', async ()
   assert.equal(memory.innerHTML.includes('1 active goal'), false,
     'alpha memory must not appear after switching to beta');
 });
+
+// ── Helpers for v2.7 ADR-0012 Apply Viewer JSDOM tests ──────────
+
+/** Switch to teams tab and return the JSDOM state. */
+async function switchToTeamsTab(window, document) {
+  const tab = document.querySelector('[data-view="teams"]');
+  assert.ok(tab, 'teams tab must exist');
+  tab.click();
+  // Let async event handlers and renderWorkspace/loadSectionData resolve.
+  await new Promise(r => setTimeout(r, 50));
+  // After switching, the apply viewer form should be present.
+}
+
+/** Set apply viewer input values and mock fixtures for apply-requests calls. */
+function setupApplyFixtures(setFixture, teamId, applyId, opts = {}) {
+  const base = '/bridge/projects/cli-bridge/teams/' + teamId + '/apply-requests/' + applyId;
+
+  // Manifest fixture.
+  setFixture(base, {
+    ok: true,
+    payload: { apply: { applyId, status: 'applied', isolatedDirId: 'id1', fileCount: opts.fileCount ?? 2, byteTotal: 20 } },
+  });
+
+  // Classification fixture (200 or 409).
+  if (opts.classification200) {
+    setFixture(base + '/classification', {
+      ok: true,
+      payload: {
+        files: [
+          { path: 'src/a.ts', size: 10, classification: 'unchanged' },
+          { path: 'src/b.ts', size: 20, classification: 'modified' },
+        ],
+        summary: { new: 0, modified: 1, unchanged: 1, unreadableBaseline: 0, total: 2 },
+      },
+    });
+  } else {
+    setFixture(base + '/classification', {
+      ok: false, status: 409,
+      payload: { status: 'error', message: 'Baseline manifest not captured for this apply request' },
+    });
+  }
+
+  // Files fixture.
+  setFixture(base + '/files', {
+    ok: true,
+    payload: { files: [{ path: 'src/a.ts', size: 10 }, { path: 'src/b.ts', size: 20 }] },
+  });
+
+  // Preview fixture — the mock strips query string, so key is just the pathname.
+  setFixture(base + '/files/preview', {
+    ok: true,
+    payload: { path: 'src/a.ts', size: 10, truncated: false, redacted: false, content: '// a content' },
+  });
+}
+
+// ── v2.7 ADR-0012: Classification behavior tests ───────────────
+
+test('v2.7: view result calls manifest, classification, files — all GET, renders summary', async () => {
+  const { window, document, setFixture, fetchCalls } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-apply';
+  const applyId = 'apply-success';
+
+  await switchToTeamsTab(window, document);
+
+  // Now the apply viewer form should exist.
+  const btn = document.getElementById('btn-apply-view');
+  assert.ok(btn, 'btn-apply-view must exist after switching to teams');
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
+
+  btn.click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Verify all three GET calls.
+  const applyCalls = fetchCalls.filter(c => c.path.includes('/apply-requests/'));
+  assert.ok(applyCalls.some(c => c.path.endsWith('/' + applyId) && c.method === 'GET'), 'manifest GET');
+  assert.ok(applyCalls.some(c => c.path.endsWith('/classification') && c.method === 'GET'), 'classification GET');
+  assert.ok(applyCalls.some(c => c.path.endsWith('/files') && c.method === 'GET'), 'files GET');
+  for (const c of applyCalls) {
+    assert.equal(c.method, 'GET', 'all apply calls must be GET');
+  }
+
+  // Classification summary renders.
+  const classEl = document.getElementById('apply-view-classification');
+  assert.ok(classEl.innerHTML.includes('modified 1'), 'summary shows modified count');
+  assert.ok(classEl.innerHTML.includes('unchanged 1'), 'summary shows unchanged count');
+
+  // File table shows per-file labels.
+  const filesEl = document.getElementById('apply-view-files');
+  assert.ok(filesEl.innerHTML.includes('unchanged'), 'file table has unchanged');
+  assert.ok(filesEl.innerHTML.includes('modified'), 'file table has modified');
+
+  // No forbidden display in the apply viewer elements only.
+  const viewerHtml = [classEl, filesEl, document.getElementById('apply-view-manifest'), document.getElementById('apply-view-preview')]
+    .map(el => el ? el.innerHTML : '').join('');
+  assert.equal(/[^"]sha256[^"]/.test(viewerHtml), false, 'no sha256 in viewer');
+  assert.equal(viewerHtml.includes('rawContent'), false, 'no rawContent');
+  assert.equal(viewerHtml.includes('baselineContent'), false, 'no baselineContent');
+  assert.equal(viewerHtml.includes('originalContent'), false, 'no originalContent');
+  assert.equal(/[^"]lineDetail[^"]/.test(viewerHtml), false, 'no lineDetail');
+  assert.equal(viewerHtml.includes('/confirm'), false, 'no /confirm path in viewer');
+  assert.equal(viewerHtml.includes('/discard'), false, 'no /discard path in viewer');
+  assert.equal(/promote|apply-from-preview/i.test(viewerHtml), false, 'no promote/write in viewer');
+});
+
+test('v2.7: classification 409 shows unavailable, manifest and files still render', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-no-baseline';
+  const applyId = 'apply-no-bl';
+
+  await switchToTeamsTab(window, document);
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: false });
+
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Classification shows unavailable.
+  const classEl = document.getElementById('apply-view-classification');
+  assert.ok(classEl.innerHTML.includes('unavailable'), 'classification shows unavailable');
+
+  // Manifest still visible.
+  const manifestEl = document.getElementById('apply-view-manifest');
+  assert.ok(manifestEl.innerHTML.includes(applyId), 'manifest shows applyId');
+
+  // Files still visible.
+  const filesEl = document.getElementById('apply-view-files');
+  assert.ok(filesEl.innerHTML.includes('src/a.ts'), 'files show paths');
+});
+
+test('v2.7: preview still works and shows content, unaffected by classification', async () => {
+  const { window, document, setFixture, fetchCalls } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-preview';
+  const applyId = 'apply-prev';
+
+  await switchToTeamsTab(window, document);
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
+
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Click a Preview button.
+  const previewBtn = document.querySelector('.apply-preview-btn');
+  assert.ok(previewBtn, 'preview button must exist');
+  previewBtn.click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Preview GET was called.
+  assert.ok(fetchCalls.some(c => c.path.includes('/files/preview') && c.method === 'GET'), 'preview GET');
+
+  // Preview displays content.
+  const previewEl = document.getElementById('apply-view-preview');
+  assert.ok(previewEl.textContent.includes('// a content'), 'preview shows file content');
+  assert.ok(previewEl.textContent.includes('size 10'), 'preview shows size');
+});
+
+// ── v2.7 ADR-0012: Source-level boundary checks ────────────────
+
+test('v2.7: classification viewer source has no write verbs, forbidden display, or controls', () => {
+  const html = renderProjectConsoleHtml();
+  assert.match(html, /\/classification/, 'console HTML must contain /classification endpoint');
+
+  const vStart = html.indexOf('async function viewApplyResult');
+  const vEnd = html.indexOf('async function runReviewFlow');
+  const viewer = html.slice(vStart, vEnd);
+
+  assert.equal(/'POST'|'PUT'|'DELETE'|'PATCH'/.test(viewer), false, 'viewer still GET-only');
+  assert.equal(/sha256/i.test(viewer), false, 'no sha256 in viewer');
+  assert.equal(/rawContent|baselineContent|originalContent/.test(viewer), false, 'no raw content keys');
+  assert.equal(/diff|lineDetail/i.test(viewer), false, 'no diff/lineDetail');
+  assert.equal(/promote|apply-from-preview/i.test(viewer), false, 'no promote/write');
+  assert.equal(/apply-requests[^\n]*\/confirm/.test(viewer), false, 'no confirm');
+  assert.equal(/apply-requests[^\n]*\/discard/.test(viewer), false, 'no discard');
+});

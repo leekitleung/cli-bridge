@@ -297,6 +297,19 @@ All notable changes to CLI Bridge are documented here.
   opt-in, not-applied, GET-only, response boundary, cap-exceeded (file-count and
   byte-total, store-level), unknown-applyId 404, and exact item shape.
 
+### Added — v2.7 Console Classification Display (EX-2.7-1, ADR-0012)
+
+- **Console apply-result viewer**: displays per-file classification labels and
+  summary counts alongside the existing manifest/files/preview. Classification
+  fetch is non-blocking — 409 no-baseline shows quiet unavailable and manifest/
+  files/preview remain functional.
+- **Presentation-only**: no new backend endpoint, no ADR-0010/ADR-0011 semantic
+  change. All viewer calls are GET-only. No sha256/raw content/diff/absolute path
+  display. No apply/promote/write controls.
+- **Tests**: source-level check + 3 JSDOM behavior tests: success path
+  (manifest+classification+files GET, summary labels), 409 unavailable
+  (manifest/files intact), preview regression (unchanged by classification).
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.
