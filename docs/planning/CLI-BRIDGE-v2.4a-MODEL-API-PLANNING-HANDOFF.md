@@ -1,6 +1,6 @@
 # CLI Bridge v2.4a — PlannerModel Implementation Handoff
 
-**Status**: IMPLEMENTED — v2.4a PlannerModel closeout complete (2026-06-12)
+**Status**: IMPLEMENTED — v2.4a PlannerModel closeout complete (2026-06-12). Handoff reviewed and approved; implementation complete.
 **Date**: 2026-06-12
 **Based on**: `ADR-0004-model-api-middle-layer.md` (ACCEPTED)
 **Implementation commits**: `697d73a`, `1f6079f`, `f660a18` (review fix rounds)
@@ -12,13 +12,13 @@
 This handoff describes the minimum scope, preconditions, allowed modifications,
 and verification criteria for the v2.4a PlannerModel implementation slice.
 
-**It is NOT an authorization to implement.** Implementation may begin only after this handoff is reviewed and approved (ADR-0004 is already accepted).
+**Implementation complete.** ADR-0004 is accepted. This handoff has been reviewed, approved, and implemented.
 
 ---
 
 ## 1. Scope
 
-### 1.1 What v2.4a will implement (if approved)
+### 1.1 What v2.4a implemented
 
 | Capability | Detail |
 |-----------|--------|
@@ -97,16 +97,15 @@ Minimum requirements for the preamble:
 
 ---
 
-## 2. Preconditions for implementation
+## 2. Preconditions for implementation (all met)
 
-Before writing code:
 - [x] ADR-0004 status = ACCEPTED.
-- [ ] This handoff reviewed and approved.
-- [ ] `ModelProvider` interface design finalized.
-- [ ] System preamble text approved (security review for prompt injection).
-- [ ] Audit event types (`model_plan_request`, `model_plan_result`) added to
-  `AUDIT_EVENT_TYPES` in types.ts (type-only — no runtime behavior until
-  implementation).
+- [x] This handoff reviewed and approved.
+- [x] `ModelProvider` interface design finalized.
+- [x] System preamble text approved (security review for prompt injection).
+- [x] Audit event types (`model_plan_request`, `model_plan_result`) added to
+  `AUDIT_EVENT_TYPES` in types.ts.
+- [x] Implementation reviewed via REVIEW-2.4a-2c; 523/523 tests pass.
 
 ---
 
@@ -159,7 +158,7 @@ Before the implementation batch is considered ready for review:
 
 | Capability | v2.4a | v2.4b+ |
 |-----------|--------|-------------|
-| PlannerModel | ✅ Authorized by ADR-0004; pending handoff approval | — |
+| PlannerModel | ✅ Authorized by ADR-0004; implemented | — |
 | CriticModel / ArbiterModel | ❌ Not authorized | Requires separate ADR |
 | Multi-provider AgentTeam | ❌ Not authorized | v2.4b (Track C) |
 | Parallel slots | ❌ Not authorized | Deferred past v2.4 |
@@ -182,4 +181,4 @@ PLAN-AGENTTEAM-PROJECT-CONTROL-PLANE.md §9
 
 ---
 
-*This handoff authorizes implementation only after this document is reviewed and approved. ADR-0004 is already accepted.*
+*Implementation complete. ADR-0004 accepted. See `CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md` for closeout evidence.*
