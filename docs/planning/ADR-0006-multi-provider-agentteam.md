@@ -1,8 +1,13 @@
 # ADR-0006: Multi-provider AgentTeam
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12). Accepted with conditions on the
+            v2.4b implementation handoff (see "Acceptance Conditions" below).
+            The v2.3 safety boundary is unchanged: sequential, concurrency 1,
+            patch-only, read-only conflict reports. No implementation is
+            authorized until a v2.4b execution handoff is created.
 
 ## Context
 
@@ -36,7 +41,7 @@ while PROPOSED.
 
 ### 1. Whether multi-provider AgentTeam is allowed
 
-**Proposed decision**: PERMIT, only for sequential, patch-only AgentTeam
+**Decision**: PERMIT, only for sequential, patch-only AgentTeam
 orchestration.
 
 v2.4b MAY allow a TeamSpec to bind different logical slots to different
@@ -283,7 +288,7 @@ ADR-0006 does NOT authorize:
 
 ## Consequences
 
-If accepted:
+Accepted consequences:
 
 - v2.4b may implement multi-provider AgentTeam identity, capability parity,
   sequential per-slot provider binding, artifact normalization, and read-only
@@ -292,22 +297,43 @@ If accepted:
   response shapes, tests, verification commands, and closeout criteria.
 - v2.5+ workspace-write, worktree, merge queue, and auto-merge remain deferred.
 
-If rejected:
+Rejected alternative, retained for decision history:
 
 - AgentTeam remains single-provider.
 - Multi-provider planning can continue as documentation only, or be replaced by
   a narrower design.
 
+## Acceptance Conditions
+
+The acceptance is conditional on the v2.4b implementation handoff satisfying all
+of the following. A reviewer must confirm them at closeout:
+
+1. Backward compatibility: existing single-provider TeamSpec payloads remain
+   valid, and a slot with no provider defaults to the team-level provider.
+   Covered by tests.
+2. Hard-invariant tests: `maxConcurrentBridgeSlots=1`,
+   `bridgeGovernedParallelSlots=false`, `isolationModes=['patch-only']`, and the
+   existing "a slot is already executing" rejection still holds across providers
+   (no parallelism).
+3. Fail-closed tests: unknown capability fails closed; a provider failure during
+   a slot stops the team and does not auto-start later slots; a partial artifact
+   is recorded only when it passes redaction and SlotArtifact validation; a
+   cross-provider conflict report is read-only (no winner selection, no apply).
+4. Audit correlation includes `providerId`, `endpointId`, and `bridgeRunId`, and
+   contains no raw provider output or API keys.
+5. `canExecute=true` capability metadata remains inert: v2.4b adds no bridge
+   dispatch/execution path that acts on it. New fields only extend existing
+   TeamSpec routes and MUST NOT become a mutation or execution endpoint.
+
 ## Status / Next
 
-PROPOSED. No implementation is authorized by this document while it remains
-PROPOSED.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
-Before execution can start:
+Next:
 
-1. A reviewer must explicitly accept or reject ADR-0006.
-2. If accepted, create a v2.4b implementation handoff with allowed modification
-   range, forbidden list, tests, and closeout checklist.
-3. Execution must remain in an `EX-*` batch and return to review before any
+1. Create a v2.4b implementation handoff with allowed modification range,
+   forbidden list, tests, and closeout checklist that satisfies the Acceptance
+   Conditions.
+2. Execution must remain in an `EX-*` batch and return to review before any
    further expansion into parallel slots, worktree isolation, workspace-write,
-   merge queue, or model arbitration.
+   merge queue, or model arbitration — each still requires its own ADR.
