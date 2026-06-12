@@ -130,6 +130,22 @@ test('GET /bridge/projects/:key returns project-scoped grouped data and derived 
   assert.equal(res.payload.status.activeGoal.id, alphaGoal.payload.goal.id);
   assert.equal(res.payload.status.goalsSummary.length, 1);
   assert.ok(typeof res.payload.status.latestAudit === 'object', 'latestAudit must be present when audit events exist');
+  // status.memory is now sourced from the real derived-memory view (capped),
+  // not a reserved []. Alpha has an active goal and a review → ≥1 entry.
+  assert.ok(Array.isArray(res.payload.status.memory));
+  assert.ok(res.payload.status.memory.length >= 1, `expected populated status.memory, got ${res.payload.status.memory.length}`);
+  assert.ok(res.payload.status.memory.length <= 8, 'status.memory must be capped at 8');
+  assert.ok(res.payload.status.memory.some(m => m.sourceKind === 'goal'),
+    'status.memory should include a goal-derived fact');
+});
+
+test('GET /bridge/projects/:key returns empty status.memory for a project with no records', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'bare-status', label: 'Bare' });
+
+  const res = await call(runtime, 'GET', `${BRIDGE_PROJECTS_PATH}/bare-status`);
+
+  assert.equal(res.statusCode, 200);
   assert.deepEqual(res.payload.status.memory, []);
 });
 

@@ -54,6 +54,7 @@ import { InMemoryAuditLog } from '../storage/audit-log.ts';
 import type {
   AgentReviewRequest,
   AuditEvent,
+  DerivedMemoryEntry,
   Goal,
   PendingPrompt,
   Plan,
@@ -767,13 +768,17 @@ interface GoalWithPlan {
   plan: Plan | null;
 }
 
+// Cap for the compact derived-memory list embedded in the project-detail
+// status panel. The full memory view remains on GET /bridge/projects/:key/memory.
+const STATUS_MEMORY_LIMIT = 8;
+
 interface ProjectDerivedStatus {
   progress: { completed: number; total: number } | null;
   activeGoal: { id: string; description: string; status: Goal['status'] } | null;
   goalsSummary: Array<{ id: string; description: string; status: Goal['status'] }>;
   blockedGate: { goalId: string; stepId: string; stepIndex: number } | null;
   latestAudit: AuditEvent | null;
-  memory: [];
+  memory: DerivedMemoryEntry[];
 }
 
 function listGoalsWithPlans(runtime: BridgeRuntime): GoalWithPlan[] {
@@ -795,7 +800,11 @@ function buildProjectSummaries(runtime: BridgeRuntime): ProjectSummary[] {
   });
 }
 
-function buildProjectStatus(goals: GoalWithPlan[], auditEvents: AuditEvent[] = []): ProjectDerivedStatus {
+function buildProjectStatus(
+  goals: GoalWithPlan[],
+  auditEvents: AuditEvent[] = [],
+  memory: DerivedMemoryEntry[] = [],
+): ProjectDerivedStatus {
   const activeEntry = goals.find(({ goal }) =>
     goal.status !== 'done' &&
     goal.status !== 'cancelled' &&
@@ -832,7 +841,7 @@ function buildProjectStatus(goals: GoalWithPlan[], auditEvents: AuditEvent[] = [
     latestAudit: auditEvents.length > 0
       ? auditEvents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
       : null,
-    memory: [],
+    memory,
   };
 }
 
@@ -870,13 +879,22 @@ function buildProjectDetail(runtime: BridgeRuntime, projectKey: string): {
       return event.packetId ? scopedRecordIds.has(event.packetId) : false;
     });
 
+  // Status panel memory uses the same project-scoped derived-memory source as
+  // GET /bridge/projects/:key/memory (read-only, deterministic). Capped to keep
+  // the project-detail payload compact; the full view remains on the memory
+  // endpoint.
+  const obsInput = buildObservabilityInput(runtime, projectKey);
+  const derivedMemory = obsInput
+    ? buildDerivedMemory(obsInput).entries.slice(0, STATUS_MEMORY_LIMIT)
+    : [];
+
   return {
     summary,
     goals,
     reviews,
     pendingPrompts,
     auditEvents,
-    status: buildProjectStatus(goals, auditEvents),
+    status: buildProjectStatus(goals, auditEvents, derivedMemory),
   };
 }
 

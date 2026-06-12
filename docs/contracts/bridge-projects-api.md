@@ -159,7 +159,9 @@ Returns detailed data for a single project.
     "goalsSummary": [{ "id": "...", "description": "...", "status": "done" }],
     "blockedGate": { "goalId": "...", "stepId": "...", "stepIndex": 2 } | null,
     "latestAudit": { "id": "...", "type": "create_pending_review", "timestamp": ... } | null,
-    "memory": []
+    "memory": [
+      { "sourceKind": "goal", "sourceId": "project-summary", "timestamp": ..., "fact": "2 active goal(s) in this project" }
+    ]
   }
 }
 ```
@@ -185,7 +187,7 @@ Returned when the project key is unknown AND no records reference it.
 | `status.goalsSummary` | object[] | All goals with id, description, status. |
 | `status.blockedGate` | object? | First blocked-needs-gate step across all goals. Null if none. |
 | `status.latestAudit` | AuditEvent \| null | Most recent audit event within project scope. Null if no events. |
-| `status.memory` | [] | Reserved. |
+| `status.memory` | DerivedMemoryEntry[] | Compact project-scoped derived memory (same source as `GET .../memory`), capped to the most recent 8 entries. Empty array when no records exist. |
 
 ---
 
