@@ -1,8 +1,11 @@
 # ADR-0004: Model API Middle Layer
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12). Follow-up wording fix applied (60e4fa9).
+            PlannerModel failure semantics tightened (8d7ce67).
+            Agent workflow governance added (6b8ebb6, AGENTS.md).
 
 ## Context
 
@@ -189,8 +192,7 @@ If rejected:
 
 ## Status / Next
 
-PROPOSED. Awaiting senior review. If approved:
+ACCEPTED. Senior review passed (2026-06-12).
 
-1. Status changes to ACCEPTED.
-2. The drafted v2.4a PlannerModel implementation handoff may proceed through review.
-3. Implementation begins only after the handoff is reviewed and approved.
+1. The drafted v2.4a PlannerModel implementation handoff is awaiting review.
+2. Implementation begins only after the handoff is reviewed and approved.

@@ -63,10 +63,10 @@ Constraints:
 
 ### Track B — ADR-0004 Model API Decision
 
-**Status update (2026-06-12)**: ADR-0004 drafted as PROPOSED
+**Status update (2026-06-12)**: ADR-0004 ACCEPTED
 (`docs/planning/ADR-0004-model-api-middle-layer.md`). v2.4a handoff drafted
-(`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`), pending ADR
-acceptance. No implementation has begun.
+(`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`), awaiting
+handoff review. No implementation has begun.
 
 Required before v2.4a implementation.
 

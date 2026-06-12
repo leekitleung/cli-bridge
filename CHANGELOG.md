@@ -8,8 +8,8 @@ All notable changes to CLI Bridge are documented here.
 - Added repository agent workflow governance docs: `AGENTS.md` for hard batch
   rules and `docs/planning/CLI-BRIDGE-AGENT-WORKFLOW.md` for the RP/EX/REVIEW
   process.
-- **ADR-0004 Model API Middle Layer** drafted as PROPOSED (`docs/planning/ADR-0004-model-api-middle-layer.md`). Covers: API key handling, PlannerModel scope, redaction, prompt-injection controls, budget/retry/timeout, offline behavior, audit events, ADR-0003 invariants preservation. No runtime implementation.
-- **v2.4a PlannerModel Implementation Handoff** drafted (`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`). Pending ADR-0004 acceptance before any code.
+- **ADR-0004 Model API Middle Layer** ACCEPTED (`docs/planning/ADR-0004-model-api-middle-layer.md`). Senior review passed; covers API key handling, PlannerModel scope, redaction, prompt-injection controls, budget/retry/timeout, offline behavior, audit events, ADR-0003 invariants preservation. No runtime implementation.
+- **v2.4a PlannerModel Implementation Handoff** awaiting handoff review (`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`). ADR-0004 accepted; implementation requires handoff review approval.
 - Post-v2.3 planning handoff and PLAN-AGENTTEAM updated to reference ADR-0004 draft.
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout

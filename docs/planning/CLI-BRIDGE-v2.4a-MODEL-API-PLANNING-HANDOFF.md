@@ -1,9 +1,10 @@
 # CLI Bridge v2.4a — PlannerModel Implementation Handoff
 
-**Status**: HANDOFF DRAFT — Pending ADR-0004 acceptance
+**Status**: HANDOFF DRAFT — Awaiting handoff review (ADR-0004 accepted)
 **Date**: 2026-06-12
-**Based on**: `ADR-0004-model-api-middle-layer.md` (PROPOSED)
-**Prerequisite**: ADR-0004 MUST be ACCEPTED before any implementation begins
+**Based on**: `ADR-0004-model-api-middle-layer.md` (ACCEPTED)
+**Prerequisite**: This handoff MUST be reviewed and approved before any implementation begins.
+               ADR-0004 is already accepted.
 
 ---
 
@@ -13,7 +14,7 @@ This handoff describes the minimum scope, preconditions, allowed modifications,
 and verification criteria for the v2.4a PlannerModel implementation slice.
 
 **It is NOT an authorization to implement.** Implementation may begin only after:
-1. ADR-0004 is accepted.
+1. This handoff is reviewed and approved (ADR-0004 is already accepted).
 2. This handoff is reviewed and approved.
 
 ---
@@ -63,7 +64,7 @@ and verification criteria for the v2.4a PlannerModel implementation slice.
 ## 2. Preconditions for implementation
 
 Before writing code:
-- [ ] ADR-0004 status = ACCEPTED.
+- [x] ADR-0004 status = ACCEPTED.
 - [ ] This handoff reviewed and approved.
 - [ ] `ModelProvider` interface design finalized.
 - [ ] System preamble text approved (security review for prompt injection).
