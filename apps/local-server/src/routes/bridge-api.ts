@@ -22,6 +22,7 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
+import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
 import { validateProviderCapability } from '../storage/provider-capability.ts';
@@ -107,6 +108,8 @@ export interface BridgeRuntime {
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
+  // v2.5 Workspace apply
+  applyStore: WorkspaceApplyStore;
 }
 
 export interface BridgeRuntimeOptions {
@@ -121,6 +124,8 @@ export interface BridgeRuntimeOptions {
   goalPlanCommandOptions?: CommandRunOptions;
   // v2.4a: model provider factory for test injection. Default: OpenAiAdapter.
   modelProviderFactory?: (apiKey: string) => ModelProvider;
+  // v2.5: workspace apply root directory (default: temp dir for tests).
+  applyRoot?: string;
 }
 
 
@@ -192,6 +197,219 @@ function matchProjectTeamPath(pathname: string): {
     const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
     return { matched: true, key, sub: '' };
   } catch { return { matched: true, key: undefined, sub: '' }; }
+}
+
+/** Matches /bridge/projects/:key/teams/:teamId/apply-requests[/:applyId/{confirm|discard}]. */
+function matchTeamApplyPath(pathname: string): {
+  matched: true; key: string | undefined; sub: '' | 'confirm' | 'discard'; teamId?: string; applyId?: string;
+} | { matched: false } {
+  const prefix = BRIDGE_PROJECTS_PATH + '/';
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  const teamsIdx = rest.indexOf('/teams/');
+  if (teamsIdx === -1) return { matched: false };
+  const raw = rest.slice(0, teamsIdx);
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  const remaining = rest.slice(teamsIdx + '/teams/'.length);
+  // remaining = "teamId/apply-requests" or "teamId/apply-requests/applyId/confirm" or ".../discard"
+  const parts = remaining.split('/');
+  if (parts.length < 2 || parts[1] !== 'apply-requests') return { matched: false };
+  try {
+    const decodedKey = decodeURIComponent(raw);
+    const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
+    const teamId = decodeURIComponent(parts[0]);
+    if (teamId.length === 0) return { matched: false };
+    if (parts.length === 2) return { matched: true, key, sub: '', teamId };
+    if (parts.length === 4 && (parts[3] === 'confirm' || parts[3] === 'discard')) {
+      return { matched: true, key, sub: parts[3] as 'confirm' | 'discard', teamId, applyId: decodeURIComponent(parts[2]) };
+    }
+  } catch { return { matched: false }; }
+  return { matched: false };
+}
+
+// ── v2.5 Workspace apply handlers ────────────────────────────────
+
+async function handleApplyRequestCreate(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+  const body = parsed.body as Record<string, unknown>;
+
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  if (proj.archivedAt) return error(409, 'Project is archived');
+  if (!proj.workspaceApplyEnabled) return error(409, 'Workspace apply is not enabled for this project');
+
+  const team = runtime.teamStore.get(teamId);
+  if (!team) return error(404, 'Team not found');
+  if (team.projectId !== projectKey) return error(404, 'Team not found');
+
+  // Conflict check: team must be clean.
+  const artifacts = runtime.teamStore.listArtifacts(teamId);
+  const conflictReport = detectFileConflicts(
+    artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles })),
+  );
+  if (!conflictReport.clean) return error(409, 'Team has unresolved file conflicts; apply requires a clean conflict report');
+
+  const slotId = body.slotId;
+  if (typeof slotId !== 'string') return error(400, 'slotId is required');
+  const planStepId = body.planStepId;
+  if (typeof planStepId !== 'string') return error(400, 'planStepId is required');
+
+  // Artifact must exist and belong to the team.
+  const artifact = artifacts.find(a => a.slotId === slotId && a.planStepId === planStepId);
+  if (!artifact) return error(400, 'Artifact not found: no matching slotId/planStepId for this team');
+
+  const files = Array.isArray(body.proposedFiles) ? body.proposedFiles.filter((f: unknown) => typeof f === 'string') : artifact.proposedFiles;
+  if (files.length === 0) return error(400, 'No files to apply');
+
+  const result = runtime.applyStore.createRequest({
+    projectKey,
+    teamId,
+    slotId,
+    planStepId,
+    proposedFiles: files,
+    actor: typeof body.actor === 'string' ? body.actor : undefined,
+  });
+  if (result.error || !result.request) return error(409, result.error ?? 'Failed to create apply request');
+  const req = result.request;
+
+  runtime.auditLog.createAndAppend({
+    sessionId: 'apply-' + req.applyId,
+    projectId: projectKey,
+    type: 'workspace_apply_request',
+    source: 'workspace-apply',
+    target: 'team-' + teamId,
+    teamId,
+    slotId,
+    planStepId,
+    result: {
+      ok: true,
+      metadata: {
+        applyId: req.applyId,
+        teamId,
+        slotId,
+        planStepId,
+        fileList: req.proposedFiles,
+        fileCount: req.proposedFiles.length,
+        caps: req.caps,
+        status: 'pending',
+        actor: req.actor,
+      },
+    },
+  });
+
+  return created({ apply: req });
+}
+
+function handleApplyRequestList(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+): BridgeResult {
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  return ok({ applies: runtime.applyStore.listByTeam(projectKey, teamId) });
+}
+
+async function handleApplyRequestConfirm(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+  request: IncomingMessage,
+): Promise<BridgeResult> {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return error(400, parsed.message);
+  const body = parsed.body as Record<string, unknown>;
+
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+  if (proj.archivedAt) return error(409, 'Project is archived');
+  if (!proj.workspaceApplyEnabled) return error(409, 'Workspace apply is not enabled');
+
+  if (body.confirmed !== true) return error(400, 'confirmed must be true');
+  const files = body.files as Record<string, string> | undefined;
+  if (!files || typeof files !== 'object' || Object.keys(files).length === 0) return error(400, 'files map is required');
+
+  const result = runtime.applyStore.confirmApply({
+    applyId,
+    files,
+    actor: typeof body.actor === 'string' ? body.actor : undefined,
+  });
+
+  const req = runtime.applyStore.getRequest(applyId);
+  const auditMeta: Record<string, unknown> = {
+    applyId,
+    teamId,
+    slotId: req?.slotId,
+    planStepId: req?.planStepId,
+    fileList: req?.proposedFiles ?? [],
+    fileCount: req?.fileCount ?? 0,
+    byteTotal: req?.byteTotal ?? 0,
+    caps: req?.caps,
+    status: result.ok ? 'applied' : 'failed',
+    isolatedDirId: req?.isolatedDirId,
+    actor: req?.actor,
+  };
+
+  runtime.auditLog.createAndAppend({
+    sessionId: 'apply-result-' + applyId,
+    projectId: projectKey,
+    type: 'workspace_apply_result',
+    source: 'workspace-apply',
+    target: 'team-' + teamId,
+    teamId,
+    slotId: req?.slotId,
+    planStepId: req?.planStepId,
+    result: { ok: result.ok, failureReason: result.ok ? undefined : result.error, metadata: auditMeta },
+  });
+
+  if (!result.ok) return error(409, result.error);
+  return ok({ apply: result.request });
+}
+
+function handleApplyRequestDiscard(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+): BridgeResult {
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return error(404, 'Project not found');
+
+  const result = runtime.applyStore.discard(applyId);
+  if (!result.ok) return error(409, result.error);
+
+  const req = result.request;
+  runtime.auditLog.createAndAppend({
+    sessionId: 'apply-discard-' + applyId,
+    projectId: projectKey,
+    type: 'workspace_apply_result',
+    source: 'workspace-apply',
+    target: 'team-' + teamId,
+    teamId,
+    slotId: req.slotId,
+    planStepId: req.planStepId,
+    result: {
+      ok: true,
+      metadata: {
+        applyId,
+        teamId,
+        slotId: req.slotId,
+        planStepId: req.planStepId,
+        status: 'discarded',
+        isolatedDirId: req.isolatedDirId,
+        actor: req.actor,
+      },
+    },
+  });
+
+  return ok({ apply: req });
 }
 
 async function handleTeamsPost(
@@ -713,6 +931,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const teamStore = new InMemoryTeamSpecStore();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
+  const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
+  const applyStore = new WorkspaceApplyStore(applyRoot + '/cli-bridge-apply');
 
   if (snapshotStore) {
     const read = snapshotStore.read();
@@ -793,6 +1013,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     teamStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
+    applyStore,
   };
 }
 
@@ -1598,19 +1819,22 @@ export async function handleBridgeRequest(
     if (!existing) {
       return error(404, 'Project not found');
     }
-    // Only label and description are writable.
+    // Only label, description, and workspaceApplyEnabled are writable.
     const label = typeof parsed.body.label === 'string' && parsed.body.label.trim().length > 0
       ? parsed.body.label.trim() : undefined;
     const description = typeof parsed.body.description === 'string'
       ? parsed.body.description : undefined;
+    const workspaceApplyEnabled = typeof parsed.body.workspaceApplyEnabled === 'boolean'
+      ? parsed.body.workspaceApplyEnabled : undefined;
     // Reject disallowed fields.
     if ('key' in parsed.body || 'createdAt' in parsed.body || 'archivedAt' in parsed.body) {
-      return error(400, 'Only label and description can be updated');
+      return error(400, 'Only label, description, and workspaceApplyEnabled can be updated');
     }
     const updated = runtime.projectStore.upsert({
       key: projectKey,
       label,
       description,
+      workspaceApplyEnabled,
     });
     runtime.persist();
     return ok({ project: updated });
@@ -1777,6 +2001,27 @@ export async function handleBridgeRequest(
     return handleSlotAdvancePost(runtime, teamMatch.key, teamMatch.teamId, teamMatch.slotId, request);
   }
   if (teamMatch.matched) return error(405, 'Method not allowed');
+
+  // ── v2.5 Workspace apply ──────────────────────────────────────────
+
+  const applyMatch = matchTeamApplyPath(pathname);
+  if (applyMatch.matched && method === 'POST' && applyMatch.sub === '') {
+    if (!applyMatch.key || !applyMatch.teamId) return error(400, 'Invalid project key or team id');
+    return handleApplyRequestCreate(runtime, applyMatch.key, applyMatch.teamId, request);
+  }
+  if (applyMatch.matched && method === 'GET' && applyMatch.sub === '') {
+    if (!applyMatch.key || !applyMatch.teamId) return error(400, 'Invalid project key or team id');
+    return handleApplyRequestList(runtime, applyMatch.key, applyMatch.teamId);
+  }
+  if (applyMatch.matched && method === 'POST' && applyMatch.sub === 'confirm') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyRequestConfirm(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId, request);
+  }
+  if (applyMatch.matched && method === 'POST' && applyMatch.sub === 'discard') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyRequestDiscard(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId);
+  }
+  if (applyMatch.matched) return error(405, 'Method not allowed');
 
   // ── v2.0 Goal-driven execution (§7.4) ──────────────────────────────
 

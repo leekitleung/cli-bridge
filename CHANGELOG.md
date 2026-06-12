@@ -117,6 +117,23 @@ All notable changes to CLI Bridge are documented here.
   workspace-write auto-apply, no commit/push/merge, no model arbitration, and no
   execution path from `canExecute=true` metadata.**
 
+### Added — v2.5 Workspace Apply (Approach A)
+
+- **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.
+  Pure Node fs/path, no git/spawn/child_process. Path containment, caps (200 files / 5 MB),
+  atomic staging → publish, reversible discard.
+- **Opt-in per-project flag**: `Project.workspaceApplyEnabled` (default false).
+  PATCH-able via existing `PATCH /bridge/projects/:key`.
+- **Apply gate endpoints**: `POST .../apply-requests` (create), `POST .../confirm` (gated write),
+  `GET .../apply-requests` (list, no raw content), `POST .../discard` (reversible).
+- **Artifact correlation**: slotId/planStepId matching, proposedFiles exact match,
+  clean conflict report required.
+- **Audit**: `workspace_apply_request` / `workspace_apply_result` with typed
+  `result.metadata`. No raw file content or secrets in audit.
+- **Tests**: 18 workspace-apply tests. Total: 541/541 passing tests.
+- **No git/spawn/VCS, no main-tree write, no auto-apply, no new endpoint,
+  no npm dependencies, no parallel slots, no shell/exec/run/command.**
+
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 
 ### Added

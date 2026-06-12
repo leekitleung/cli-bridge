@@ -75,6 +75,9 @@ export const AUDIT_EVENT_TYPES = [
   // v2.4a-8 CriticModel advisory review
   'model_critique_request',
   'model_critique_result',
+  // v2.5 Workspace apply
+  'workspace_apply_request',
+  'workspace_apply_result',
 ] as const;
 
 export const AUDIT_RISK_LEVELS = [
@@ -590,6 +593,8 @@ export interface Project {
   /** Optional archive timestamp. When set, the project is excluded from
    *  default listing and blocks new record creation. */
   archivedAt?: number;
+  /** v2.5: opt-in workspace apply. Default false. */
+  workspaceApplyEnabled?: boolean;
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */

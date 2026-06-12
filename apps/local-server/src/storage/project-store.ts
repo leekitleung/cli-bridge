@@ -29,6 +29,7 @@ export interface CreateProjectInput {
   label?: string;
   description?: string;
   now?: number;
+  workspaceApplyEnabled?: boolean;
 }
 
 export interface BuildSummaryInput {
@@ -129,6 +130,7 @@ export class InMemoryProjectStore {
       description: input.description ?? existing?.description,
       createdAt: input.now ?? existing?.createdAt ?? Date.now(),
       ...(existing?.archivedAt !== undefined ? { archivedAt: existing.archivedAt } : {}),
+      workspaceApplyEnabled: input.workspaceApplyEnabled ?? existing?.workspaceApplyEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));
@@ -145,6 +147,7 @@ export class InMemoryProjectStore {
       label: input.label ?? key,
       description: input.description,
       createdAt: input.now ?? Date.now(),
+      workspaceApplyEnabled: input.workspaceApplyEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));
