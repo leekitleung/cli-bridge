@@ -69,6 +69,16 @@ All notable changes to CLI Bridge are documented here.
   baseline capture, no diff/classification, no main-tree write, no `git`/VCS, no
   auto-apply, no "apply from preview", no parallelism, no autonomy. No code until
   the `EX-2.5-3` handoff satisfying the acceptance conditions is created.
+- Drafted **ADR-0011 Read-only Apply-result File Classification (metadata-only,
+  v2.6)** as PROPOSED. Proposes one strictly read-only endpoint returning a coarse
+  per-file `{ path, size, classification }` derived purely from the persisted
+  ADR-0010 baseline metadata and an in-process hash of the isolated apply result.
+  Closed enum: `new | modified | unchanged | missing-baseline | unreadable-baseline`.
+  It does NOT persist/return raw baseline or result content, does NOT return any
+  `sha256`, does NOT produce a textual/diff-like view, and does NOT add main-tree
+  reads/writes, `git`/spawn/VCS, apply-from-preview, scheduler/model-triggered work,
+  or a project-level workspace root. Awaits explicit human accept/reject before any
+  code (then `EX-2.6-1` handoff).
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +
