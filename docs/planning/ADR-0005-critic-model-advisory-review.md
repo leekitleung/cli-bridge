@@ -1,8 +1,12 @@
 # ADR-0005: CriticModel Advisory Review
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12). Accepted with conditions on the
+            implementation handoff (see "Acceptance Conditions" below).
+            CriticModel remains advisory-only (canExecute=false); no
+            implementation is authorized until an execution handoff is created.
 
 ## Context
 
@@ -26,7 +30,7 @@ handoff.
 
 ### 1. Whether CriticModel is allowed
 
-**Proposed decision**: PERMIT, under a narrower advisory-only boundary than
+**Decision**: PERMIT, under a narrower advisory-only boundary than
 PlannerModel.
 
 CriticModel MAY review a proposed PlanDraft and produce structured critique
@@ -57,7 +61,7 @@ logic as advisory context only.
 
 ### 3. canExecute boundary
 
-**Proposed decision**: CriticModel registers as `canExecute: false`.
+**Decision**: CriticModel registers as `canExecute: false`.
 
 CriticModel cannot:
 
@@ -186,28 +190,46 @@ CriticModel MUST preserve all ADR-0003 and ADR-0004 invariants:
 
 ## Consequences
 
-If accepted:
+Accepted consequences:
 
 - CriticModel becomes the next allowed model role after PlannerModel.
 - A separate implementation handoff must define exact files, request shape,
   schema, audit event typing, prompt text, tests, and verification commands.
 - CriticModel remains advisory-only and cannot mutate authoritative state.
 
-If rejected:
+Rejected alternative, retained for decision history:
 
 - PlannerModel remains the only allowed Model API role.
 - Plan review continues through human review, schema validation, PolicyEngine,
   and existing audit/console surfaces.
 
+## Acceptance Conditions
+
+The acceptance is conditional on the implementation handoff satisfying all of
+the following. A reviewer must confirm them at closeout:
+
+1. §9 API surface: the handoff MUST choose exactly one option and justify it.
+   Any new endpoint MUST remain read-only and MUST NOT become a mutation or
+   execution path.
+2. Test coverage MUST include: forbidden-action sanitization/rejection
+   (executable instructions, shell/git, secret requests, gate-bypass,
+   workspace-write), schema fail-closed on invalid output, audit redaction (no
+   API key, no raw prompt/response, no file/CLI content), and proof that a
+   `blocking` critique is a label only and does not reject/mutate/cancel any
+   goal/plan/step state.
+3. No automatic revision or self-iteration loop
+   (`PlannerModel -> CriticModel -> PlannerModel`). Any such flow requires a
+   separate ADR or amendment.
+
 ## Status / Next
 
-PROPOSED. No implementation is authorized by this document while it remains
-PROPOSED.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
-Before execution can start:
+Next:
 
-1. A reviewer must explicitly accept or reject ADR-0005.
-2. If accepted, create an implementation handoff with allowed modification
-   range, forbidden list, tests, and closeout checklist.
-3. Execution must remain in an `EX-*` batch and return to review before any
-   further model-role expansion.
+1. Create a CriticModel implementation handoff with allowed modification range,
+   forbidden list, tests, and closeout checklist that satisfies the Acceptance
+   Conditions.
+2. Implementation must remain in an `EX-*` batch and return to review before any
+   further model-role expansion (Arbiter, Replanner, Summarizer, bounded
+   iteration) — each still requires its own ADR.

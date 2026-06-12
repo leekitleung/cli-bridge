@@ -10,8 +10,11 @@ All notable changes to CLI Bridge are documented here.
   process.
 - **ADR-0004 Model API Middle Layer** ACCEPTED. Senior review passed.
 - **v2.4a PlannerModel Implementation Handoff** approved, handoff review complete.
-- Drafted **ADR-0005 CriticModel Advisory Review** as PROPOSED. It does not
-  authorize implementation until explicitly accepted.
+- **ADR-0005 CriticModel Advisory Review** ACCEPTED (senior review, with
+  conditions on the implementation handoff). CriticModel is advisory-only
+  (`canExecute=false`); no implementation is authorized until an execution
+  handoff satisfying the acceptance conditions is created. Arbiter, Replanner,
+  Summarizer, and any bounded self-iteration remain unauthorized.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
