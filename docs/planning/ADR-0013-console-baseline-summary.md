@@ -1,8 +1,18 @@
 # ADR-0013: Console Apply-result Baseline Summary Presentation (read-only, v2.8)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            `EX-2.8-1` implementation handoff (see "Acceptance Conditions"
+            below). This authorizes a strictly read-only project-console
+            presentation of the existing `ApplyManifest.baselineManifest`
+            summary fields (`capturedAt`, counts, `byteTotal`, opaque
+            `rootRef`) from the existing manifest GET response. No backend
+            endpoint, no baseline entries, no `sha256`/raw content/baseline
+            preview/diff display, no main-tree access, no `git`/spawn/VCS, no
+            apply-from-preview, no write/promote controls, and no ADR-0010 /
+            ADR-0011 semantic changes.
 
 ## Context
 
@@ -36,12 +46,14 @@ display, diff, main-tree access, or backend changes.
 
 ### 0. Decision status
 
-**PROPOSED**. No implementation is authorized until this ADR is explicitly
-accepted and an `EX-2.8-1` handoff is created.
+**ACCEPTED** (2026-06-12, senior review, with the Acceptance Conditions below).
+No implementation is authorized until the `EX-2.8-1` handoff
+(`CLI-BRIDGE-v2.8-CONSOLE-BASELINE-SUMMARY-HANDOFF.md`) is created and
+satisfies every Acceptance Condition.
 
 ### 1. Whether console baseline summary presentation is allowed
 
-**Proposed decision**: PERMIT, but only as a strictly read-only project-console
+**Decision**: PERMIT, but only as a strictly read-only project-console
 presentation of the summary already present in the existing apply manifest
 response.
 
@@ -207,12 +219,12 @@ An `EX-2.8-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED. Await explicit accept/reject/revise decision.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
-If accepted:
+Next:
 
-1. Author `CLI-BRIDGE-v2.8-CONSOLE-BASELINE-SUMMARY-HANDOFF.md`
-   (`EX-2.8-1`) with exact allowed files, UI behavior, tests, verification, and
+1. `CLI-BRIDGE-v2.8-CONSOLE-BASELINE-SUMMARY-HANDOFF.md` authorizes
+   `EX-2.8-1` with exact allowed files, UI behavior, tests, verification, and
    closeout checklist.
 2. Execution proceeds in an `EX-*` batch and returns to `REVIEW-2.8-1`.
 3. Baseline preview, raw baseline/result content persistence, textual diff,

@@ -123,6 +123,19 @@ All notable changes to CLI Bridge are documented here.
   display, main-tree access, `git`/spawn/VCS, apply-from-preview, write/promote
   controls, or changes to ADR-0010/ADR-0011 semantics. Awaits explicit human
   accept/reject before any code.
+- **ADR-0013** ACCEPTED (senior review, with conditions on the `EX-2.8-1`
+  implementation handoff). Authorizes strictly read-only project-console
+  presentation of the existing `ApplyManifest.baselineManifest` summary fields:
+  `capturedAt`, counts, `byteTotal`, and opaque `rootRef`. Uses only the
+  existing manifest GET response. No backend endpoint, no baseline entries, no
+  `sha256`/raw content/baseline preview/diff display, no main-tree access, no
+  `git`/spawn/VCS, no apply-from-preview, no write/promote controls, and no
+  ADR-0010/ADR-0011 semantic changes.
+- Drafted **v2.8 Console Baseline Summary Presentation Handoff** (AUTHORIZED
+  for `EX-2.8-1`). Fixes the console-only implementation shape, summary and
+  absent-baseline render behavior, rootRef opaque/no-absolute-path assertions,
+  GET-only viewer behavior, tests, verification commands, and closeout
+  checklist.
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +
