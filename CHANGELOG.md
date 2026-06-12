@@ -77,6 +77,14 @@ All notable changes to CLI Bridge are documented here.
   pre-apply baseline, no diff/classification, no `git`/spawn/VCS, no main-tree
   write, and no "apply from preview". Tests map to the ADR-0009 acceptance
   conditions; execution returns to `REVIEW-*`.
+- Drafted **ADR-0010 Pre-apply Baseline Manifest Capture** as PROPOSED. This
+  planning-only follow-up proposes the smallest baseline step needed before any
+  future classification work: metadata-only capture of proposed file paths
+  (exists/readable/size/hash/error kind) from a server-controlled trusted root,
+  default OFF and fail-closed. It authorizes no implementation until explicit
+  senior acceptance and does **not** authorize raw baseline content persistence,
+  diff/diff-like views, modified/unchanged/new classification, main-tree writes,
+  `git`/VCS, apply-from-preview, parallelism, or scheduler/model-triggered apply.
 
 ### Added — v2.5 Read-only Apply-result Presentation (`EX-2.5-3`)
 - **`GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId`** —
