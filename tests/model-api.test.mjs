@@ -148,7 +148,7 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   // Goal state unchanged.
   assert.ok(!runtime.goalStore.getPlanByGoal(goal.id), 'model plan should not attach to goal');
 
-  // Audit events: request before, result after, both present.
+  // Audit events: request before, result after, both present with metadata.
   const events = runtime.auditLog.exportEvents();
   const req = events.find(e => e.type === 'model_plan_request');
   const resE = events.find(e => e.type === 'model_plan_result');
@@ -156,8 +156,18 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   assert.ok(resE, 'should have model_plan_result');
   assert.equal(req.result.ok, true);
   assert.equal(resE.result.ok, true);
-  // request timestamp should be before result.
-  assert.ok(req.timestamp <= resE.timestamp, 'request audit must precede result');
+  // Request audit metadata.
+  const reqMeta = JSON.parse(req.result.failureReason);
+  assert.equal(reqMeta.status, 'requested');
+  assert.equal(reqMeta.provider, 'openai/gpt-4o-mini');
+  assert.equal(reqMeta.tokenBudget.input, 4096);
+  // Result audit metadata.
+  const resMeta = JSON.parse(resE.result.failureReason);
+  assert.equal(resMeta.status, 'accepted');
+  assert.equal(resMeta.provider, 'mock/test');
+  assert.ok(typeof resMeta.latencyMs === 'number');
+  assert.ok(resMeta.usage);
+  assert.ok(typeof resMeta.usage.promptTokens === 'number');
 });
 
 // ════════════════════════════════════════════════════════════
@@ -191,10 +201,16 @@ test('plannerSource: model-api fail-closed on provider error', async () => {
   assert.equal(res.statusCode, 409);
   assert.ok(!runtime.goalStore.getPlanByGoal(goal.id));
 
-  // Both request and result audit must exist.
+  // Both request and result audit must exist with failure metadata.
   const events = runtime.auditLog.exportEvents();
   assert.ok(events.find(e => e.type === 'model_plan_request'));
-  assert.ok(events.find(e => e.type === 'model_plan_result'));
+  const resE = events.find(e => e.type === 'model_plan_result');
+  assert.ok(resE);
+  assert.equal(resE.result.ok, false);
+  const meta = JSON.parse(resE.result.failureReason);
+  assert.equal(meta.status, 'failed');
+  assert.ok(meta.failureReason);
+  assert.equal(meta.failureKind, 'provider-error');
 });
 
 // ════════════════════════════════════════════════════════════
@@ -217,7 +233,10 @@ test('plannerSource: model-api fail-closed on schema-invalid output', async () =
   const resE = events.find(e => e.type === 'model_plan_result');
   assert.ok(resE);
   assert.equal(resE.result.ok, false);
-  assert.ok(resE.result.failureReason);
+  const meta = JSON.parse(resE.result.failureReason);
+  assert.equal(meta.status, 'rejected');
+  assert.equal(meta.failureKind, 'schema-rejection');
+  assert.ok(meta.failureReason);
 });
 
 // ════════════════════════════════════════════════════════════
@@ -321,6 +340,59 @@ test('plannerSource: model-api audit has no raw content or key', async () => {
   const allEvents = JSON.stringify(runtime.auditLog.exportEvents());
   assert.equal(allEvents.includes('sk-test-secret'), false, 'API key must not be in audit');
   assert.equal(allEvents.includes('Build a login page'), false, 'goal description must not be in audit');
+
+  // Verify audit metadata JSON inside failureReason has no raw content.
+  const resultEvent = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_result');
+  const meta = JSON.parse(resultEvent.result.failureReason);
+  const metaStr = JSON.stringify(meta);
+  assert.equal(metaStr.includes('sk-test'), false, 'API key must not be in audit metadata');
+  assert.equal(metaStr.includes('rawProviderOutput'), false, 'no raw provider output in audit metadata');
+  assert.equal(metaStr.includes('rawPrompt'), false, 'no raw prompt content in audit metadata');
+});
+
+// ════════════════════════════════════════════════════════════
+// Audit metadata completeness
+// ════════════════════════════════════════════════════════════
+
+test('model plan audit request includes provider, budget, tiers, status', async () => {
+  const mockProvider = createMockProvider({ returnsValid: true, stepCount: 1 });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test');
+
+  await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
+  });
+
+  const req = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_request');
+  assert.ok(req);
+  const meta = JSON.parse(req.result.failureReason);
+  assert.equal(meta.status, 'requested');
+  assert.ok(meta.provider);
+  assert.equal(meta.endpoint, 'openai/chat/completions');
+  assert.ok(typeof meta.tokenBudget.input === 'number');
+  assert.ok(typeof meta.tokenBudget.output === 'number');
+  assert.ok(typeof meta.maxSteps === 'number');
+  assert.ok(Array.isArray(meta.permittedTiers));
+});
+
+test('model plan audit result accepted has provider, usage, latency, status', async () => {
+  const mockProvider = createMockProvider({ returnsValid: true, stepCount: 1 });
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => ({ plan: mockProvider }) });
+  const goal = createGoal(runtime, 'Test');
+
+  await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id, plannerSource: 'model-api', apiKey: 'sk-test',
+  });
+
+  const res = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_result');
+  assert.ok(res);
+  assert.equal(res.result.ok, true);
+  const meta = JSON.parse(res.result.failureReason);
+  assert.equal(meta.status, 'accepted');
+  assert.ok(meta.provider);
+  assert.ok(typeof meta.latencyMs === 'number');
+  assert.ok(meta.usage);
+  assert.ok(typeof meta.usage.promptTokens === 'number');
 });
 
 // ════════════════════════════════════════════════════════════

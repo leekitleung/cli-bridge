@@ -1741,14 +1741,19 @@ export async function handleBridgeRequest(
       }
 
       const { generateModelPlan } = await import('../model/planner-model.ts');
+      const providerLabel = typeof parsed.body.apiKey === 'string' ? 'openai/gpt-4o-mini' : 'unknown';
       const provider = runtime.modelProviderFor
         ? runtime.modelProviderFor(apiKey)
         : new (await import('../model/openai-adapter.ts')).OpenAiAdapter(apiKey);
 
+      const maxSteps = 10;
+      const resolvedTiers = Array.isArray(parsed.body.permittedTiers)
+        ? (parsed.body.permittedTiers as string[]).filter((v: unknown) => v === 'patch-proposal' || v === 'workspace-write')
+        : ['patch-proposal'];
+
       // ════════════════════════════════════════════════
       // Audit: model_plan_request (before provider call)
       // ════════════════════════════════════════════════
-      const requestStart = Date.now();
       runtime.auditLog.createAndAppend({
         sessionId: 'model-plan-' + goalId,
         projectId,
@@ -1756,27 +1761,46 @@ export async function handleBridgeRequest(
         source: 'planner-model',
         target: 'goal-' + goalId,
         goalId,
-        result: { ok: true },
+        result: {
+          ok: true,
+          failureReason: JSON.stringify({
+            status: 'requested',
+            provider: providerLabel,
+            endpoint: 'openai/chat/completions',
+            tokenBudget: { input: 4096, output: 2048 },
+            maxSteps,
+            permittedTiers: resolvedTiers,
+          }),
+        },
       });
 
+      const requestStart = Date.now();
       const modelResult = await generateModelPlan(provider, {
         goalDescription: goal.description,
         endpoints: (Array.isArray(parsed.body.availableEndpoints)
           ? (parsed.body.availableEndpoints as string[]).filter((v: unknown) => typeof v === 'string' && v.length > 0).map(id => ({ id, label: id }))
           : [{ id: 'claude-code-command', label: 'Claude Code' }]),
-        permittedTiers: Array.isArray(parsed.body.permittedTiers)
-          ? (parsed.body.permittedTiers as string[]).filter((v: unknown) => v === 'patch-proposal' || v === 'workspace-write')
-          : ['patch-proposal'],
+        permittedTiers: resolvedTiers,
         projectContext: goal.projectId,
-        maxSteps: 10,
+        maxSteps,
       });
+      const latencyMs = Date.now() - requestStart;
 
       // ════════════════════════════════════════════════
-      // Audit: model_plan_result (all outcomes)
+      // Audit: model_plan_result (all outcomes, rich metadata)
       // ════════════════════════════════════════════════
-      const auditResultMeta = modelResult.ok
-        ? { provider: modelResult.provider, usage: modelResult.usage, accepted: true }
-        : { provider: 'unknown', failureReason: modelResult.reason, rejected: true, kind: modelResult.kind, usage: modelResult.usage };
+      const resultMeta: Record<string, unknown> = {
+        status: modelResult.ok ? 'accepted' : (modelResult.kind === 'provider-error' || modelResult.kind === 'budget-exceeded' ? 'failed' : 'rejected'),
+        provider: modelResult.ok ? modelResult.provider : providerLabel,
+        latencyMs,
+      };
+      if (modelResult.ok) {
+        resultMeta.usage = modelResult.usage;
+      } else {
+        resultMeta.failureKind = modelResult.kind;
+        resultMeta.failureReason = modelResult.reason;
+        if (modelResult.usage) resultMeta.usage = modelResult.usage;
+      }
       runtime.auditLog.createAndAppend({
         sessionId: 'model-plan-result-' + goalId,
         projectId,
@@ -1786,7 +1810,7 @@ export async function handleBridgeRequest(
         goalId,
         result: {
           ok: modelResult.ok,
-          failureReason: modelResult.ok ? undefined : modelResult.reason,
+          failureReason: JSON.stringify(resultMeta),
         },
       });
 
