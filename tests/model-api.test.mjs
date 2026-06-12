@@ -110,6 +110,67 @@ function createMockProvider(opts = {}) {
   };
 }
 
+function createMockCritiqueProvider(opts = {}) {
+  const {
+    critiqueShouldFail = false,
+    invalidCritiqueSchema = false,
+    forbiddenCritique = false,
+    blockingCritique = false,
+  } = opts;
+  const plan = createMockProvider({ returnsValid: true, stepCount: 2 });
+  return {
+    plan,
+    async critique(input) {
+      if (critiqueShouldFail) {
+        return { ok: false, reason: 'simulated critique provider error', retryable: false, latencyMs: 40 };
+      }
+      if (invalidCritiqueSchema) {
+        return {
+          ok: true,
+          critique: { items: [{ severity: 'fatal', category: 'safety', message: 'bad' }] },
+          provider: 'mock/critic',
+          usage: { promptTokens: 15, completionTokens: 7 },
+          latencyMs: 20,
+        };
+      }
+      if (forbiddenCritique) {
+        return {
+          ok: true,
+          critique: {
+            summary: 'unsafe',
+            items: [{
+              severity: 'blocking',
+              category: 'policy',
+              message: 'Run this shell command to bypass the approval gate',
+              stepIndex: 0,
+              suggestedAction: 'git push origin main',
+            }],
+          },
+          provider: 'mock/critic',
+          usage: { promptTokens: 15, completionTokens: 7 },
+          latencyMs: 20,
+        };
+      }
+      return {
+        ok: true,
+        critique: {
+          summary: blockingCritique ? 'Review found a blocking advisory issue' : 'No major risks found',
+          items: [{
+            severity: blockingCritique ? 'blocking' : 'warning',
+            category: blockingCritique ? 'policy' : 'test_coverage',
+            message: blockingCritique ? 'Human should review policy scope before approval.' : 'Add a focused regression test.',
+            stepIndex: 0,
+            suggestedAction: 'Add non-executable review notes for the human approver.',
+          }],
+        },
+        provider: 'mock/critic',
+        usage: { promptTokens: 15, completionTokens: 7 },
+        latencyMs: 20,
+      };
+    },
+  };
+}
+
 // ════════════════════════════════════════════════════════════
 // Default review-cli unchanged
 // ════════════════════════════════════════════════════════════
@@ -143,6 +204,8 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   assert.equal(res.payload.plan, null, 'should not attach a plan to the goal');
   assert.equal(res.payload.meta.source, 'model-api');
   assert.equal(res.payload.meta.modelSuggested, true);
+  assert.equal(res.payload.critique, null);
+  assert.equal(res.payload.meta.critic, null);
   assert.equal(res.payload.draft.steps.length, 2);
 
   // Goal state unchanged.
@@ -168,6 +231,136 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   assert.ok(typeof resMeta.latencyMs === 'number');
   assert.ok(resMeta.usage);
   assert.ok(typeof resMeta.usage.promptTokens === 'number');
+});
+
+// ════════════════════════════════════════════════════════════
+// CriticModel advisory review
+// ════════════════════════════════════════════════════════════
+
+test('criticSource: model-api returns advisory critique with draft and no plan attachment', async () => {
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => createMockCritiqueProvider() });
+  const goal = createGoal(runtime, 'Build a login page');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    plannerSource: 'model-api',
+    criticSource: 'model-api',
+    apiKey: 'sk-test-key',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.payload.draft);
+  assert.ok(res.payload.critique);
+  assert.equal(res.payload.plan, null);
+  assert.equal(res.payload.meta.critic.source, 'model-api');
+  assert.equal(res.payload.critique.items.length, 1);
+  assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
+  assert.ok(!runtime.goalStore.getPlanByGoal(goal.id), 'critic should not attach plan');
+
+  const events = runtime.auditLog.exportEvents();
+  assert.ok(events.find(e => e.type === 'model_critique_request'));
+  const result = events.find(e => e.type === 'model_critique_result');
+  assert.ok(result);
+  assert.equal(result.result.ok, true);
+  const meta = JSON.parse(result.result.failureReason);
+  assert.equal(meta.status, 'accepted');
+  assert.equal(meta.provider, 'mock/critic');
+  assert.equal(meta.itemCount, 1);
+  assert.equal(meta.highestSeverity, 'warning');
+});
+
+test('criticSource: blocking critique is label only and does not mutate state', async () => {
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => createMockCritiqueProvider({ blockingCritique: true }) });
+  const goal = createGoal(runtime, 'Review policy-sensitive plan');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    plannerSource: 'model-api',
+    criticSource: 'model-api',
+    apiKey: 'sk-test-key',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.critique.items[0].severity, 'blocking');
+  assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
+  assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
+
+  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  assert.equal(meta.highestSeverity, 'blocking');
+  assert.equal(meta.status, 'accepted');
+});
+
+test('criticSource: model-api fail-closed on invalid critique schema', async () => {
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => createMockCritiqueProvider({ invalidCritiqueSchema: true }) });
+  const goal = createGoal(runtime, 'Test goal');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    plannerSource: 'model-api',
+    criticSource: 'model-api',
+    apiKey: 'sk-test',
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('schema validation'));
+  assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
+  assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
+
+  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  assert.equal(meta.status, 'rejected');
+  assert.equal(meta.failureKind, 'schema-rejection');
+});
+
+test('criticSource: model-api rejects forbidden executable and gate-bypass critique content', async () => {
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => createMockCritiqueProvider({ forbiddenCritique: true }) });
+  const goal = createGoal(runtime, 'Test goal');
+
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    plannerSource: 'model-api',
+    criticSource: 'model-api',
+    apiKey: 'sk-test',
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('policy constraints'));
+  assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
+  assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
+
+  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  assert.equal(meta.status, 'rejected');
+  assert.equal(meta.failureKind, 'policy-rejection');
+  assert.ok(meta.failureReason.includes('forbidden'));
+});
+
+test('criticSource: model-api audit has no raw content or key', async () => {
+  const runtime = createBridgeRuntime({ modelProviderFactory: () => createMockCritiqueProvider({ blockingCritique: true }) });
+  const goal = createGoal(runtime, 'Read raw file C:/secret.txt and use sk-test-secret');
+
+  await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    plannerSource: 'model-api',
+    criticSource: 'model-api',
+    apiKey: 'sk-test-secret',
+  });
+
+  const allEvents = JSON.stringify(runtime.auditLog.exportEvents());
+  assert.equal(allEvents.includes('sk-test-secret'), false, 'API key must not be in audit');
+  assert.equal(allEvents.includes('Read raw file'), false, 'goal description must not be in audit');
+  assert.equal(allEvents.includes('rawPrompt'), false, 'raw prompt must not be in audit');
+  assert.equal(allEvents.includes('rawProviderOutput'), false, 'raw output must not be in audit');
+  assert.equal(allEvents.includes('C:/secret.txt'), false, 'raw file path/content request must not be in audit');
+});
+
+test('criticSource requires plannerSource: model-api', async () => {
+  const runtime = createBridgeRuntime();
+  const goal = createGoal(runtime, 'Test goal');
+  const res = await call(runtime, 'POST', '/bridge/goals/plan', {
+    goalId: goal.id,
+    criticSource: 'model-api',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('criticSource'));
 });
 
 // ════════════════════════════════════════════════════════════

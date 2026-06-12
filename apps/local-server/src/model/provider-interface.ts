@@ -16,6 +16,19 @@ export interface PlanRequestInput {
   maxSteps: number;
 }
 
+export interface CritiqueRequestInput {
+  /** The goal description whose draft is being reviewed. */
+  goalDescription: string;
+  /** Advisory PlanDraft to critique. */
+  draft: PlanDraftSuggestion;
+  /** Minimal policy context; never grants authority. */
+  permittedTiers: string[];
+  /** Project context (optional). */
+  projectContext?: string;
+  /** Maximum critique items. */
+  maxItems: number;
+}
+
 export interface PlanStepSuggestion {
   intent: string;
   kind: string;
@@ -42,6 +55,31 @@ export interface PlanResult {
   latencyMs: number;
 }
 
+export interface CritiqueItemSuggestion {
+  severity: string;
+  category: string;
+  message: string;
+  stepIndex?: number;
+  stepId?: string;
+  suggestedAction?: string;
+}
+
+export interface CritiqueDraftSuggestion {
+  items: CritiqueItemSuggestion[];
+  summary?: string;
+}
+
+export interface CritiqueResult {
+  ok: true;
+  critique: CritiqueDraftSuggestion;
+  /** Model provider identifier. */
+  provider: string;
+  /** Token usage stats. */
+  usage: { promptTokens: number; completionTokens: number };
+  /** Latency in ms. */
+  latencyMs: number;
+}
+
 export interface PlanError {
   ok: false;
   reason: string;
@@ -57,4 +95,7 @@ export interface ModelProvider {
    *  Returns PlanResult on success, PlanError on failure.
    *  Never side-effects; never executes; never persists. */
   plan(input: PlanRequestInput): Promise<PlanResult | PlanError>;
+  /** Review an advisory draft and return advisory critique items.
+   *  Never side-effects; never executes; never persists. */
+  critique?(input: CritiqueRequestInput): Promise<CritiqueResult | PlanError>;
 }

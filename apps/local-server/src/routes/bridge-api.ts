@@ -1770,6 +1770,12 @@ export async function handleBridgeRequest(
     const plannerSource = typeof parsed.body.plannerSource === 'string'
       ? parsed.body.plannerSource
       : 'review-cli';
+    const criticSource = typeof parsed.body.criticSource === 'string'
+      ? parsed.body.criticSource
+      : 'none';
+    if (criticSource !== 'none' && criticSource !== 'model-api') {
+      return error(400, 'criticSource must be "none" or "model-api"');
+    }
 
     // ════════════════════════════════════════════════
     // v2.4a Model API path
@@ -1875,8 +1881,89 @@ export async function handleBridgeRequest(
         return error(409, httpMessage);
       }
 
+      let critiquePayload: unknown = null;
+      let criticMeta: Record<string, unknown> | null = null;
+      if (criticSource === 'model-api') {
+        const { generateModelCritique } = await import('../model/critic-model.ts');
+        runtime.auditLog.createAndAppend({
+          sessionId: 'model-critique-' + goalId,
+          projectId,
+          type: 'model_critique_request',
+          source: 'critic-model',
+          target: 'goal-' + goalId,
+          goalId,
+          result: {
+            ok: true,
+            failureReason: JSON.stringify({
+              status: 'requested',
+              provider: providerLabel,
+              endpoint: 'openai/chat/completions',
+              tokenBudget: { input: 4096, output: 2048 },
+              maxItems: 10,
+              reviewedStepCount: modelResult.draft.steps.length,
+            }),
+          },
+        });
+
+        const critiqueStart = Date.now();
+        const critiqueResult = await generateModelCritique(provider, {
+          goalDescription: goal.description,
+          draft: modelResult.draft,
+          permittedTiers: resolvedTiers,
+          projectContext: goal.projectId,
+          maxItems: 10,
+        });
+        const critiqueLatencyMs = Date.now() - critiqueStart;
+        const critiqueMeta: Record<string, unknown> = {
+          status: critiqueResult.ok ? 'accepted' : (critiqueResult.kind === 'provider-error' || critiqueResult.kind === 'budget-exceeded' ? 'failed' : 'rejected'),
+          provider: critiqueResult.ok ? critiqueResult.provider : providerLabel,
+          latencyMs: critiqueLatencyMs,
+        };
+        if (critiqueResult.ok) {
+          const severities = critiqueResult.critique.items.map(item => item.severity);
+          critiqueMeta.usage = critiqueResult.usage;
+          critiqueMeta.itemCount = critiqueResult.critique.items.length;
+          critiqueMeta.highestSeverity = severities.includes('blocking') ? 'blocking' : (severities.includes('warning') ? 'warning' : (severities.includes('info') ? 'info' : 'none'));
+        } else {
+          critiqueMeta.failureKind = critiqueResult.kind;
+          critiqueMeta.failureReason = critiqueResult.reason;
+          if (critiqueResult.usage) critiqueMeta.usage = critiqueResult.usage;
+        }
+        runtime.auditLog.createAndAppend({
+          sessionId: 'model-critique-result-' + goalId,
+          projectId,
+          type: 'model_critique_result',
+          source: 'critic-model',
+          target: 'goal-' + goalId,
+          goalId,
+          result: {
+            ok: critiqueResult.ok,
+            failureReason: JSON.stringify(critiqueMeta),
+          },
+        });
+
+        if (!critiqueResult.ok) {
+          let httpMessage = 'Model critique generation failed';
+          if (critiqueResult.kind === 'schema-rejection') httpMessage += ': model output did not pass schema validation';
+          else if (critiqueResult.kind === 'policy-rejection') httpMessage += ': model output violated policy constraints';
+          else if (critiqueResult.kind === 'budget-exceeded') httpMessage += ': input exceeds token budget';
+          else httpMessage += ': provider error';
+          return error(409, httpMessage);
+        }
+
+        critiquePayload = critiqueResult.critique;
+        criticMeta = {
+          source: 'model-api',
+          modelSuggested: true,
+          provider: critiqueResult.provider,
+          usage: critiqueResult.usage,
+          latencyMs: critiqueResult.latencyMs,
+        };
+      }
+
       return ok({
         draft: modelResult.draft,
+        critique: critiquePayload,
         plan: null,
         meta: {
           source: 'model-api',
@@ -1884,6 +1971,7 @@ export async function handleBridgeRequest(
           provider: modelResult.provider,
           usage: modelResult.usage,
           latencyMs: modelResult.latencyMs,
+          critic: criticMeta,
         },
       });
     }
@@ -1893,6 +1981,9 @@ export async function handleBridgeRequest(
     // ════════════════════════════════════════════════
     if (plannerSource !== 'review-cli') {
       return error(400, 'plannerSource must be "review-cli" or "model-api"');
+    }
+    if (criticSource !== 'none') {
+      return error(400, 'criticSource requires plannerSource: "model-api"');
     }
     const availableEndpoints = Array.isArray(parsed.body.availableEndpoints)
       ? (parsed.body.availableEndpoints as string[]).filter(

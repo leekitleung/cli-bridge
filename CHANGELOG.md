@@ -12,9 +12,10 @@ All notable changes to CLI Bridge are documented here.
 - **v2.4a PlannerModel Implementation Handoff** approved, handoff review complete.
 - **ADR-0005 CriticModel Advisory Review** ACCEPTED (senior review, with
   conditions on the implementation handoff). CriticModel is advisory-only
-  (`canExecute=false`); no implementation is authorized until an execution
-  handoff satisfying the acceptance conditions is created. Arbiter, Replanner,
-  Summarizer, and any bounded self-iteration remain unauthorized.
+  (`canExecute=false`). Arbiter, Replanner, Summarizer, and any bounded
+  self-iteration remain unauthorized.
+- **v2.4b CriticModel Implementation Handoff** added and implemented as an
+  advisory-only `criticSource: "model-api"` option on existing model planning.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
@@ -43,6 +44,25 @@ All notable changes to CLI Bridge are documented here.
   no auto-apply/commit/push/merge, no parallel slots, no WorkBuddy executor,
   no CriticModel/ArbiterModel.**
 - **Closeout**: `docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md` approved.
+
+### Added — v2.4b CriticModel Advisory Review
+- **`POST /bridge/goals/plan`** with `plannerSource: "model-api"` now accepts
+  optional `criticSource: "model-api"` and returns structured advisory critique
+  beside the draft. `criticSource` defaults to `"none"`.
+- **Provider contract**: `ModelProvider.critique()` added for advisory
+  CriticModel calls; no state mutation or execution authority.
+- **Critic prompt + validation**: fixed system preamble and fail-closed schema /
+  forbidden-action checks for executable instructions, shell/git content, secret
+  requests, gate bypass, and workspace-write instructions.
+- **Audit enrichment**: `model_critique_request` /
+  `model_critique_result` events with metadata only; no raw prompt, response,
+  API key, file content, or CLI content.
+- **Tests**: model API coverage includes CriticModel happy path, `blocking` as
+  label-only, schema fail-closed, forbidden-action rejection, audit redaction,
+  default compatibility, and route pairing validation.
+- **No new endpoint, no new dependency, no self-iteration, no auto-apply,
+  no commit/push/merge, no execution path, and no goal/plan/step mutation from
+  critique output.**
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 

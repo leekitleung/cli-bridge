@@ -596,7 +596,7 @@ function renderGoalCard() {
   let html = '<div style="font-size:14px;font-weight:500;">' + escapeHtml(g.description) + '</div>';
   html += '<div style="margin-top:6px;"><span class="pill">' + escapeHtml(g.status) + '</span></div>';
   // v2.4a: Model API status (read-only).
-  html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">Model API: <span class="unavailable">unavailable — use review-cli plan generation</span></div>';
+  html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">Model API: <span class="unavailable">unavailable — use review-cli plan generation</span>; CriticModel: <span class="unavailable">advisory-only</span></div>';
   if (activeGoal.plan) {
     html += '<div style="margin-top:12px;"><table><thead><tr><th>#</th><th>intent</th><th>kind</th><th>tier</th><th>status</th><th></th></tr></thead><tbody>';
     (activeGoal.plan.steps || []).forEach(s => {

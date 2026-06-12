@@ -5,8 +5,16 @@
 // Parse failures are classified as non-retryable (not network errors).
 // Input budget enforced before sending.
 
-import type { ModelProvider, PlanRequestInput, PlanResult, PlanError } from './provider-interface.ts';
+import type {
+  CritiqueRequestInput,
+  CritiqueResult,
+  ModelProvider,
+  PlanRequestInput,
+  PlanResult,
+  PlanError,
+} from './provider-interface.ts';
 import { PLANNER_SYSTEM_PREAMBLE } from './planner-prompt.ts';
+import { CRITIC_SYSTEM_PREAMBLE } from './critic-prompt.ts';
 
 export interface OpenAiAdapterOptions {
   /** API endpoint (default: https://api.openai.com/v1). */
@@ -121,6 +129,65 @@ export class OpenAiAdapter implements ModelProvider {
     }
   }
 
+  async critique(input: CritiqueRequestInput): Promise<CritiqueResult | PlanError> {
+    const start = performance.now();
+    const draftText = JSON.stringify(input.draft);
+    const userMessage = [
+      '## Goal',
+      input.goalDescription,
+      '',
+      '## Project Context',
+      input.projectContext || '(none provided)',
+      '',
+      '## Policy Summary',
+      `Permitted tiers: ${input.permittedTiers.join(', ')}`,
+      `Maximum critique items: ${input.maxItems}`,
+      'Critique is advisory-only and cannot mutate state.',
+      '',
+      '## Advisory PlanDraft',
+      draftText,
+      '',
+      'Generate the critique JSON now.',
+    ].join('\n');
+
+    const totalInputText = CRITIC_SYSTEM_PREAMBLE + userMessage;
+    const estimatedTokens = estimateTokens(totalInputText);
+    if (estimatedTokens > this.options.maxInputTokens) {
+      return {
+        ok: false,
+        reason: `Input too large: estimated ${estimatedTokens} tokens exceeds budget ${this.options.maxInputTokens}`,
+        retryable: false,
+        latencyMs: Math.round(performance.now() - start),
+      };
+    }
+
+    const messages = [
+      { role: 'system', content: CRITIC_SYSTEM_PREAMBLE },
+      { role: 'user', content: userMessage },
+    ];
+
+    const networkResult = await this.sendWithRetry(messages, start);
+    if (networkResult.kind === 'error') return networkResult.error;
+
+    try {
+      const critique = this.parseCritiqueOutput(networkResult.content);
+      return {
+        ok: true,
+        critique,
+        provider: networkResult.provider,
+        usage: networkResult.usage,
+        latencyMs: networkResult.latencyMs,
+      };
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        reason: `Model output parse error: ${(err as Error)?.message ?? 'unknown'}`,
+        retryable: false,
+        latencyMs: Math.round(performance.now() - start),
+      };
+    }
+  }
+
   private async sendWithRetry(
     messages: Array<{ role: string; content: string }>,
     start: number,
@@ -210,6 +277,18 @@ export class OpenAiAdapter implements ModelProvider {
     return {
       steps: (Array.isArray(parsed.steps) ? parsed.steps : []) as PlanResult['draft']['steps'],
       rationale: typeof parsed.rationale === 'string' ? parsed.rationale : undefined,
+    };
+  }
+
+  private parseCritiqueOutput(raw: string): CritiqueResult['critique'] {
+    let json = raw.trim();
+    const fenceMatch = json.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) json = fenceMatch[1].trim();
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+
+    return {
+      items: (Array.isArray(parsed.items) ? parsed.items : []) as CritiqueResult['critique']['items'],
+      summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
     };
   }
 }
