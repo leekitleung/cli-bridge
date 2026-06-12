@@ -1,8 +1,17 @@
 # ADR-0008: Patch Apply to Isolated Worktree (v2.5 — first workspace-write slice)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            v2.5 implementation handoff (see "Acceptance Conditions" below).
+            This is a deliberate boundary shift: the bridge may, for the first
+            time, write to disk — strictly into a bridge-managed isolated
+            worktree (never the user's main tree), opt-in (default OFF), behind
+            an explicit per-apply human gate, reversible, with NO VCS mutation
+            (no commit/push/merge/PR), no parallelism, and no autonomy. No
+            implementation is authorized until a v2.5 execution handoff is
+            created.
 
 ## Context
 
@@ -29,7 +38,7 @@ remain deferred under ADR-0007 and require their own ADRs.
 
 ### 1. Whether patch-apply-to-isolated-worktree is allowed
 
-**Proposed decision**: PERMIT, only into a bridge-managed isolated worktree,
+**Decision**: PERMIT, only into a bridge-managed isolated worktree,
 behind a per-apply human gate, reversible, with no VCS mutation.
 
 A user MAY request that an approved SlotArtifact patch be applied into a
@@ -133,7 +142,7 @@ item not explicitly permitted here.
 
 ## Consequences
 
-If accepted:
+Accepted consequences:
 
 - v2.5 may implement a single, opt-in, human-gated, reversible
   apply-to-isolated-worktree capability with full audit and fail-closed behavior.
@@ -143,25 +152,48 @@ If accepted:
 - commit/push/merge/PR, main-tree writes, parallel apply, and merge queue remain
   deferred (separate ADRs).
 
-If rejected:
+Rejected alternative, retained for decision history:
 
 - AgentTeam artifacts remain proposal-only; users continue to apply patches
   manually outside the bridge.
 - A narrower or different first workspace-write capability can be proposed
   instead.
 
+## Acceptance Conditions
+
+The acceptance is conditional on the v2.5 implementation handoff satisfying all
+of the following. A reviewer must re-verify each at closeout:
+
+1. Containment proof: writes are confined to the dedicated isolated worktree;
+   path normalization rejects any file path escaping the worktree root, with a
+   test covering traversal/escape attempts.
+2. Main tree untouched: a test proves the user's main working tree is never
+   modified by an apply.
+3. Per-apply human gate: apply cannot occur without an explicit, per-apply human
+   confirmation of the specific artifact + target worktree; no model/scheduler/
+   background path can trigger it. Covered by tests.
+4. Reversibility: the isolated worktree can be discarded/reset cleanly and the
+   pre-apply state is recorded; covered by a test.
+5. Fail-closed: conflict, schema/redaction failure, path escape, cap exceed, or
+   missing gate aborts with no partial write; covered by tests.
+6. No VCS mutation: no commit/push/merge/PR path exists; the apply uses
+   controlled file/worktree operations only, not a general command endpoint.
+7. Audit: `workspace_apply_request` / `workspace_apply_result` events record
+   artifact id, worktree id, file list, caps, status, and actor, with no secrets
+   or raw file content; uses the typed `result.metadata` field.
+8. Opt-in default OFF: the capability is per-project opt-in and disabling it
+   leaves all non-apply flows fully functional; covered by a test.
+
 ## Status / Next
 
-PROPOSED. No implementation is authorized while this ADR is PROPOSED.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
-Before execution can start:
+Next:
 
-1. A reviewer must explicitly accept or reject ADR-0008. Because this is the
-   first workspace-write capability, acceptance requires an explicit human
-   go-ahead, not an automated decision.
-2. If accepted, create a v2.5 implementation handoff with allowed modification
-   range, forbidden list, the per-apply gate flow, worktree lifecycle and caps,
-   tests, and a closeout checklist that re-verifies every ADR-0007 §2
-   prerequisite.
-3. Execution must remain in an `EX-*` batch and return to review before any
-   expansion toward main-tree writes, VCS mutation, parallelism, or merge queue.
+1. Create a v2.5 implementation handoff with allowed modification range,
+   forbidden list, the per-apply gate flow, worktree lifecycle and caps, tests,
+   and a closeout checklist that re-verifies every Acceptance Condition and every
+   ADR-0007 §2 prerequisite.
+2. Execution must remain in an `EX-*` batch and return to review before any
+   expansion toward main-tree writes, VCS mutation, parallelism, or merge queue —
+   each still requires its own ADR.

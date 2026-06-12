@@ -34,6 +34,12 @@ All notable changes to CLI Bridge are documented here.
   human-gated, reversible apply of an approved patch into a bridge-managed
   isolated worktree (never the main tree), with no VCS mutation, no parallelism,
   and no autonomy. Requires explicit human accept/reject before any code.
+- **ADR-0008** ACCEPTED (senior review, with conditions on the v2.5
+  implementation handoff). Deliberate boundary shift: the bridge may write to
+  disk only inside a bridge-managed isolated worktree (never the main tree),
+  opt-in/default-OFF, per-apply human-gated, reversible, fail-closed, with no
+  commit/push/merge/PR, no parallelism, and no autonomy. No code until a v2.5
+  execution handoff satisfying the acceptance conditions is created.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
