@@ -517,7 +517,12 @@ Create a pending apply request. No filesystem writes.
 
 List apply requests for the team. Never returns raw file content.
 
-**Returns**: `200` with `{ applies: ApplyRequest[] }`.
+Each item is projected through the same safe manifest projection as the
+single-item manifest GET: the absolute `isolatedDirPath` is omitted (only the
+opaque `isolatedDirId` is exposed) and `baselineManifest` is reduced to its
+summary (no per-file `entries`/`sha256`).
+
+**Returns**: `200` with `{ applies: ApplyManifest[] }` (projected; not raw `ApplyRequest` objects).
 
 ### POST /bridge/projects/:key/teams/:teamId/apply-requests/:applyId/confirm
 

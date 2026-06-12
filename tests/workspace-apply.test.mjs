@@ -739,3 +739,63 @@ test('ADR-0010 AC8: manifest exposes baseline summary only, no entries', async (
 
 // ── AC9: No VCS/spawn — already covered by existing AC6 test ────
 // ── AC10: Backward compatibility — existing tests pass ───────────
+
+
+// ════════════════════════════════════════════════════════════════
+// EX-2.5-6: apply-request LIST response uses the safe manifest projection
+// ════════════════════════════════════════════════════════════════
+//
+// Regression: GET .../apply-requests must project each item through
+// toApplyManifest, omitting the absolute isolatedDirPath and the per-file
+// baselineManifest.entries (sha256), matching the single-item manifest GET.
+
+test('EX-2.5-6: list response omits isolatedDirPath and baseline entries/sha256', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new', 'src/lib.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 200);
+
+  // The stored request DOES retain the absolute path + full baseline entries...
+  const stored = runtime.applyStore.getRequest(applyId);
+  assert.ok(stored.isolatedDirPath, 'stored request retains isolatedDirPath');
+  assert.ok(stored.baselineManifest.entries.length > 0, 'stored request retains baseline entries');
+  assert.ok(stored.baselineManifest.entries.some(e => e.sha256), 'stored entries include sha256');
+
+  // ...but the LIST response must not expose them.
+  const listRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests');
+  assert.equal(listRes.statusCode, 200);
+  assert.ok(Array.isArray(listRes.payload.applies));
+  const item = listRes.payload.applies.find(a => a.applyId === applyId);
+  assert.ok(item, 'applied request present in list');
+
+  // No absolute host path.
+  assert.equal('isolatedDirPath' in item, false, 'list item must not expose isolatedDirPath');
+  // Opaque isolated dir id IS exposed.
+  assert.ok(item.isolatedDirId, 'list item exposes isolatedDirId');
+  // Baseline summary is present, but entries (with per-file sha256) are not.
+  assert.ok(item.baselineManifest, 'list item exposes baseline summary');
+  assert.equal(item.baselineManifest.entries, undefined, 'list item must not expose baseline entries');
+  assert.equal(typeof item.baselineManifest.byteTotal, 'number', 'baseline summary metadata present');
+
+  // Defense in depth: no absolute path or sha256 anywhere in the serialized list payload.
+  const json = JSON.stringify(listRes.payload);
+  assert.equal(json.includes(stored.isolatedDirPath), false, 'absolute isolatedDirPath must not leak via list');
+  for (const entry of stored.baselineManifest.entries) {
+    if (entry.sha256) {
+      assert.equal(json.includes(entry.sha256), false, 'per-file sha256 must not leak via list');
+    }
+  }
+
+  cleanBaselineRoot(baselineRoot);
+});

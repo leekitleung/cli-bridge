@@ -222,6 +222,21 @@ All notable changes to CLI Bridge are documented here.
   workspace-write auto-apply, no commit/push/merge, no model arbitration, and no
   execution path from `canExecute=true` metadata.**
 
+### Fixed — v2.5 Apply-request list projection (EX-2.5-6)
+
+- **Response-surface convergence**: `GET /bridge/projects/:key/teams/:teamId/apply-requests`
+  now projects each item through the same `toApplyManifest` projection used by the
+  single-item manifest GET, instead of returning raw `ApplyRequest` objects. The list
+  response no longer exposes the absolute `isolatedDirPath` or the per-file
+  `baselineManifest.entries`/`sha256`; it exposes only the opaque `isolatedDirId` and the
+  baseline summary. Tightens the ADR-0009 / ADR-0010 read-only / no-absolute-path boundary.
+- **No new capability**: API projection fix only — no endpoint added/changed, no apply
+  behavior change, no baseline content/diff/classification, no main-tree write, no
+  `git`/spawn, no apply-from-preview. Stored `ApplyRequest` shape is unchanged.
+- **Tests**: added a list-projection regression test asserting no `isolatedDirPath`, no
+  baseline `entries`/`sha256` in the list payload, with `isolatedDirId` and baseline
+  summary still present.
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

@@ -342,7 +342,11 @@ function handleApplyRequestList(
 ): BridgeResult {
   const proj = runtime.projectStore.get(projectKey);
   if (!proj) return error(404, 'Project not found');
-  return ok({ applies: runtime.applyStore.listByTeam(projectKey, teamId) });
+  // EX-2.5-6: project each request through the same safe manifest projection
+  // used by the single-item GET. This omits the absolute `isolatedDirPath` and
+  // reduces `baselineManifest` to its summary (no per-file entries/sha256),
+  // tightening the ADR-0009/ADR-0010 read-only / no-absolute-path boundary.
+  return ok({ applies: runtime.applyStore.listByTeam(projectKey, teamId).map(toApplyManifest) });
 }
 
 async function handleApplyRequestConfirm(
