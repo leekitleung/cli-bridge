@@ -1,6 +1,6 @@
 # CLI Bridge v2.5 — Workspace Apply to Isolated Worktree — Implementation Handoff
 
-**Status**: IMPLEMENTATION HANDOFF (DRAFT) — authorized by ADR-0008 (ACCEPTED), pending design confirmation
+**Status**: IMPLEMENTATION HANDOFF — AUTHORIZED for `EX-2.5-1` (Approach A confirmed 2026-06-12)
 **Date**: 2026-06-12
 **Based on**:
 - `ADR-0008-patch-apply-isolated-worktree.md` (ACCEPTED, with acceptance conditions)
@@ -49,6 +49,10 @@ Two candidate approaches (the handoff must pick ONE; recommendation below):
   separate ADR/handoff, not the first slice. Do NOT implement B here.
 
 **Recommendation: implement Approach A.** Confirm with the reviewer before coding.
+
+> **CONFIRMED 2026-06-12**: Approach A is the authorized design for `EX-2.5-1`.
+> Approach B (git worktree + `git apply`) remains out of scope and requires a
+> separate ADR. No `git`, no `child_process`, no spawn in this slice.
 
 ---
 

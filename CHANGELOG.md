@@ -45,6 +45,11 @@ All notable changes to CLI Bridge are documented here.
   proposed file paths, no applicable content. Recommends Approach A (content
   supplied at the gated apply-time, written into a bridge-managed scratch dir via
   contained `fs` ops, no `git`/spawn) over the deferred git-worktree approach.
+- **v2.5 Workspace Apply Handoff** AUTHORIZED for `EX-2.5-1` with Approach A
+  confirmed (content supplied at the gated apply-time into a bridge-managed
+  isolated scratch dir via contained `fs` ops; no `git`, no spawn, no VCS).
+  Approach B (git worktree + `git apply`) remains out of scope pending a separate
+  ADR.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
