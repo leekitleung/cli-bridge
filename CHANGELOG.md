@@ -16,6 +16,8 @@ All notable changes to CLI Bridge are documented here.
   self-iteration remain unauthorized.
 - **v2.4a-8 CriticModel Implementation Handoff** added and implemented as an
   advisory-only `criticSource: "model-api"` option on existing model planning.
+- Drafted **ADR-0006 Multi-provider AgentTeam** as PROPOSED for Track C /
+  v2.4b. It does not authorize implementation until explicitly accepted.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
