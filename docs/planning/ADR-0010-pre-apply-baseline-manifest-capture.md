@@ -1,8 +1,17 @@
 # ADR-0010: Pre-apply Baseline Manifest Capture (v2.5 follow-up)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            `EX-2.5-5` implementation handoff (see "Acceptance Conditions"
+            below). This authorizes metadata-only pre-apply baseline manifest
+            capture for proposed file paths from a server-controlled trusted
+            root, default OFF, fail-closed before any isolated apply write, with
+            no raw baseline content, no diff/classification, no main-tree write,
+            no `git`/VCS, no spawn, no apply-from-preview, no parallelism, and
+            no autonomy. No implementation is authorized until the handoff is
+            created.
 
 ## Context
 
@@ -35,7 +44,7 @@ authorize a diff view.
 
 ### 1. Whether baseline manifest capture is allowed
 
-**Proposed decision**: PERMIT, but only as metadata-only, opt-in, read-only
+**Decision**: PERMIT, but only as metadata-only, opt-in, read-only
 capture of the proposed file paths before an ADR-0008 apply write.
 
 The bridge MAY capture a pre-apply baseline manifest when all of the following
@@ -171,17 +180,54 @@ This ADR alone does not authorize any diff view and does not authorize storing
 baseline content. If full textual diffs are desired later, a separate ADR must
 decide whether baseline content can be stored, read on demand, or avoided.
 
+## Acceptance Conditions
+
+An implementation handoff and closeout review MUST verify all of the following:
+
+1. **Trusted root only**: the first implementation uses a server/runtime-provided
+   trusted root (for example `createBridgeRuntime({ baselineRoot })`) with
+   default absent/OFF. It MUST NOT accept `baselineRoot`, `cwd`, or any filesystem
+   root from HTTP request bodies, query strings, model output, or artifact data.
+2. **Separate opt-in**: baseline capture has an independent default-OFF opt-in
+   in addition to `workspaceApplyEnabled`. With baseline disabled, existing
+   apply/presentation behavior remains compatible; with baseline required but no
+   trusted root, confirm fails closed before any write.
+3. **Metadata only**: persisted baseline entries contain only path, existence,
+   readable status, size, SHA-256 hash for readable files, and error kind. No raw
+   baseline content, absolute root path, API key, secret, or full file preview is
+   persisted or returned.
+4. **Path and root containment**: capture reads only `proposedFiles[]` paths and
+   only under the trusted root. Traversal, absolute paths, drive letters, UNC,
+   backslash escapes, symlink/root escape, or any resolved path outside the root
+   abort capture and apply.
+5. **Fail-closed before write**: invalid paths, cap exceed, missing trusted root
+   when capture is required, and unreadable-file policy failures abort before any
+   isolated apply write. Missing files are represented as `exists:false` and are
+   not failures by themselves because they may be new files.
+6. **Caps**: file count and total baseline bytes read are capped with tests for
+   exceed paths. Cap exceed produces a clean 4xx and no write.
+7. **Audit metadata**: baseline capture request/result events use typed
+   `result.metadata` only; audit includes applyId, counts, caps, status, actor,
+   rootRef, and failure kind, but no raw content or absolute host paths.
+8. **No new presentation capability**: this slice may expose the stored baseline
+   manifest only as metadata if needed for inspection, but MUST NOT expose diff,
+   diff-like views, baseline previews, or new/modified/unchanged classification.
+9. **No VCS / spawn / autonomy**: no `git`, `child_process`, spawn/exec, VCS
+   operation, scheduler/model-triggered capture, or apply-from-preview is added.
+10. **Backward compatibility**: existing apply and presentation tests continue to
+    pass when baseline capture is disabled by default.
+
 ## Status / Next
 
-PROPOSED. No implementation is authorized until this ADR receives an explicit
-senior accept decision and a separate `EX-*` handoff is created.
+ACCEPTED with the conditions above. No implementation is authorized until a
+separate `EX-2.5-5` handoff is created.
 
 Next:
 
-1. Senior review should accept, reject, or request revision.
-2. If accepted, draft an implementation handoff that fixes the root source,
+1. Draft the `EX-2.5-5` implementation handoff fixing the trusted root source,
    opt-in flag shape, caps, schema, audit metadata, tests, and closeout
    checklist.
-3. Until accepted, execution agents must not add baseline fields, read a
-   workspace root, compute baseline hashes, expose classification, or implement
-   diff behavior.
+2. Execution agents must not implement beyond that handoff.
+3. Diff/diff-like views, modified/unchanged/new classification, baseline content
+   persistence, main-tree writes, `git`/VCS, and apply-from-preview remain
+   deferred and require their own ADRs.

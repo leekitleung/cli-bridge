@@ -85,6 +85,17 @@ All notable changes to CLI Bridge are documented here.
   senior acceptance and does **not** authorize raw baseline content persistence,
   diff/diff-like views, modified/unchanged/new classification, main-tree writes,
   `git`/VCS, apply-from-preview, parallelism, or scheduler/model-triggered apply.
+- **ADR-0010** ACCEPTED (senior review, with conditions on the `EX-2.5-5`
+  implementation handoff). Authorizes metadata-only baseline manifest capture
+  for proposed file paths from a server/runtime-controlled trusted root, default
+  OFF, fail-closed before any isolated apply write, with no raw baseline content,
+  no diff/classification, no main-tree write, no `git`/VCS, no spawn, no
+  apply-from-preview, no parallelism, and no autonomy.
+- Drafted **v2.5 Pre-apply Baseline Manifest Capture Implementation Handoff**
+  (AUTHORIZED for `EX-2.5-5`). Fixes the execution shape to runtime-provided
+  trusted root + separate default-OFF opt-in, metadata-only manifest entries,
+  caps, typed audit metadata, no request-supplied root/cwd, and no baseline
+  preview/diff/classification/UI expansion.
 
 ### Added — v2.5 Read-only Apply-result Presentation (`EX-2.5-3`)
 - **`GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId`** —
