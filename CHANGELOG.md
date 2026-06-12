@@ -24,6 +24,11 @@ All notable changes to CLI Bridge are documented here.
   unauthorized.
 - **v2.4b Multi-provider AgentTeam Implementation Handoff** added and
   implemented within the existing TeamSpec routes.
+- Drafted **ADR-0007 Workspace-write Expansion (v2.5+)** as a PROPOSED /
+  DEFERRED skeleton. It makes no decision and authorizes nothing; it only scopes
+  the prerequisites, open questions, and risks any future workspace-write ADR
+  must resolve. All v2.5+ capabilities (workspace-write, worktree isolation,
+  merge queue, auto-commit/push/merge, advanced executors) remain forbidden.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
