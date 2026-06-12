@@ -69,6 +69,30 @@ test('AuditEvent schema supports failureReason for failed operations', () => {
   });
 });
 
+test('AuditEvent schema accepts typed result.metadata object', () => {
+  const result = validateAuditEvent(createAuditEvent({
+    result: {
+      ok: true,
+      metadata: { providerId: 'claude', bridgeRunId: 'run-1', usage: { promptTokens: 10 } },
+    },
+  }));
+
+  assert.deepEqual(result, {
+    ok: true,
+    errors: [],
+  });
+});
+
+test('AuditEvent schema rejects non-object result.metadata', () => {
+  for (const bad of ['a string', 42, ['array'], true]) {
+    const result = validateAuditEvent(createAuditEvent({
+      result: { ok: true, metadata: bad },
+    }));
+    assert.equal(result.ok, false, `metadata=${JSON.stringify(bad)} should be rejected`);
+    assert.match(result.errors.join('\n'), /result.metadata must be an object/);
+  }
+});
+
 test('AuditEvent schema requires structured result and safety metadata', () => {
   const result = validateAuditEvent(createAuditEvent({
     safety: {
