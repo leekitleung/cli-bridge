@@ -40,6 +40,11 @@ All notable changes to CLI Bridge are documented here.
   opt-in/default-OFF, per-apply human-gated, reversible, fail-closed, with no
   commit/push/merge/PR, no parallelism, and no autonomy. No code until a v2.5
   execution handoff satisfying the acceptance conditions is created.
+- Drafted **v2.5 Workspace Apply Implementation Handoff** (DRAFT, pending design
+  confirmation). Surfaces a blocking design gap: `SlotArtifact` stores only
+  proposed file paths, no applicable content. Recommends Approach A (content
+  supplied at the gated apply-time, written into a bridge-managed scratch dir via
+  contained `fs` ops, no `git`/spawn) over the deferred git-worktree approach.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
