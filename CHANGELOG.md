@@ -96,6 +96,14 @@ All notable changes to CLI Bridge are documented here.
   endpoint, result hashing/caps, audit metadata, tests mapped to the ADR-0011
   acceptance conditions, and the closeout checklist; execution returns to
   `REVIEW-2.6-1`.
+- Drafted **ADR-0012 Console Apply-result Classification Presentation** as
+  PROPOSED. Proposes showing the existing ADR-0011 classification summary and
+  per-file labels in the project console's existing read-only Apply Result
+  panel. It authorizes no implementation. It does NOT add backend endpoints,
+  `sha256`/raw content/diff display, main-tree access, `git`/spawn/VCS,
+  apply-from-preview, promote/write controls, scheduler/model-triggered work,
+  or changes to ADR-0010/ADR-0011 semantics. Awaits explicit human accept/reject
+  before any code.
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +
