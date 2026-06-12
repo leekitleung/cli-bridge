@@ -196,18 +196,21 @@ test('discard: reversible, isolated dir cleaned', async () => {
     slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
   });
   const applyId = res.payload.apply.applyId;
-  await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+  const confirmRes = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
     confirmed: true, files: { 'src/app.ts': '// app' },
   });
+  const appliedDir = confirmRes.payload.apply.isolatedDirPath;
+  assert.ok(fs.existsSync(appliedDir), 'isolated dir should exist after apply');
 
   res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/discard');
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.apply.status, 'discarded');
+  assert.equal(fs.existsSync(appliedDir), false, 'isolated dir should be removed after discard');
 });
 
 // ── Fail-closed (ADR-0008 AC 5) ──────────────────────────────────
 
-test('fail-closed: cap exceed, no partial write', async () => {
+test('fail-closed: file list mismatch, no partial write', async () => {
   cleanTestRoot();
   const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
   runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
@@ -314,17 +317,20 @@ test('audit: workspace_apply_request/result with typed metadata, no raw content'
 
 // ── No VCS / no spawn (ADR-0008 AC 6) ───────────────────────────
 
-test('no VCS/spawn: source check — no child_process/git', () => {
-  const storeSource = fs.readFileSync(
-    'apps/local-server/src/storage/workspace-apply-store.ts', 'utf8',
-  );
-  assert.equal(storeSource.includes("'child_process'"), false);
-  assert.equal(storeSource.includes('"child_process"'), false);
-  assert.equal(storeSource.includes('node:child_process'), false);
-  assert.equal(storeSource.includes('spawn('), false);
-  assert.equal(storeSource.includes('execFile('), false);
-  assert.equal(storeSource.includes('git apply'), false);
-  assert.equal(storeSource.includes('git worktree'), false);
+test('no VCS/spawn: source check — no child_process/git in store or route', () => {
+  for (const filePath of [
+    'apps/local-server/src/storage/workspace-apply-store.ts',
+    'apps/local-server/src/routes/bridge-api.ts',
+  ]) {
+    const source = fs.readFileSync(filePath, 'utf8');
+    assert.equal(source.includes("'child_process'"), false, `${filePath}: no 'child_process'`);
+    assert.equal(source.includes('"child_process"'), false, `${filePath}: no "child_process"`);
+    assert.equal(source.includes('node:child_process'), false, `${filePath}: no node:child_process`);
+    assert.equal(source.includes('spawn('), false, `${filePath}: no spawn(`);
+    assert.equal(source.includes('execFile('), false, `${filePath}: no execFile(`);
+    assert.equal(source.includes('git apply'), false, `${filePath}: no git apply`);
+    assert.equal(source.includes('git worktree'), false, `${filePath}: no git worktree`);
+  }
 });
 
 // ── GET list ──────────────────────────────────────────────────────
@@ -390,4 +396,72 @@ test('PATCH project: workspaceApplyEnabled flag persists and defaults false', as
   await call(runtime, 'PATCH', BRIDGE_PROJECTS_PATH + '/alpha', { workspaceApplyEnabled: false });
   const disabled = runtime.projectStore.get('alpha');
   assert.equal(disabled.workspaceApplyEnabled, false);
+});
+
+// ── N2: non-string file content → clean failure ──────────────────
+
+test('fail-closed: non-string file content returns clean error, no write', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': 12345 },
+  });
+  assert.ok(res.statusCode === 400 || res.statusCode === 409, 'should be 400 or 409, not 500');
+  assert.ok(res.payload.message.includes('content') || res.payload.message.includes('string'), 'error should mention content type');
+  const req = runtime.applyStore.getRequest(applyId);
+  assert.equal(req.status, 'pending', 'status should remain pending after non-string content reject');
+});
+
+// ── N3: real caps exceed tests ──────────────────────────────────
+
+test('fail-closed: maxFiles cap exceeded, no write', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  const files = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'];
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: files,
+  });
+  const applyId = res.payload.apply.applyId;
+  runtime.applyStore.getRequest(applyId).caps = { maxFiles: 3, maxTotalBytes: 5 * 1024 * 1024 };
+
+  const confirmFiles = {};
+  for (const f of files) confirmFiles[f] = '// ' + f;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: confirmFiles,
+  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('exceeds') || res.payload.message.includes('File count'));
+});
+
+test('fail-closed: maxTotalBytes cap exceeded, no write', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  runtime.applyStore.getRequest(applyId).caps = { maxFiles: 200, maxTotalBytes: 10 };
+
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '01234567890', 'src/lib.ts': '01234567890' },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('exceeds') || res.payload.message.includes('size'));
 });

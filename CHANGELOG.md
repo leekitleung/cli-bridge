@@ -134,6 +134,17 @@ All notable changes to CLI Bridge are documented here.
 - **No git/spawn/VCS, no main-tree write, no auto-apply, no new endpoint,
   no npm dependencies, no parallel slots, no shell/exec/run/command.**
 
+### Fixed — v2.5 Workspace Apply follow-up (EX-2.5-2)
+- **Contract docs**: added `docs/contracts/bridge-projects-api.md` Workspace Apply section
+  documenting all 4 endpoints, design constraints, and non-goals.
+- **Confirm validation**: non-string `files[path]` values now return clean 400/409
+  instead of potential TypeError→500. Type check before any filesystem write.
+- **Tests**: added real `maxFiles` and `maxTotalBytes` cap-exceed tests,
+  discard directory removal assertion (`fs.existsSync` after discard === false),
+  non-string content rejection test, extended source-check to cover both
+  `workspace-apply-store.ts` and `bridge-api.ts`.
+- **Tests**: 21 workspace-apply tests (18 original + 3 new caps/content/validation). Total: 544/544 passing tests.
+
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 
 ### Added

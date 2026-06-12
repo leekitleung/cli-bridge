@@ -146,6 +146,17 @@ export class WorkspaceApplyStore {
     if (!req) return { ok: false, error: 'Apply request not found' };
     if (req.status !== 'pending') return { ok: false, error: `Apply request is ${req.status}, not pending` };
 
+    // ── Input validation: every file value must be a string ──────
+    const rawFiles = params.files;
+    if (rawFiles === null || typeof rawFiles !== 'object' || Array.isArray(rawFiles)) {
+      return { ok: false, error: 'files must be a plain object mapping paths to content strings' };
+    }
+    for (const [k, v] of Object.entries(rawFiles)) {
+      if (typeof v !== 'string') {
+        return { ok: false, error: `File "${k}" content must be a string` };
+      }
+    }
+
     const fileKeys = Object.keys(params.files);
     const proposedSet = new Set(req.proposedFiles);
     if (fileKeys.length !== req.proposedFiles.length) {

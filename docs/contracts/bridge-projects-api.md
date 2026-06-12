@@ -468,3 +468,97 @@ These endpoints do **not**:
   - upsert, get, list, buildSummary, buildAllSummaries
   - resolveProjectKey backfill
   - validateProjectKey accept/reject rules
+
+---
+
+## Workspace Apply (v2.5, Approach A)
+
+**Status**: Implemented | **ADR**: `docs/planning/ADR-0008-patch-apply-isolated-worktree.md`
+**Handoff**: `docs/planning/CLI-BRIDGE-v2.5-WORKSPACE-APPLY-HANDOFF.md`
+**Source**: `apps/local-server/src/storage/workspace-apply-store.ts`, `apps/local-server/src/routes/bridge-api.ts`
+**Tests**: `tests/workspace-apply.test.mjs`
+
+### Design constraints
+
+- **Opt-in**: `Project.workspaceApplyEnabled` must be `true` (default `false`). Set via `PATCH /bridge/projects/:key`.
+- **Approach A**: content is supplied in the confirm request body at gate time, written into a bridge-managed isolated scratch directory via contained Node `fs` ops. **No git, no spawn, no child_process, no VCS mutation.**
+- **Per-apply human gate**: apply requires an explicit `{ confirmed: true }` with the file content map. No scheduler, daemon, or model-driven apply.
+- **Isolation**: writes go to a dedicated subdirectory under the configured apply root, never the user's main working tree.
+- **Path containment**: every target path is normalized and validated; `..`, absolute paths, backslash escapes, and drive letters are rejected.
+- **Caps**: `maxFiles` (default 200) and `maxTotalBytes` (default 5 MB). Exceeding either fails closed.
+- **Reversible**: `POST .../discard` removes the isolated directory. Main tree is never affected.
+- **No raw content persistence**: audit metadata carries typed metadata (applyId, fileList, caps, status, etc.) only — never raw file content, API keys, or secrets.
+
+### POST /bridge/projects/:key/teams/:teamId/apply-requests
+
+Create a pending apply request. No filesystem writes.
+
+**Body**:
+```json
+{
+  "slotId": "string (required)",
+  "planStepId": "string (required)",
+  "proposedFiles": ["string array (optional, defaults to artifact proposedFiles)"],
+  "actor": "string (optional)"
+}
+```
+
+**Preconditions**:
+- Project exists, not archived, `workspaceApplyEnabled: true`
+- Team exists for the project
+- Artifact (`slotId` + `planStepId`) exists in the team
+- Team conflict report is clean (no file conflicts)
+
+**Returns**: `201 Created` with `{ apply: ApplyRequest }` (status: `pending`).
+
+**Audit**: `workspace_apply_request` with typed `result.metadata`.
+
+### GET /bridge/projects/:key/teams/:teamId/apply-requests
+
+List apply requests for the team. Never returns raw file content.
+
+**Returns**: `200` with `{ applies: ApplyRequest[] }`.
+
+### POST /bridge/projects/:key/teams/:teamId/apply-requests/:applyId/confirm
+
+Human-gated write: confirms the pending apply and writes files to an isolated directory.
+
+**Body**:
+```json
+{
+  "confirmed": true,
+  "files": { "relative/path": "file content string" },
+  "actor": "string (optional)"
+}
+```
+
+**Preconditions**:
+- Apply request exists and is `pending`
+- `confirmed` is exactly `true`
+- `files` is a plain object mapping relative paths to string content
+- File keys exactly match the request's `proposedFiles`
+- All paths pass containment validation
+- Caps not exceeded (maxFiles, maxTotalBytes)
+- Project `workspaceApplyEnabled` still `true`
+
+**On success**: writes files atomically (staging → publish) into `applyRoot/<isolatedDirId>/`. Updates request status to `applied` with `isolatedDirPath`, `fileCount`, `byteTotal`.
+
+**On failure**: all validation failures return clean 4xx errors (400 or 409) with no files written. Request status may be updated to `failed`.
+
+**Audit**: `workspace_apply_result` with typed `result.metadata`.
+
+### POST /bridge/projects/:key/teams/:teamId/apply-requests/:applyId/discard
+
+Reversibly remove the isolated directory. No effect on the main working tree.
+
+**Returns**: `200` with `{ apply: ApplyRequest }` (status: `discarded`).
+
+**Audit**: `workspace_apply_result` with typed `result.metadata`.
+
+### Non-goals
+
+- No write to the user's main working tree
+- No git worktree, git apply, commit, push, merge, PR, or merge queue
+- No parallel apply, scheduler, daemon, background apply, or model-driven apply
+- No shell/exec/run/command endpoint
+- No persistence of raw file content in audit, snapshot, or metadata
