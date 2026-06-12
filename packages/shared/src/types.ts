@@ -197,6 +197,14 @@ export interface AuditEvent {
   result: {
     ok: boolean;
     failureReason?: string;
+    /**
+     * Structured, typed correlation/diagnostic metadata for the event
+     * (e.g., model provider/usage, AgentTeam provider/session correlation).
+     * Replaces the prior practice of JSON-stringifying metadata into
+     * `failureReason`. Never contains secrets, raw prompts, raw provider
+     * output, or raw file content.
+     */
+    metadata?: Record<string, unknown>;
   };
   timestamp: number;
 }

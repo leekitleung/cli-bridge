@@ -220,12 +220,12 @@ test('plannerSource: model-api returns advisory draft with mock provider', async
   assert.equal(req.result.ok, true);
   assert.equal(resE.result.ok, true);
   // Request audit metadata.
-  const reqMeta = JSON.parse(req.result.failureReason);
+  const reqMeta = req.result.metadata;
   assert.equal(reqMeta.status, 'requested');
   assert.equal(reqMeta.provider, 'openai/gpt-4o-mini');
   assert.equal(reqMeta.tokenBudget.input, 4096);
   // Result audit metadata.
-  const resMeta = JSON.parse(resE.result.failureReason);
+  const resMeta = resE.result.metadata;
   assert.equal(resMeta.status, 'accepted');
   assert.equal(resMeta.provider, 'mock/test');
   assert.ok(typeof resMeta.latencyMs === 'number');
@@ -262,7 +262,7 @@ test('criticSource: model-api returns advisory critique with draft and no plan a
   const result = events.find(e => e.type === 'model_critique_result');
   assert.ok(result);
   assert.equal(result.result.ok, true);
-  const meta = JSON.parse(result.result.failureReason);
+  const meta = result.result.metadata;
   assert.equal(meta.status, 'accepted');
   assert.equal(meta.provider, 'mock/critic');
   assert.equal(meta.itemCount, 1);
@@ -285,7 +285,7 @@ test('criticSource: blocking critique is label only and does not mutate state', 
   assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
   assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
 
-  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  const meta = runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.metadata;
   assert.equal(meta.highestSeverity, 'blocking');
   assert.equal(meta.status, 'accepted');
 });
@@ -306,7 +306,7 @@ test('criticSource: model-api fail-closed on invalid critique schema', async () 
   assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
   assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
 
-  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  const meta = runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.metadata;
   assert.equal(meta.status, 'rejected');
   assert.equal(meta.failureKind, 'schema-rejection');
 });
@@ -327,7 +327,7 @@ test('criticSource: model-api rejects forbidden executable and gate-bypass criti
   assert.equal(runtime.goalStore.getGoal(goal.id).status, 'draft');
   assert.equal(runtime.goalStore.getPlanByGoal(goal.id), undefined);
 
-  const meta = JSON.parse(runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.failureReason);
+  const meta = runtime.auditLog.exportEvents().find(e => e.type === 'model_critique_result').result.metadata;
   assert.equal(meta.status, 'rejected');
   assert.equal(meta.failureKind, 'policy-rejection');
   assert.ok(meta.failureReason.includes('forbidden'));
@@ -400,7 +400,7 @@ test('plannerSource: model-api fail-closed on provider error', async () => {
   const resE = events.find(e => e.type === 'model_plan_result');
   assert.ok(resE);
   assert.equal(resE.result.ok, false);
-  const meta = JSON.parse(resE.result.failureReason);
+  const meta = resE.result.metadata;
   assert.equal(meta.status, 'failed');
   assert.ok(meta.failureReason);
   assert.equal(meta.failureKind, 'provider-error');
@@ -426,7 +426,7 @@ test('plannerSource: model-api fail-closed on schema-invalid output', async () =
   const resE = events.find(e => e.type === 'model_plan_result');
   assert.ok(resE);
   assert.equal(resE.result.ok, false);
-  const meta = JSON.parse(resE.result.failureReason);
+  const meta = resE.result.metadata;
   assert.equal(meta.status, 'rejected');
   assert.equal(meta.failureKind, 'schema-rejection');
   assert.ok(meta.failureReason);
@@ -534,9 +534,9 @@ test('plannerSource: model-api audit has no raw content or key', async () => {
   assert.equal(allEvents.includes('sk-test-secret'), false, 'API key must not be in audit');
   assert.equal(allEvents.includes('Build a login page'), false, 'goal description must not be in audit');
 
-  // Verify audit metadata JSON inside failureReason has no raw content.
+  // Verify typed audit metadata has no raw content.
   const resultEvent = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_result');
-  const meta = JSON.parse(resultEvent.result.failureReason);
+  const meta = resultEvent.result.metadata;
   const metaStr = JSON.stringify(meta);
   assert.equal(metaStr.includes('sk-test'), false, 'API key must not be in audit metadata');
   assert.equal(metaStr.includes('rawProviderOutput'), false, 'no raw provider output in audit metadata');
@@ -558,7 +558,7 @@ test('model plan audit request includes provider, budget, tiers, status', async 
 
   const req = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_request');
   assert.ok(req);
-  const meta = JSON.parse(req.result.failureReason);
+  const meta = req.result.metadata;
   assert.equal(meta.status, 'requested');
   assert.ok(meta.provider);
   assert.equal(meta.endpoint, 'openai/chat/completions');
@@ -580,7 +580,7 @@ test('model plan audit result accepted has provider, usage, latency, status', as
   const res = runtime.auditLog.exportEvents().find(e => e.type === 'model_plan_result');
   assert.ok(res);
   assert.equal(res.result.ok, true);
-  const meta = JSON.parse(res.result.failureReason);
+  const meta = res.result.metadata;
   assert.equal(meta.status, 'accepted');
   assert.ok(meta.provider);
   assert.ok(typeof meta.latencyMs === 'number');

@@ -237,6 +237,13 @@ export function validateAuditEvent(value: unknown): SchemaValidationResult {
     ) {
       errors.push('result.failureReason must be a string');
     }
+
+    if (
+      value.result.metadata !== undefined &&
+      !isRecord(value.result.metadata)
+    ) {
+      errors.push('result.metadata must be an object');
+    }
   }
 
   return {

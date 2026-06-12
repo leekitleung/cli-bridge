@@ -389,12 +389,12 @@ async function handleArtifactPost(
     planStepId: resolvedPlanStepId,
     result: {
       ok: true,
-      failureReason: JSON.stringify({
+      metadata: {
         providerId,
         endpointId,
         bridgeRunId,
         externalSessionId: artifact.externalSessionId ?? 'unavailable',
-      }),
+      },
     },
   });
 
@@ -513,12 +513,12 @@ async function handleSlotAdvancePost(
       planStepId: pStepId,
       result: {
         ok: true,
-        failureReason: JSON.stringify({
+        metadata: {
           providerId,
           endpointId,
           bridgeRunId,
           externalSessionId: 'unavailable',
-        }),
+        },
       },
     });
   }
@@ -549,12 +549,12 @@ async function handleSlotAdvancePost(
       planStepId: pStepId,
       result: {
         ok: true,
-        failureReason: JSON.stringify({
+        metadata: {
           providerId,
           endpointId,
           bridgeRunId,
           externalSessionId: 'unavailable',
-        }),
+        },
       },
     });
   }
@@ -1883,14 +1883,14 @@ export async function handleBridgeRequest(
         goalId,
         result: {
           ok: true,
-          failureReason: JSON.stringify({
+          metadata: {
             status: 'requested',
             provider: providerLabel,
             endpoint: 'openai/chat/completions',
             tokenBudget: { input: 4096, output: 2048 },
             maxSteps,
             permittedTiers: resolvedTiers,
-          }),
+          },
         },
       });
 
@@ -1930,7 +1930,8 @@ export async function handleBridgeRequest(
         goalId,
         result: {
           ok: modelResult.ok,
-          failureReason: JSON.stringify(resultMeta),
+          failureReason: modelResult.ok ? undefined : modelResult.reason,
+          metadata: resultMeta,
         },
       });
 
@@ -1958,14 +1959,14 @@ export async function handleBridgeRequest(
           goalId,
           result: {
             ok: true,
-            failureReason: JSON.stringify({
+            metadata: {
               status: 'requested',
               provider: providerLabel,
               endpoint: 'openai/chat/completions',
               tokenBudget: { input: 4096, output: 2048 },
               maxItems: 10,
               reviewedStepCount: modelResult.draft.steps.length,
-            }),
+            },
           },
         });
 
@@ -2002,7 +2003,8 @@ export async function handleBridgeRequest(
           goalId,
           result: {
             ok: critiqueResult.ok,
-            failureReason: JSON.stringify(critiqueMeta),
+            failureReason: critiqueResult.ok ? undefined : critiqueResult.reason,
+            metadata: critiqueMeta,
           },
         });
 

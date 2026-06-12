@@ -1211,8 +1211,8 @@ test('POST /slots/:slotId/advance writes slot audit events', async () => {
   assert.ok(done, 'should emit slot_done');
   assert.equal(started.slotId, 's0');
   assert.equal(done.slotId, 's0');
-  const startedMeta = JSON.parse(started.result.failureReason);
-  const doneMeta = JSON.parse(done.result.failureReason);
+  const startedMeta = started.result.metadata;
+  const doneMeta = done.result.metadata;
   assert.equal(startedMeta.providerId, 'claude');
   assert.equal(startedMeta.endpointId, 'claude-code-command');
   assert.ok(startedMeta.bridgeRunId);
