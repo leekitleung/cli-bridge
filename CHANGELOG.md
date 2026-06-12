@@ -73,12 +73,15 @@ All notable changes to CLI Bridge are documented here.
   v2.6)** as PROPOSED. Proposes one strictly read-only endpoint returning a coarse
   per-file `{ path, size, classification }` derived purely from the persisted
   ADR-0010 baseline metadata and an in-process hash of the isolated apply result.
-  Closed enum: `new | modified | unchanged | missing-baseline | unreadable-baseline`.
-  It does NOT persist/return raw baseline or result content, does NOT return any
-  `sha256`, does NOT produce a textual/diff-like view, and does NOT add main-tree
-  reads/writes, `git`/spawn/VCS, apply-from-preview, scheduler/model-triggered work,
-  or a project-level workspace root. Awaits explicit human accept/reject before any
-  code (then `EX-2.6-1` handoff).
+  Closed enum (revised RP-2.6): `new | modified | unchanged | unreadable-baseline`;
+  the no-baseline case is a request-level `409` (not a per-file `missing-baseline`
+  label), fixed at the ADR level rather than left to the execution batch.
+  `unreadable-baseline` is reserved/normally-unreachable and the execution batch
+  must not relax ADR-0010 fail-closed capture to reach it. It does NOT persist/return
+  raw baseline or result content, does NOT return any `sha256`, does NOT produce a
+  textual/diff-like view, and does NOT add main-tree reads/writes, `git`/spawn/VCS,
+  apply-from-preview, scheduler/model-triggered work, or a project-level workspace
+  root. Awaits explicit human accept/reject before any code (then `EX-2.6-1` handoff).
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +

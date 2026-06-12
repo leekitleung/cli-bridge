@@ -4,6 +4,17 @@ Status: PROPOSED — awaiting senior accept/reject
 
 Date: 2026-06-12
 
+Revision: 2026-06-12 (RP-2.6 revise, pre-acceptance). Fixed two product/API
+semantics at the ADR level so they are not left to the execution batch:
+(1) when no baseline manifest exists for the request, the endpoint fails closed
+with `409` (request-level), not a per-file placeholder label; (2) the closed
+classification enum is narrowed to `new | modified | unchanged |
+unreadable-baseline` (the former `missing-baseline` per-file label is removed —
+the no-baseline case is the request-level `409`). `unreadable-baseline` is
+retained as a defensive/forward-compatible label but is normally unreachable
+under ADR-0010's fail-closed capture, and the execution batch MUST NOT relax
+ADR-0010 capture behavior to make it reachable.
+
 ## Context
 
 The v2.5 line established, in sequence:
@@ -73,12 +84,15 @@ In scope:
   - `modified` — baseline entry is readable with a `sha256`, the result file
     exists, and the result hash differs from the baseline hash.
   - `unchanged` — baseline readable `sha256` equals the result hash.
-  - `missing-baseline` — no baseline was captured for this request (capture
-    disabled), so no truthful comparison is possible for the file.
-  - `unreadable-baseline` — baseline entry exists but is marked unreadable
-    (reserved; under current ADR-0010 fail-closed capture an unreadable file
-    aborts apply, so this label is not expected on an `applied` request, but the
-    enum keeps it explicit for completeness and future capture semantics).
+  - `unreadable-baseline` — baseline entry exists but is marked unreadable.
+    Reserved/defensive: under ADR-0010's current fail-closed capture an
+    unreadable existing file aborts apply, so this label is normally unreachable
+    on an `applied` request. It is kept explicit for completeness and future
+    capture semantics; the execution batch MUST NOT relax ADR-0010 capture to
+    make it reachable.
+- The request-level "no baseline captured" case is NOT a per-file label; it is a
+  request-level `409` (see §3). `missing-baseline` is intentionally excluded from
+  the per-file enum.
 - A summary of counts per classification label.
 - Result-side hashing is computed in-process over the isolated directory only,
   reusing the ADR-0009 containment, and is never returned.
@@ -106,9 +120,15 @@ Deferred and NOT authorized by this ADR:
 - Classification compares the two hashes for equality only; neither hash is
   returned. No content is compared byte-by-byte in the response, and no diff is
   produced.
-- Behavior when no baseline exists (capture was disabled): the recommended shape
-  is to return `classification:'missing-baseline'` for each file (or a single
-  `409`/empty result); the `EX-2.6-1` handoff must fix exactly one behavior.
+- **No-baseline behavior (fixed at ADR level)**: when the request has no captured
+  baseline (`baselineManifest` absent — e.g. baseline capture was disabled at
+  apply time), the endpoint MUST fail closed with `409` and a standard error such
+  as `"Baseline manifest not captured for this apply request"`. It MUST NOT
+  return a per-file classification list with placeholder labels. Rationale: the
+  endpoint's semantics are "classify relative to the captured baseline"; with no
+  baseline, returning a labelled file list would misrepresent a bare file list as
+  a completed classification. This is decided here and is NOT an execution-batch
+  decision.
 
 ### 4. ADR-0007 §2 prerequisites
 
@@ -133,6 +153,7 @@ This ADR does not weaken any prior invariant.
 | No raw content persistence | Unchanged; no baseline/result content is stored or returned. |
 | No `sha256` exposure | New explicit invariant: hashes are used internally for equality only and never returned. |
 | No diff / diff-like view | Unchanged; classification is a single enum label, not a diff. |
+| No-baseline = request-level `409` | New: with no captured baseline the endpoint fails closed; no per-file placeholder labels. |
 | No shell/exec/run/command, no `git`/VCS | Unchanged. |
 | No auto-apply/commit/push/merge, no apply-from-preview | Unchanged. |
 | Per-apply human gate (ADR-0008) | Unchanged; classification never triggers apply. |
@@ -177,7 +198,9 @@ An `EX-2.6-1` handoff and closeout review MUST verify all of the following:
 3. **No diff**: no textual/structural diff, diff-like output, or line-level
    change detail is produced or exposed.
 4. **Closed enum**: `classification` is exactly one of
-   `new | modified | unchanged | missing-baseline | unreadable-baseline`.
+   `new | modified | unchanged | unreadable-baseline`. `missing-baseline` is NOT
+   a per-file label; the no-baseline case is the request-level `409` (condition
+   10).
 5. **Containment**: result hashing reads only the bridge-managed isolated
    directory with the existing ADR-0009 containment; baseline data comes only
    from persisted `baselineManifest`. No main-tree read at request time.
@@ -190,9 +213,13 @@ An `EX-2.6-1` handoff and closeout review MUST verify all of the following:
    path, no project-level workspace root.
 9. **Backward compatibility**: existing apply / presentation / baseline tests
    continue to pass; the new endpoint is additive.
-10. **No-baseline behavior fixed**: the handoff fixes exactly one behavior for
-    requests without a captured baseline (per-file `missing-baseline` vs a single
-    4xx) and tests it.
+10. **No-baseline behavior is request-level `409`**: a request without a captured
+    baseline returns `409` with a standard error and NO per-file list; tested.
+    This is fixed by this ADR, not chosen by the execution batch.
+11. **No capture-relaxation for `unreadable-baseline`**: the execution batch MUST
+    NOT change ADR-0010's fail-closed capture (unreadable/non-regular files still
+    abort apply); `unreadable-baseline` remains a reserved/normally-unreachable
+    label.
 
 ## Status / Next
 
@@ -203,9 +230,11 @@ Next:
 
 1. Senior review records an explicit accept or reject decision.
 2. If ACCEPTED, author `CLI-BRIDGE-v2.6-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`
-   (`EX-2.6-1`) fixing the endpoint shape, the no-baseline behavior, result
-   hashing/caps, audit metadata, tests mapped to the acceptance conditions, and a
-   closeout checklist; then proceed in an `EX-*` batch and return to `REVIEW-*`.
+   (`EX-2.6-1`) fixing the endpoint shape, result hashing/caps, audit metadata,
+   tests mapped to the acceptance conditions, and a closeout checklist. The
+   no-baseline behavior (`409`) and the closed enum are already fixed by this ADR
+   and must not be re-decided by the execution batch; then proceed in an `EX-*`
+   batch and return to `REVIEW-*`.
 3. If REJECTED, record the rationale; no classification endpoint is added.
 4. Textual diff, hash exposure, raw baseline/result content persistence,
    main-tree reads/writes, `git`/VCS, and apply-from-preview remain deferred and
