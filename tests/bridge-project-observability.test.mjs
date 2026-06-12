@@ -43,6 +43,71 @@ async function seedReview(runtime, sessionId, prompt, projectId) {
   });
 }
 
+async function seedApprovedGoalPlan(runtime, projectId) {
+  runtime.projectStore.upsert({ key: projectId, label: projectId });
+  const goal = runtime.goalStore.createGoal({
+    sessionId: 'seed-' + projectId,
+    description: 'Goal for ' + projectId,
+    projectId,
+  });
+  const plan = runtime.goalStore.attachPlan({
+    goalId: goal.id,
+    steps: [
+      {
+        intent: 'Plan task',
+        kind: 'review',
+        tier: 'patch-proposal',
+        isStateMutating: false,
+        targetEndpointId: 'claude-code-command',
+      },
+      {
+        intent: 'Verify task',
+        kind: 'review',
+        tier: 'patch-proposal',
+        isStateMutating: false,
+        targetEndpointId: 'claude-code-command',
+      },
+    ],
+    permittedTiers: ['patch-proposal'],
+  });
+  if (!plan) throw new Error('failed to attach plan');
+  runtime.goalStore.approvePlan(goal.id);
+  return { goalId: goal.id, planId: plan.id, stepId: plan.steps[1].id };
+}
+
+async function seedTeamArtifact(runtime, projectId, teamId, notes, createdAt = 200) {
+  const seeded = await seedApprovedGoalPlan(runtime, projectId);
+  const teamsPath = BRIDGE_PROJECTS_PATH + '/' + projectId + '/teams';
+  const create = await call(runtime, 'POST', teamsPath, {
+    action: 'create',
+    id: teamId,
+    goalId: seeded.goalId,
+    planId: seeded.planId,
+    logicalSlots: [
+      { id: 'slot-plan', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' },
+      { id: 'slot-verify', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' },
+    ],
+    maxConcurrentBridgeSlots: 1,
+    mode: 'sequential',
+    isolation: 'patch-only',
+    provider: 'claude',
+    endpointId: 'claude-code-command',
+  });
+  assert.equal(create.statusCode, 201);
+  const approve = await call(runtime, 'POST', teamsPath + '/' + teamId + '/approve');
+  assert.equal(approve.statusCode, 200);
+  const artifact = await call(runtime, 'POST', teamsPath + '/' + teamId + '/artifacts', {
+    slotId: 'slot-verify',
+    summary: 'Verifier checked patch',
+    proposedFiles: ['src/feature.ts'],
+    verificationNotes: notes,
+    outputRedacted: true,
+    createdAt,
+  });
+  assert.equal(artifact.statusCode, 201);
+  return seeded;
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Timeline
 // ════════════════════════════════════════════════════════════════════
@@ -188,6 +253,67 @@ test('GET /bridge/projects/:key/verification returns empty for no data', async (
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.status, 'unavailable');
   assert.equal(res.payload.records.length, 0);
+});
+
+test('GET /bridge/projects/:key/verification returns artifact-backed records', async () => {
+  const runtime = createBridgeRuntime();
+  const seeded = await seedTeamArtifact(runtime, 'verif-alpha', 'team-verif', 'npm test passed', 300);
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/verif-alpha/verification');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.status, 'recorded');
+  assert.equal(res.payload.records.length, 1);
+  assert.deepEqual(res.payload.records[0], {
+    stepId: seeded.stepId,
+    stepIndex: 1,
+    stepIntent: 'Verify task',
+    stepStatus: 'pending',
+    harnessStatus: 'recorded',
+    notes: 'npm test passed',
+    teamId: 'team-verif',
+    slotId: 'slot-verify',
+    createdAt: 300,
+  });
+});
+
+test('GET /bridge/projects/:key/verification ignores blank artifact notes', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'verif-blank', 'team-blank', '   ', 301);
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/verif-blank/verification');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.status, 'unavailable');
+  assert.equal(res.payload.records.length, 0);
+});
+
+test('verification artifact records are project-isolated', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'verif-alpha-iso', 'team-alpha-iso', 'alpha tests pass', 400);
+  await seedTeamArtifact(runtime, 'verif-beta-iso', 'team-beta-iso', 'beta tests pass', 500);
+
+  const alpha = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/verif-alpha-iso/verification');
+  const beta = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/verif-beta-iso/verification');
+  assert.equal(alpha.statusCode, 200);
+  assert.equal(beta.statusCode, 200);
+  assert.equal(alpha.payload.status, 'recorded');
+  assert.equal(beta.payload.status, 'recorded');
+  assert.equal(alpha.payload.records.length, 1);
+  assert.equal(beta.payload.records.length, 1);
+  assert.equal(alpha.payload.records[0].notes, 'alpha tests pass');
+  assert.equal(beta.payload.records[0].notes, 'beta tests pass');
+  assert.equal(alpha.payload.records.some(record => record.teamId === 'team-beta-iso'), false);
+  assert.equal(beta.payload.records.some(record => record.teamId === 'team-alpha-iso'), false);
+});
+
+test('GET /bridge/projects/:key/verification does not mutate team artifacts', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'verif-readonly', 'team-readonly', 'readonly evidence', 600);
+  const before = runtime.teamStore.exportArtifacts();
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/verif-readonly/verification');
+  const after = runtime.teamStore.exportArtifacts();
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(after, before);
 });
 
 test('POST /bridge/projects/:key/verification is rejected', async () => {

@@ -975,7 +975,39 @@ function buildObservabilityInput(
       ok: e.result?.ok,
     }));
 
-  return { projectId: projectKey, goals, plans, reviews, pendingPrompts, auditEvents };
+  const teams = runtime.teamStore.listByProject(projectKey).map(team => ({
+    id: team.id,
+    projectId: team.projectId,
+    planId: team.planId,
+    logicalSlots: team.logicalSlots.map(slot => ({
+      id: slot.id,
+      stepIndex: slot.stepIndex,
+      status: slot.status,
+    })),
+  }));
+  const projectTeamIds = new Set(teams.map(team => team.id));
+  const artifacts = teams
+    .flatMap(team => runtime.teamStore.listArtifacts(team.id))
+    .filter(artifact => projectTeamIds.has(artifact.teamId))
+    .map(artifact => ({
+      teamId: artifact.teamId,
+      slotId: artifact.slotId,
+      planStepId: artifact.planStepId,
+      summary: artifact.summary,
+      verificationNotes: artifact.verificationNotes,
+      createdAt: artifact.createdAt,
+    }));
+
+  return {
+    projectId: projectKey,
+    goals,
+    plans,
+    reviews,
+    pendingPrompts,
+    auditEvents,
+    teams,
+    artifacts,
+  };
 }
 
 export async function readJsonBody(request: IncomingMessage): Promise<

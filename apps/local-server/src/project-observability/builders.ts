@@ -69,6 +69,24 @@ export interface ObservabilityInput {
     timestamp: number;
     ok?: boolean;
   }>;
+  teams?: Array<{
+    id: string;
+    projectId: string;
+    planId: string;
+    logicalSlots: Array<{
+      id: string;
+      stepIndex: number;
+      status: string;
+    }>;
+  }>;
+  artifacts?: Array<{
+    teamId: string;
+    slotId: string;
+    planStepId: string;
+    summary: string;
+    verificationNotes?: string;
+    createdAt: number;
+  }>;
 }
 
 // ---- Helpers ----
@@ -310,21 +328,71 @@ export function buildDerivedMemory(
 export function buildHarnessVerification(
   input: ObservabilityInput,
 ): HarnessVerificationView {
-  // v2.1 baseline: no structured harness data.
-  // Derive placeholder records from completed plan steps only.
-  const records: HarnessVerificationRecord[] = [];
+  const teams = input.teams ?? [];
+  const artifacts = input.artifacts ?? [];
+  const teamsById = new Map(teams.map(team => [team.id, team]));
+  const planStepsById = new Map<string, {
+    id: string;
+    index: number;
+    intent: string;
+    status: string;
+  }>();
 
   for (const plan of input.plans) {
     for (const step of plan.steps) {
-      if (step.status === 'done') {
-        records.push({
-          stepId: step.id,
-          stepIndex: step.index,
-          stepIntent: step.intent,
-          stepStatus: step.status,
-          harnessStatus: 'unavailable',
-        });
-      }
+      planStepsById.set(step.id, step);
+    }
+  }
+
+  const artifactRecords: HarnessVerificationRecord[] = [];
+  for (const artifact of artifacts) {
+    const notes = artifact.verificationNotes?.trim();
+    if (!notes) continue;
+    const team = teamsById.get(artifact.teamId);
+    if (!team) continue;
+    const slot = team.logicalSlots.find(s => s.id === artifact.slotId);
+    const planStep = planStepsById.get(artifact.planStepId);
+    artifactRecords.push({
+      stepId: artifact.planStepId,
+      stepIndex: slot?.stepIndex,
+      stepIntent: planStep?.intent ?? artifact.summary,
+      stepStatus: slot?.status,
+      harnessStatus: 'recorded',
+      notes,
+      teamId: artifact.teamId,
+      slotId: artifact.slotId,
+      createdAt: artifact.createdAt,
+    });
+  }
+
+  artifactRecords.sort((a, b) => {
+    const timeDelta = (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    if (timeDelta !== 0) return timeDelta;
+    const aKey = `${a.teamId ?? ''}:${a.slotId ?? ''}:${a.stepId ?? ''}`;
+    const bKey = `${b.teamId ?? ''}:${b.slotId ?? ''}:${b.stepId ?? ''}`;
+    return aKey.localeCompare(bKey);
+  });
+
+  if (artifactRecords.length > 0) {
+    return {
+      projectId: input.projectId,
+      records: artifactRecords,
+      status: 'recorded',
+    };
+  }
+
+  // Preserve the v2.1 fallback when no structured verification notes exist.
+  const records: HarnessVerificationRecord[] = [];
+  for (const plan of input.plans) {
+    for (const step of plan.steps) {
+      if (step.status !== 'done') continue;
+      records.push({
+        stepId: step.id,
+        stepIndex: step.index,
+        stepIntent: step.intent,
+        stepStatus: step.status,
+        harnessStatus: 'unavailable',
+      });
     }
   }
 

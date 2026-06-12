@@ -323,6 +323,57 @@ blocked because the default project cannot be archived.
 
 ---
 
+## GET /bridge/projects/:key/verification
+
+Returns a read-only verification evidence view for a project. The endpoint does
+not run a harness, spawn a process, or infer pass/fail from free text.
+
+### Response with artifact-backed records (200)
+
+```json
+{
+  "projectId": "alpha",
+  "status": "recorded",
+  "records": [
+    {
+      "stepId": "step-2",
+      "stepIndex": 1,
+      "stepIntent": "Verify task",
+      "stepStatus": "pending",
+      "harnessStatus": "recorded",
+      "notes": "npm test passed",
+      "teamId": "team-1",
+      "slotId": "slot-verify",
+      "createdAt": 1234567890
+    }
+  ]
+}
+```
+
+### Response without verification evidence (200)
+
+```json
+{
+  "projectId": "alpha",
+  "status": "unavailable",
+  "records": []
+}
+```
+
+Projects with completed plan steps but no artifact notes may include legacy
+placeholder records with `harnessStatus: "unavailable"`.
+
+### Source and isolation
+
+- Records are derived only from existing `SlotArtifact.verificationNotes`.
+- Blank or whitespace-only notes are ignored.
+- Artifacts are included only when their parent `TeamSpec.projectId` matches
+  the requested project key.
+- Records are sorted newest first by `createdAt`.
+- Mutation methods on this path return 405.
+
+---
+
 ## Auth
 
 All `/bridge/projects*` paths require origin + pairing token authentication
@@ -354,6 +405,9 @@ These endpoints do **not**:
   - Archive/unarchive: archivedAt set/cleared, default project guard,
     creation guards (409), includeArchived toggle
   - Malformed percent-encoding rejection, traversal key rejection
+- `tests/bridge-project-observability.test.mjs` — read-only project
+  timeline/audit/memory/verification views, including artifact-backed
+  verification evidence and project isolation
 - `tests/project-console-ui.test.mjs` — static HTML allowlist and safety
 - `tests/project-console-behavior.test.mjs` — jsdom UI interaction tests
   (project switch, command bar, management UI)

@@ -557,6 +557,7 @@ export interface ProjectAuditView {
 export interface HarnessVerificationRecord {
   stepId?: string; stepIndex?: number; stepIntent?: string;
   stepStatus?: string; harnessStatus: string;
+  notes?: string; teamId?: string; slotId?: string; createdAt?: number;
 }
 
 export interface HarnessVerificationView {
