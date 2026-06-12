@@ -82,6 +82,20 @@ All notable changes to CLI Bridge are documented here.
   textual/diff-like view, and does NOT add main-tree reads/writes, `git`/spawn/VCS,
   apply-from-preview, scheduler/model-triggered work, or a project-level workspace
   root. Awaits explicit human accept/reject before any code (then `EX-2.6-1` handoff).
+- **ADR-0011** ACCEPTED (senior review, with conditions on the `EX-2.6-1`
+  implementation handoff). Authorizes one strictly read-only, metadata-only
+  classification endpoint over an applied request, computed from persisted ADR-0010
+  baseline metadata + an in-process hash of the isolated apply result. Closed enum
+  `new | modified | unchanged | unreadable-baseline`; no-baseline → request-level
+  `409`. No raw content, no `sha256` in responses, no textual diff, no main-tree
+  read/write, no `git`/spawn/VCS, no apply-from-preview, no relaxation of ADR-0010
+  capture. No code until the `EX-2.6-1` handoff satisfying the acceptance conditions
+  is created.
+- Drafted **v2.6 Apply-result Classification Implementation Handoff** (AUTHORIZED
+  for `EX-2.6-1`). Fixes the read-only `GET .../apply-requests/:applyId/classification`
+  endpoint, result hashing/caps, audit metadata, tests mapped to the ADR-0011
+  acceptance conditions, and the closeout checklist; execution returns to
+  `REVIEW-2.6-1`.
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +

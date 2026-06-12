@@ -1,8 +1,17 @@
 # ADR-0011: Read-only Apply-result File Classification (metadata-only, v2.6)
 
-Status: PROPOSED — awaiting senior accept/reject
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            `EX-2.6-1` implementation handoff (see "Acceptance Conditions"
+            below). This authorizes a strictly read-only, metadata-only per-file
+            classification for an applied request, derived from the persisted
+            ADR-0010 baseline metadata and an in-process hash of the isolated
+            apply result. No raw content, no `sha256` in responses, no textual
+            diff, no main-tree read/write, no `git`/spawn/VCS, no
+            apply-from-preview. No implementation is authorized until the
+            `EX-2.6-1` handoff is created.
 
 Revision: 2026-06-12 (RP-2.6 revise, pre-acceptance). Fixed two product/API
 semantics at the ADR level so they are not left to the execution batch:
@@ -50,8 +59,10 @@ coarse per-file label only. It does **not** persist raw baseline content, does
 
 ### 0. Decision status
 
-**PROPOSED.** No implementation is authorized until this ADR is explicitly
-accepted by senior review and an `EX-2.6-1` handoff is created.
+**ACCEPTED** (2026-06-12, senior review, with the Acceptance Conditions below).
+No implementation is authorized until the `EX-2.6-1` handoff
+(`CLI-BRIDGE-v2.6-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`) is created and
+satisfies every Acceptance Condition.
 
 ### 1. Whether read-only classification is allowed
 
@@ -223,19 +234,16 @@ An `EX-2.6-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED — awaiting senior accept/reject. No implementation and no capability
-are authorized by this document.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
 Next:
 
-1. Senior review records an explicit accept or reject decision.
-2. If ACCEPTED, author `CLI-BRIDGE-v2.6-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`
-   (`EX-2.6-1`) fixing the endpoint shape, result hashing/caps, audit metadata,
-   tests mapped to the acceptance conditions, and a closeout checklist. The
-   no-baseline behavior (`409`) and the closed enum are already fixed by this ADR
-   and must not be re-decided by the execution batch; then proceed in an `EX-*`
-   batch and return to `REVIEW-*`.
-3. If REJECTED, record the rationale; no classification endpoint is added.
-4. Textual diff, hash exposure, raw baseline/result content persistence,
+1. Author `CLI-BRIDGE-v2.6-APPLY-RESULT-CLASSIFICATION-HANDOFF.md` (`EX-2.6-1`)
+   fixing the endpoint shape, result hashing/caps, audit metadata, tests mapped
+   to the acceptance conditions, and a closeout checklist. The no-baseline
+   behavior (`409`) and the closed enum are already fixed by this ADR and must
+   not be re-decided by the execution batch.
+2. Execution proceeds in an `EX-*` batch and returns to `REVIEW-2.6-1`.
+3. Textual diff, hash exposure, raw baseline/result content persistence,
    main-tree reads/writes, `git`/VCS, and apply-from-preview remain deferred and
    require their own ADRs.
