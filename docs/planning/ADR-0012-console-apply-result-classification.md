@@ -1,8 +1,17 @@
 # ADR-0012: Console Apply-result Classification Presentation (read-only, v2.7)
 
-Status: PROPOSED -- awaiting senior accept/reject
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            `EX-2.7-1` implementation handoff (see "Acceptance Conditions"
+            below). This authorizes a strictly read-only project-console
+            presentation of the existing ADR-0011 classification endpoint. No
+            backend endpoint, no `sha256`/raw content/diff display, no
+            main-tree access, no `git`/spawn/VCS, no apply-from-preview, no
+            write/promote controls, and no ADR-0010/ADR-0011 semantic changes.
+            No implementation is authorized until the `EX-2.7-1` handoff is
+            created.
 
 ## Context
 
@@ -33,8 +42,10 @@ control.
 
 ### 0. Decision status
 
-**PROPOSED.** No implementation is authorized until this ADR is explicitly
-accepted by senior review and an `EX-2.7-1` handoff is created.
+**ACCEPTED** (2026-06-12, senior review, with the Acceptance Conditions below).
+No implementation is authorized until the `EX-2.7-1` handoff
+(`CLI-BRIDGE-v2.7-CONSOLE-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`) is created
+and satisfies every Acceptance Condition.
 
 ### 1. Whether console classification presentation is allowed
 
@@ -194,17 +205,15 @@ An `EX-2.7-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED -- awaiting senior accept/reject. No implementation and no capability
-are authorized by this document.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
 Next:
 
-1. Senior review records an explicit accept or reject decision.
-2. If ACCEPTED, author
+1. Author
    `CLI-BRIDGE-v2.7-CONSOLE-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`
    (`EX-2.7-1`) with exact allowed files, UI behavior, tests, verification, and
    closeout checklist.
-3. If REJECTED, record the rationale; console classification remains API-only.
-4. Diff, hash exposure, raw baseline/result content persistence, main-tree
+2. Execution proceeds in an `EX-*` batch and returns to `REVIEW-2.7-1`.
+3. Diff, hash exposure, raw baseline/result content persistence, main-tree
    reads/writes, `git`/VCS, and apply-from-preview remain deferred and require
    separate ADRs.
