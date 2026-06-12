@@ -22,16 +22,21 @@ All notable changes to CLI Bridge are documented here.
   built-in `fetch`, no npm dependencies. Supports timeout, budget, retry.
 - **In-memory API key store**: `apps/local-server/src/model/api-key.ts`. Keys
   never persisted to disk, snapshot, audit, or HTTP response.
-- **PlannerModel**: `apps/local-server/src/model/planner-model.ts` with schema
-  validation, PolicyEngine checks, step ceiling enforcement, forbidden-kind
-  rejection.
-- **Fixed system preamble**: `apps/local-server/src/model/planner-prompt.ts`
-  with ADR-0003 boundary enforcement.
-- **Audit events**: `model_plan_request` and `model_plan_result` types.
-- **Tests**: 9 new tests covering happy path, missing key, provider failure,
-  schema rejection, step ceiling, audit redaction, forbidden kinds.
+- **PlannerModel**: `apps/local-server/src/model/planner-model.ts` with fail-closed
+  schema validation, PolicyEngine checks, step ceiling enforcement, and
+  forbidden-kind rejection. Schema/policy failures return 409, not 200.
+- **Audit enrichment**: `model_plan_request` / `model_plan_result` events with
+  full metadata (status, provider, endpoint, tokenBudget, usage, latencyMs,
+  failureKind, failureReason). Request written before provider call, result
+  for all outcomes. No raw prompt/response/key in audit.
+- **Input budget + parse classification**: conservative token estimation before
+  sending; JSON parse errors classified as non-retryable model output failures.
+- **Console**: minimal read-only "Model API: unavailable" status display; no
+  execute/dispatch/apply actions.
+- **Tests**: 16 model API tests. Total: 523/523 pass.
 - **No new endpoint, no npm dependencies, no auto-apply/commit/push/merge,
   no parallel slots, no WorkBuddy executor, no CriticModel/ArbiterModel.**
+- **Closeout**: `docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md` approved.
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 

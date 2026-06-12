@@ -1,10 +1,9 @@
 # CLI Bridge v2.4a — PlannerModel Implementation Handoff
 
-**Status**: HANDOFF DRAFT — Awaiting handoff review (ADR-0004 accepted)
+**Status**: IMPLEMENTED — v2.4a PlannerModel closeout complete (2026-06-12)
 **Date**: 2026-06-12
 **Based on**: `ADR-0004-model-api-middle-layer.md` (ACCEPTED)
-**Prerequisite**: This handoff MUST be reviewed and approved before any implementation begins.
-               ADR-0004 is already accepted.
+**Implementation commits**: `697d73a`, `1f6079f`, `f660a18` (review fix rounds)
 
 ---
 
