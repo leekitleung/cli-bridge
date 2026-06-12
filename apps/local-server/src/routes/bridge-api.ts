@@ -129,6 +129,10 @@ export interface BridgeRuntimeOptions {
   modelProviderFactory?: (apiKey: string) => ModelProvider;
   // v2.5: workspace apply root directory (default: temp dir for tests).
   applyRoot?: string;
+  // v2.5 ADR-0010: trusted root for pre-apply baseline manifest capture. Absent/OFF = disabled.
+  baselineRoot?: string;
+  baselineCaptureEnabled?: boolean;
+  baselineCaps?: { maxFiles: number; maxTotalBytes: number };
 }
 
 
@@ -381,6 +385,18 @@ async function handleApplyRequestConfirm(
     isolatedDirId: req?.isolatedDirId,
     actor: req?.actor,
   };
+  // v2.5 ADR-0010: include baseline metadata in audit (no entries, no raw content).
+  if (req?.baselineManifest) {
+    auditMeta.baseline = {
+      capturedAt: req.baselineManifest.capturedAt,
+      rootRef: req.baselineManifest.rootRef,
+      fileCount: req.baselineManifest.fileCount,
+      readableCount: req.baselineManifest.readableCount,
+      missingCount: req.baselineManifest.missingCount,
+      unreadableCount: req.baselineManifest.unreadableCount,
+      byteTotal: req.baselineManifest.byteTotal,
+    };
+  }
 
   runtime.auditLog.createAndAppend({
     sessionId: 'apply-result-' + applyId,
@@ -1043,7 +1059,11 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
-  const applyStore = new WorkspaceApplyStore(applyRoot + '/cli-bridge-apply');
+  const applyStore = new WorkspaceApplyStore(applyRoot + '/cli-bridge-apply', {
+    baselineRoot: options.baselineRoot,
+    baselineCaptureEnabled: options.baselineCaptureEnabled ?? false,
+    baselineCaps: options.baselineCaps,
+  });
 
   if (snapshotStore) {
     const read = snapshotStore.read();

@@ -465,3 +465,277 @@ test('fail-closed: maxTotalBytes cap exceeded, no write', async () => {
   assert.equal(res.statusCode, 409);
   assert.ok(res.payload.message.includes('exceeds') || res.payload.message.includes('size'));
 });
+
+// ══════════════════════════════════════════════════════════════════
+// v2.5 ADR-0010: Pre-apply baseline manifest capture tests
+// ══════════════════════════════════════════════════════════════════
+
+// Helpers for baseline tests: create test files under a trusted root.
+function createBaselineRoot() {
+  const root = path.join(process.env.TEMP ?? process.env.TMPDIR ?? '/tmp', 'cli-bridge-baseline-' + randomUUID());
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'app.ts'), '// app baseline', 'utf8');
+  fs.writeFileSync(path.join(root, 'src', 'lib.ts'), '// lib baseline', 'utf8');
+  return root;
+}
+
+function cleanBaselineRoot(root) {
+  try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+}
+
+// ── AC1: Trusted root only ───────────────────────────────────────
+
+test('ADR-0010 AC1: baseline root comes only from runtime option, not request', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new', 'src/lib.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 200);
+  const req = runtime.applyStore.getRequest(applyId);
+  assert.ok(req.baselineManifest, 'baseline manifest should be captured');
+  assert.equal(req.baselineManifest.rootRef, 'runtime-baseline-root');
+  assert.equal(req.baselineManifest.fileCount, 2);
+  assert.equal(req.baselineManifest.readableCount, 2);
+  // Audit must not contain absolute baselineRoot.
+  const allEvents = JSON.stringify(runtime.auditLog.exportEvents());
+  assert.equal(allEvents.includes(baselineRoot), false, 'absolute baselineRoot must not leak to audit');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC2: Separate opt-in, disabled by default ────────────────────
+
+test('ADR-0010 AC2: default disabled, existing behavior unchanged', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 200);
+  // No baseline manifest when disabled.
+  const req = runtime.applyStore.getRequest(applyId);
+  assert.equal(req.baselineManifest, undefined);
+});
+
+test('ADR-0010 AC2: enabled without trusted root fails closed before write', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineCaptureEnabled: true /* no baselineRoot */ });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('no trusted root') || res.payload.message.includes('not configured'));
+  // Status must remain pending (no write).
+  assert.equal(runtime.applyStore.getRequest(applyId).status, 'pending');
+});
+
+// ── AC3: Metadata only, no raw content ───────────────────────────
+
+test('ADR-0010 AC3: baseline manifest contains only metadata, no raw content', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new', 'src/lib.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 200);
+  const m = runtime.applyStore.getRequest(applyId).baselineManifest;
+  assert.ok(m);
+  for (const entry of m.entries) {
+    assert.ok(entry.path);
+    assert.ok(typeof entry.exists === 'boolean');
+    assert.ok(typeof entry.readable === 'boolean');
+    // No raw content.
+    assert.equal(entry.content, undefined, 'no raw content in baseline entry');
+    assert.equal(entry.data, undefined, 'no raw data in baseline entry');
+  }
+  // No raw content in audit or response.
+  const events = JSON.stringify(runtime.auditLog.exportEvents());
+  assert.equal(events.includes('// app baseline'), false, 'no raw baseline content in audit');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC4: Containment ────────────────────────────────────────────
+
+test('ADR-0010 AC4: path escape in baseline capture fails closed', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['../etc/passwd', 'src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { '../etc/passwd': '// bad', 'src/app.ts': '// new' },
+  });
+  // Fail-closed: no write.
+  assert.equal(res.statusCode, 409);
+  assert.equal(runtime.applyStore.getRequest(applyId).status, 'pending');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC5: Fail-closed before write ────────────────────────────────
+
+test('ADR-0010 AC5: missing file records metadata, does not fail', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/newfile.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new', 'src/newfile.ts': '// new', 'src/lib.ts': '// new' },
+  });
+  // Missing proposed file is NOT a failure.
+  assert.equal(res.statusCode, 200);
+  const m = runtime.applyStore.getRequest(applyId).baselineManifest;
+  const missing = m.entries.find(e => e.path === 'src/newfile.ts');
+  assert.ok(missing);
+  assert.equal(missing.exists, false);
+  assert.equal(missing.readable, false);
+  assert.equal(missing.errorKind, 'missing');
+  assert.equal(m.missingCount, 1);
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC6: Caps ────────────────────────────────────────────────────
+
+test('ADR-0010 AC6: baseline byte cap exceeded fails closed', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    baselineRoot,
+    baselineCaptureEnabled: true,
+    baselineCaps: { maxFiles: 200, maxTotalBytes: 10 },
+  });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new', 'src/lib.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('Baseline'));
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC7: Audit metadata, no raw content / no absolute root ───────
+
+test('ADR-0010 AC7: audit metadata has typed baseline info, no raw content', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+
+  const events = runtime.auditLog.exportEvents();
+  const resultEvent = events.find(e => e.type === 'workspace_apply_result');
+  assert.ok(resultEvent);
+  const meta = resultEvent.result.metadata;
+  assert.ok(meta.baseline);
+  assert.equal(meta.baseline.rootRef, 'runtime-baseline-root');
+  assert.ok(typeof meta.baseline.readableCount === 'number');
+  // No absolute root or raw content.
+  const allJson = JSON.stringify(events);
+  assert.equal(allJson.includes(baselineRoot), false, 'no absolute baselineRoot in audit');
+  assert.equal(allJson.includes('// app baseline'), false, 'no raw baseline content in audit');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC8: No new presentation capability ─────────────────────────
+
+test('ADR-0010 AC8: manifest exposes baseline summary only, no entries', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+
+  res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId);
+  assert.equal(res.statusCode, 200);
+  const manifest = res.payload.apply;
+  assert.ok(manifest.baselineManifest, 'manifest should expose baseline summary');
+  assert.equal(manifest.baselineManifest.fileCount, 1);
+  // Entries (which contain per-file sha256) must NOT be exposed.
+  assert.equal(manifest.baselineManifest.entries, undefined, 'manifest must not expose baseline entries');
+  // Summary counts and byteTotal OK — these are metadata, not raw content.
+  assert.ok(typeof manifest.baselineManifest.byteTotal === 'number', 'manifest summary includes byteTotal');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── AC9: No VCS/spawn — already covered by existing AC6 test ────
+// ── AC10: Backward compatibility — existing tests pass ───────────

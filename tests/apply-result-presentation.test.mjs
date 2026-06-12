@@ -198,8 +198,8 @@ test('AC3 no baseline/no diff: source has no baseline/diff/classification endpoi
     // No diff route/sub or diff-producing identifiers introduced by presentation.
     assert.equal(src.includes("'diff'"), false, name + ': no diff sub-route');
     assert.equal(src.includes('/diff'), false, name + ': no /diff path');
-    // No pre-apply baseline capture/storage identifiers.
-    for (const ident of ['originalContent', 'baselineContent', 'preApplyBaseline', 'captureBaseline', 'beforeContent']) {
+    // No raw baseline content storage identifiers (ADR-0010 allows metadata-only captureBaseline method).
+    for (const ident of ['originalContent', 'baselineContent', 'preApplyBaseline', 'beforeContent']) {
       assert.equal(src.includes(ident), false, name + ': no baseline identifier ' + ident);
     }
   }

@@ -134,6 +134,28 @@ All notable changes to CLI Bridge are documented here.
 - **Boundary**: confirmed no baseline/diff/classification/apply-from-preview/git/
   spawn/VCS language or implementation in console or routes.
 
+### Added — v2.5 Pre-apply Baseline Manifest Capture (EX-2.5-5, ADR-0010)
+
+- **Metadata-only baseline manifest**: captured in `confirmApply` before any
+  isolated apply write. Records path/exists/readable/size/sha256/errorKind only.
+  No raw baseline content, no diff, no classification.
+- **Trusted root**: `baselineRoot` set at server/runtime startup only. Never
+  accepted from HTTP request body/query. Absolute root never exposed in audit/response.
+- **Separate opt-in**: `baselineCaptureEnabled` defaults to `false`. Existing apply
+  and presentation behavior unchanged when disabled. Enabled without trusted root
+  fails closed before any write.
+- **Containment + caps**: same `validateAllPaths` containment; `maxFiles`/`maxTotalBytes`
+  caps on baseline reads. Cap exceed, non-regular file, or unreadable file → fail-closed,
+  no isolated write. Missing proposed files → `exists:false`, not a failure.
+- **Audit**: `workspace_apply_result` metadata includes typed `baseline` summary
+  (rootRef, fileCount, readableCount, missingCount, unreadableCount, byteTotal).
+  No raw content, secrets, or absolute host path.
+- **Manifest projection**: `ApplyManifest.baselineManifest` exposes summary
+  metadata only (no per-file entries, no sha256, no raw content).
+- **Tests**: 9 new baseline capture tests. Total: 589/589 passing tests.
+- **No new endpoint, no diff/classification/baseline-preview, no git/spawn/VCS,
+  no main-tree write, no apply-from-preview, no raw baseline content persistence.**
+
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
   - `"review-cli"` (default): existing behavior unchanged.

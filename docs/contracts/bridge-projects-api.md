@@ -615,3 +615,21 @@ enabled.
 - No pre-apply baseline capture, diff, or diff-like view (presentation)
 - No modified/unchanged/new file classification (presentation)
 - No "apply from preview" / promote affordance in API or console
+
+### Pre-apply Baseline Manifest (v2.5, ADR-0010)
+
+**Status**: Implemented | **ADR**: `docs/planning/ADR-0010-pre-apply-baseline-manifest-capture.md`
+**Handoff**: `docs/planning/CLI-BRIDGE-v2.5-PRE-APPLY-BASELINE-MANIFEST-HANDOFF.md`
+
+Metadata-only capture of proposed file states before an isolated apply write. No
+raw content, no diff, no classification. Trusted root from server config only.
+
+**ApplyManifest extension**: `ApplyManifest.baselineManifest` exposes summary
+metadata (fileCount, readableCount, missingCount, unreadableCount, byteTotal,
+rootRef) — never per-file entries, sha256, or raw content.
+
+**Audit**: `workspace_apply_result.result.metadata.baseline` with summary
+metadata. No raw content or absolute host path.
+
+**Non-goals**: diff/diff-like view, new/modified/unchanged classification,
+baseline preview endpoint, raw baseline content persistence.

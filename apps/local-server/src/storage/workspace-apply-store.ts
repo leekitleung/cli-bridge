@@ -3,10 +3,11 @@
 // Manages isolated apply directories under a dedicated apply root.
 // Each apply gets its own subdirectory. Strict path containment, caps,
 // atomic staging → publish, reversible discard.
+// v2.5 ADR-0010: metadata-only pre-apply baseline manifest capture.
 //
 // No git, no child_process, no spawn. Pure Node fs/path.
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -43,6 +44,8 @@ export interface ApplyRequest {
   confirmedAt?: number;
   fileCount?: number;
   byteTotal?: number;
+  /** v2.5 ADR-0010: metadata-only pre-apply baseline manifest (no raw content). */
+  baselineManifest?: BaselineManifest;
 }
 
 // ── v2.5 Read-only presentation (ADR-0009) ───────────────────────
@@ -65,6 +68,8 @@ export interface ApplyManifest {
   actor?: string;
   createdAt: number;
   confirmedAt?: number;
+  /** v2.5 ADR-0010: metadata-only baseline summary (no entries, no content). */
+  baselineManifest?: Omit<BaselineManifest, 'entries'>;
 }
 
 /** Read-only manifest projection. Never exposes `isolatedDirPath` or content. */
@@ -83,6 +88,9 @@ export function toApplyManifest(req: ApplyRequest): ApplyManifest {
     actor: req.actor,
     createdAt: req.createdAt,
     confirmedAt: req.confirmedAt,
+    baselineManifest: req.baselineManifest
+      ? { capturedAt: req.baselineManifest.capturedAt, rootRef: req.baselineManifest.rootRef, fileCount: req.baselineManifest.fileCount, readableCount: req.baselineManifest.readableCount, missingCount: req.baselineManifest.missingCount, unreadableCount: req.baselineManifest.unreadableCount, byteTotal: req.baselineManifest.byteTotal }
+      : undefined,
   };
 }
 
@@ -137,14 +145,62 @@ export function validateAllPaths(rawPaths: string[]): string[] | null {
 
 // ── Store ────────────────────────────────────────────────────────
 
+// ── v2.5 Pre-apply baseline manifest capture (ADR-0010) ─────────
+//
+// Metadata-only: records path/exists/readable/size/sha256/errorKind.
+// Never stores raw baseline content or absolute host paths.
+
+export interface BaselineManifestEntry {
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  size?: number;
+  sha256?: string;
+  errorKind?: 'missing' | 'unreadable' | 'not-file' | 'cap-exceeded' | 'path-escape';
+}
+
+export interface BaselineManifest {
+  capturedAt: number;
+  rootRef: string;
+  fileCount: number;
+  readableCount: number;
+  missingCount: number;
+  unreadableCount: number;
+  byteTotal: number;
+  entries: BaselineManifestEntry[];
+}
+
+export interface BaselineCaps {
+  maxFiles: number;
+  maxTotalBytes: number;
+}
+
+export const DEFAULT_BASELINE_CAPS: BaselineCaps = {
+  maxFiles: 200,
+  maxTotalBytes: 5 * 1024 * 1024, // 5 MB
+};
+
 export class WorkspaceApplyStore {
   readonly applyRoot: string;
   private readonly requests = new Map<string, ApplyRequest>();
   private caps: ApplyCaps;
+  /** v2.5 ADR-0010: trusted root for pre-apply baseline capture. Absent = disabled. */
+  readonly baselineRoot?: string;
+  readonly baselineCaps: BaselineCaps;
+  /** v2.5 ADR-0010: baseline capture opt-in. Default false. */
+  readonly baselineCaptureEnabled: boolean;
 
-  constructor(applyRoot: string, caps?: ApplyCaps) {
+  constructor(applyRoot: string, opts?: {
+    caps?: ApplyCaps;
+    baselineRoot?: string;
+    baselineCaps?: BaselineCaps;
+    baselineCaptureEnabled?: boolean;
+  }) {
     this.applyRoot = path.resolve(applyRoot);
-    this.caps = caps ?? { ...DEFAULT_APPLY_CAPS };
+    this.caps = opts?.caps ?? { ...DEFAULT_APPLY_CAPS };
+    this.baselineRoot = opts?.baselineRoot ? path.resolve(opts.baselineRoot) : undefined;
+    this.baselineCaps = opts?.baselineCaps ?? { ...DEFAULT_BASELINE_CAPS };
+    this.baselineCaptureEnabled = opts?.baselineCaptureEnabled ?? false;
   }
 
   // ── Request lifecycle ──────────────────────────────────────────
@@ -238,6 +294,19 @@ export class WorkspaceApplyStore {
       return { ok: false, error: `Total size ${totalBytes} exceeds cap ${req.caps.maxTotalBytes}` };
     }
 
+    // ── v2.5 ADR-0010: Pre-apply baseline manifest capture ──────
+    // Must happen BEFORE any isolated directory write.
+    if (this.baselineCaptureEnabled) {
+      if (!this.baselineRoot) {
+        return { ok: false, error: 'Baseline capture is enabled but no trusted root is configured' };
+      }
+      const captureResult = this.captureBaseline(req.proposedFiles);
+      if (!captureResult.ok) {
+        return { ok: false, error: 'Baseline capture failed: ' + captureResult.error };
+      }
+      req.baselineManifest = captureResult.manifest;
+    }
+
     // Generate isolated dir.
     const isolatedDirId = randomUUID();
     const stagingDir = path.join(this.applyRoot, '.staging-' + isolatedDirId);
@@ -280,6 +349,98 @@ export class WorkspaceApplyStore {
       this.requests.set(params.applyId, req);
       return { ok: false, error: `Apply write failed: ${(err as Error)?.message ?? 'unknown'}` };
     }
+  }
+
+  // ── v2.5 ADR-0010: baseline capture ──────────────────────────
+  // Metadata-only: path/exists/readable/size/sha256/errorKind.
+  // No raw content. Fail-closed on unreadable/non-regular/cap-exceed/path-escape.
+  // Missing proposed files are NOT failures (exists:false, errorKind:'missing').
+
+  private captureBaseline(proposedFiles: string[]): { ok: true; manifest: BaselineManifest } | { ok: false; error: string } {
+    const root = this.baselineRoot!;
+    const entries: BaselineManifestEntry[] = [];
+    let readableCount = 0;
+    let missingCount = 0;
+    let unreadableCount = 0;
+    let byteTotal = 0;
+    const fileCount = proposedFiles.length;
+
+    // Caps: file count check.
+    if (fileCount > this.baselineCaps.maxFiles) {
+      return { ok: false, error: `File count ${fileCount} exceeds baseline cap ${this.baselineCaps.maxFiles}` };
+    }
+
+    for (const relPath of proposedFiles) {
+      // Path containment + validation.
+      const validated = validateAllPaths([relPath]);
+      if (!validated) {
+        entries.push({ path: relPath, exists: false, readable: false, errorKind: 'path-escape' });
+        unreadableCount++;
+        continue;
+      }
+      const resolved = path.resolve(root, validated[0]);
+      // Double-check containment.
+      const resolvedNorm = resolved.replace(/\\/g, '/');
+      const rootNorm = root.replace(/\\/g, '/');
+      if (!resolvedNorm.startsWith(rootNorm + '/') && resolvedNorm !== rootNorm) {
+        entries.push({ path: relPath, exists: false, readable: false, errorKind: 'path-escape' });
+        unreadableCount++;
+        continue;
+      }
+
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(resolved);
+      } catch {
+        // Missing file: not a failure, record metadata.
+        entries.push({ path: relPath, exists: false, readable: false, errorKind: 'missing' });
+        missingCount++;
+        continue;
+      }
+
+      if (!stat.isFile()) {
+        // Non-regular file → fail-closed (no write).
+        return { ok: false, error: `Path "${relPath}" is not a regular file (baseline capture requires regular files only)` };
+      }
+
+      let content: Buffer;
+      try {
+        content = fs.readFileSync(resolved);
+      } catch {
+        // Unreadable: fail-closed.
+        return { ok: false, error: `Cannot read file "${relPath}" (permission denied or locked)` };
+      }
+
+      // Caps: byte total check (cumulative across all readable files).
+      byteTotal += content.byteLength;
+      if (byteTotal > this.baselineCaps.maxTotalBytes) {
+        return { ok: false, error: `Baseline total bytes ${byteTotal} exceeds cap ${this.baselineCaps.maxTotalBytes}` };
+      }
+
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      entries.push({
+        path: relPath,
+        exists: true,
+        readable: true,
+        size: stat.size,
+        sha256,
+      });
+      readableCount++;
+    }
+
+    return {
+      ok: true,
+      manifest: {
+        capturedAt: Date.now(),
+        rootRef: 'runtime-baseline-root',
+        fileCount,
+        readableCount,
+        missingCount,
+        unreadableCount,
+        byteTotal,
+        entries,
+      },
+    };
   }
 
   // ── Discard (reversible) ───────────────────────────────────────
