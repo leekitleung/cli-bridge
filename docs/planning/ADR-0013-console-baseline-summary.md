@@ -15,7 +15,7 @@ chain:
 - ADR-0012: console presentation of classification labels and summary.
 
 ADR-0010 already allows `ApplyManifest.baselineManifest` to expose summary
-metadata only: `fileCount`, `readableCount`, `missingCount`,
+metadata only: `capturedAt`, `fileCount`, `readableCount`, `missingCount`,
 `unreadableCount`, `byteTotal`, and `rootRef`. The manifest projection does not
 return per-file baseline entries, `sha256`, raw baseline content, or absolute
 host paths.
@@ -48,6 +48,7 @@ response.
 The console MAY display these fields from `ApplyManifest.baselineManifest` when
 present:
 
+- `capturedAt`
 - `fileCount`
 - `readableCount`
 - `missingCount`
@@ -106,7 +107,7 @@ Recommended shape:
 - Keep the same team id/apply id inputs and "View result" button.
 - Continue loading manifest first.
 - If `manifest.apply.baselineManifest` is present, show a compact baseline
-  summary using only summary fields.
+  summary using only summary fields, including `capturedAt` if present.
 - If no baseline was captured, show an inert unavailable/not-captured message.
 - Continue loading classification and file list as before.
 - Keep existing preview behavior unchanged.
@@ -178,11 +179,14 @@ An `EX-2.8-1` handoff and closeout review MUST verify all of the following:
 2. **Existing manifest response only**: console baseline summary uses only
    `manifest.apply.baselineManifest` from the existing manifest GET response. No
    new backend route, store capability, schema field, or audit type is added.
-3. **Summary-only display**: UI displays only `fileCount`, `readableCount`,
-   `missingCount`, `unreadableCount`, `byteTotal`, and `rootRef` when present.
+3. **Summary-only display**: UI displays only `capturedAt`, `fileCount`,
+   `readableCount`, `missingCount`, `unreadableCount`, `byteTotal`, and
+   `rootRef` when present.
 4. **No baseline entries / hashes**: no `baselineManifest.entries`, `sha256`,
    raw baseline content, absolute host path, diff, or line-level detail appears
-   in HTML or runtime-rendered output.
+   in HTML or runtime-rendered output. Tests MUST specifically assert that
+   `rootRef` is treated as an opaque reference and that no absolute host path is
+   displayed.
 5. **Graceful absent-baseline state**: a manifest without `baselineManifest`
    renders an inert unavailable/not-captured state and does not block
    manifest/files/preview/classification display.

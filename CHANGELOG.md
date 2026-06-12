@@ -116,12 +116,13 @@ All notable changes to CLI Bridge are documented here.
   verification commands, and closeout checklist.
 - Drafted **ADR-0013 Console Apply-result Baseline Summary Presentation** as
   PROPOSED. Proposes showing only the existing
-  `ApplyManifest.baselineManifest` summary fields in the project console's
-  read-only Apply Result panel. It authorizes no implementation. It does NOT
-  add backend endpoints, baseline entries, `sha256`/raw content/baseline
-  preview/diff display, main-tree access, `git`/spawn/VCS, apply-from-preview,
-  write/promote controls, or changes to ADR-0010/ADR-0011 semantics. Awaits
-  explicit human accept/reject before any code.
+  `ApplyManifest.baselineManifest` summary fields (`capturedAt`, counts,
+  `byteTotal`, opaque `rootRef`) in the project console's read-only Apply
+  Result panel. It authorizes no implementation. It does NOT add backend
+  endpoints, baseline entries, `sha256`/raw content/baseline preview/diff
+  display, main-tree access, `git`/spawn/VCS, apply-from-preview, write/promote
+  controls, or changes to ADR-0010/ADR-0011 semantics. Awaits explicit human
+  accept/reject before any code.
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +
