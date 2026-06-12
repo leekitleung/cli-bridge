@@ -1,4 +1,4 @@
-# CLI Bridge v2.4b — CriticModel Implementation Handoff
+# CLI Bridge v2.4a-8 — CriticModel Implementation Handoff
 
 **Status**: IMPLEMENTATION HANDOFF — authorized by ADR-0005  
 **Date**: 2026-06-12  

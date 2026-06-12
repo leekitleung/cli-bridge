@@ -72,7 +72,7 @@ export const AUDIT_EVENT_TYPES = [
   // v2.4a Model API
   'model_plan_request',
   'model_plan_result',
-  // v2.4b CriticModel advisory review
+  // v2.4a-8 CriticModel advisory review
   'model_critique_request',
   'model_critique_result',
 ] as const;

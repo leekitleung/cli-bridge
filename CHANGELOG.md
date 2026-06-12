@@ -14,7 +14,7 @@ All notable changes to CLI Bridge are documented here.
   conditions on the implementation handoff). CriticModel is advisory-only
   (`canExecute=false`). Arbiter, Replanner, Summarizer, and any bounded
   self-iteration remain unauthorized.
-- **v2.4b CriticModel Implementation Handoff** added and implemented as an
+- **v2.4a-8 CriticModel Implementation Handoff** added and implemented as an
   advisory-only `criticSource: "model-api"` option on existing model planning.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
@@ -45,7 +45,7 @@ All notable changes to CLI Bridge are documented here.
   no CriticModel/ArbiterModel.**
 - **Closeout**: `docs/planning/CLI-BRIDGE-v2.4a-CLOSEOUT-REVIEW.md` approved.
 
-### Added — v2.4b CriticModel Advisory Review
+### Added — v2.4a-8 CriticModel Advisory Review
 - **`POST /bridge/goals/plan`** with `plannerSource: "model-api"` now accepts
   optional `criticSource: "model-api"` and returns structured advisory critique
   beside the draft. `criticSource` defaults to `"none"`.

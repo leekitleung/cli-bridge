@@ -1,4 +1,4 @@
-// v2.4b — CriticModel system preamble (fixed, reviewable text).
+// v2.4a-8 — CriticModel system preamble (fixed, reviewable text).
 //
 // CriticModel is advisory-only. It reviews a PlanDraft for risks and omissions
 // and must not produce executable instructions or any state-changing action.

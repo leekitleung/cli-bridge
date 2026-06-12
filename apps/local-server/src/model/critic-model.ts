@@ -1,4 +1,4 @@
-// v2.4b — CriticModel: calls ModelProvider, parses and validates critique.
+// v2.4a-8 — CriticModel: calls ModelProvider, parses and validates critique.
 //
 // Output is advisory-only. A blocking critique is a label; it never mutates,
 // rejects, cancels, approves, dispatches, or revises a plan.
