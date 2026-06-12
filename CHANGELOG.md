@@ -61,6 +61,22 @@ All notable changes to CLI Bridge are documented here.
   write/main-tree mutation, `git`/VCS action (commit/push/merge/PR/merge queue),
   auto-apply, "apply from preview", parallelism, or scheduler/model-triggered
   presentation. Awaits explicit human accept/reject before any code.
+- **ADR-0009** ACCEPTED (senior review, with conditions on the `EX-2.5-3`
+  implementation handoff). Authorizes a strictly read-only presentation layer
+  over existing isolated apply results, bounded to data the `WorkspaceApplyStore`
+  already records: read-only apply manifest, isolated-directory file list, and a
+  size-capped, secret-redacted per-file preview. No new mutation, no pre-apply
+  baseline capture, no diff/classification, no main-tree write, no `git`/VCS, no
+  auto-apply, no "apply from preview", no parallelism, no autonomy. No code until
+  the `EX-2.5-3` handoff satisfying the acceptance conditions is created.
+- Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
+  (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
+  the existing apply surface — apply manifest, isolated-dir file list (path +
+  size), and a size-capped/secret-redacted per-file preview — opt-in via
+  `workspaceApplyEnabled`, path-contained, fail-closed, with no mutation, no
+  pre-apply baseline, no diff/classification, no `git`/spawn/VCS, no main-tree
+  write, and no "apply from preview". Tests map to the ADR-0009 acceptance
+  conditions; execution returns to `REVIEW-*`.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:

@@ -1,8 +1,18 @@
 # ADR-0009: Read-only Apply-result Export / Presentation (v2.5 follow-up)
 
-Status: PROPOSED — awaiting senior accept/reject
+Status: ACCEPTED
 
 Date: 2026-06-12
+Acceptance: Senior review passed (2026-06-12), accepted with conditions on the
+            `EX-2.5-3` implementation handoff (see "Acceptance Conditions"
+            below). This authorizes a strictly read-only presentation layer over
+            existing isolated apply results, bounded to data the
+            `WorkspaceApplyStore` already records (manifest, file list,
+            size-capped redacted preview). It introduces NO new mutation, NO
+            pre-apply baseline capture, NO diff/classification, NO main-tree
+            write, NO `git`/VCS action, NO auto-apply, NO parallelism, and NO
+            autonomy. No implementation is authorized until the `EX-2.5-3`
+            handoff is created.
 
 ## Context
 
@@ -55,9 +65,10 @@ ADR-0008 and require their own ADRs.
 
 ### 0. Decision status
 
-**PROPOSED.** No implementation is authorized until this ADR is explicitly
-accepted by senior review and a v2.5 follow-up execution handoff (`EX-2.5-3`) is
-created.
+**ACCEPTED** (2026-06-12, senior review, with the Acceptance Conditions below).
+No implementation is authorized until the `EX-2.5-3` follow-up execution handoff
+(`CLI-BRIDGE-v2.5-APPLY-RESULT-PRESENTATION-HANDOFF.md`) is created and satisfies
+every Acceptance Condition.
 
 ### 1. Whether read-only apply-result presentation is allowed
 
@@ -209,21 +220,50 @@ If rejected:
   on-disk inspection of the isolated directory.
 - A narrower or different presentation slice may be proposed instead.
 
+## Acceptance Conditions
+
+The acceptance is conditional on the `EX-2.5-3` implementation handoff satisfying
+all of the following. A reviewer must re-verify each at closeout:
+
+1. Read-only proof: no presentation endpoint writes, modifies, or deletes any
+   file or apply-store record; every code path is a pure read. Covered by tests.
+2. Containment: read access is confined to the isolated apply directory for the
+   given apply id; path normalization rejects any selector escaping the root
+   (`..`, absolute, traversal, symlink). Covered by a test.
+3. No baseline / no diff: no pre-apply baseline is captured or stored; the file
+   list carries no modified/unchanged/new classification; no diff or diff-like
+   endpoint exists. Covered by tests and a source check.
+4. Redaction + caps: per-file preview is size-capped and secret-redacted (reuse
+   existing redaction); manifest exposes no secrets or API keys. Covered by
+   tests.
+5. Fail-closed: unknown/expired applyId, path escape, or cap exceed aborts the
+   read with an error and no partial or unsafe disclosure. Covered by tests.
+6. No VCS / no spawn: no `git`, `child_process`, or process spawn is introduced;
+   presentation uses contained read-only `fs` operations only. Covered by a
+   source check.
+7. Opt-in default OFF: presentation is bound to the existing per-project apply
+   opt-in (`workspaceApplyEnabled`, default false); with apply disabled the
+   endpoints stay inert and non-apply flows are unaffected. Covered by a test.
+8. No "apply from preview": the presentation surface (API + console) exposes no
+   affordance to apply, promote, commit, or write a previewed result anywhere;
+   keep/discard stays the separate ADR-0008 gated path. Covered by boundary
+   evidence and a test.
+
 ## Status / Next
 
-PROPOSED — awaiting senior accept/reject. No implementation and no capability
-are authorized by this document.
+ACCEPTED (2026-06-12, senior review, with the Acceptance Conditions above).
 
 Next:
 
-1. Senior review records an explicit accept or reject decision on this ADR.
-2. If ACCEPTED, author `CLI-BRIDGE-v2.5-APPLY-RESULT-PRESENTATION-HANDOFF.md`
-   (`EX-2.5-3`) with the allowed modification range, forbidden list, read-only
-   endpoint/console design, redaction/caps, tests mapped to the prerequisites,
-   verification commands, and a closeout checklist; then proceed in an `EX-*`
-   batch and return to `REVIEW-*`. The execution agent may implement only the
-   read-only presentation chain and MUST NOT add pre-apply baseline capture,
-   diff, main-tree writes, `git`, commit/push/merge, or scheduler/model-triggered
-   presentation.
-3. If REJECTED, record the decision and rationale; no presentation endpoints are
-   added.
+1. Author `CLI-BRIDGE-v2.5-APPLY-RESULT-PRESENTATION-HANDOFF.md` (`EX-2.5-3`)
+   with the allowed modification range, forbidden list, read-only
+   endpoint/console design, redaction/caps, tests mapped to the Acceptance
+   Conditions and the ADR-0007 §2 prerequisites, verification commands, and a
+   closeout checklist.
+2. Execution proceeds in an `EX-*` batch and returns to `REVIEW-*`. The
+   execution agent may implement only the read-only presentation chain and MUST
+   NOT add pre-apply baseline capture, diff, main-tree writes, `git`,
+   commit/push/merge, or scheduler/model-triggered presentation.
+3. Pre-apply baseline capture, diff/diff-like views, modified/unchanged
+   classification, and any write/VCS/automation remain deferred and require their
+   own ADRs.
