@@ -10,6 +10,7 @@ import {
   handleBridgeRequest,
 } from '../apps/local-server/src/routes/bridge-api.ts';
 import { detectFileConflicts } from '../packages/shared/src/schemas.ts';
+import { KNOWN_PROVIDER_CAPABILITIES } from '../apps/local-server/src/storage/provider-capability.ts';
 
 function jsonRequest(body) {
   const text = body === undefined ? '' : JSON.stringify(body);
@@ -618,6 +619,107 @@ test('reject unsupported mode via capability', async () => {
   });
   assert.equal(res.statusCode, 400);
 });
+
+// v2.4b Multi-provider AgentTeam — compatibility and provider binding
+test('multi-provider: single-provider TeamSpec defaults slot provider and endpoint', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-provider-default', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.team.logicalSlots[0].providerId, 'claude');
+  assert.equal(res.payload.team.logicalSlots[0].endpointId, 'claude-code-command');
+});
+
+test('multi-provider: per-slot provider binding accepts known providers', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-multi-provider', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'claude', endpointId: 'claude-code-command' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'codex', endpointId: 'codex-command' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.team.logicalSlots[0].providerId, 'claude');
+  assert.equal(res.payload.team.logicalSlots[1].providerId, 'codex');
+  assert.equal(res.payload.team.logicalSlots[1].endpointId, 'codex-command');
+});
+
+test('multi-provider: unknown slot provider fails closed', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-slot-unk', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'no-such', endpointId: 'fake' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('logicalSlots[0]'));
+  assert.ok(res.payload.message.includes('Unknown provider'));
+});
+
+test('multi-provider: provider capability hard invariants remain locked', () => {
+  for (const provider of ['claude', 'codex']) {
+    const cap = KNOWN_PROVIDER_CAPABILITIES[provider];
+    assert.equal(cap.bridgeGovernedParallelSlots, false);
+    assert.equal(cap.maxConcurrentBridgeSlots, 1);
+    assert.deepEqual(cap.isolationModes, ['patch-only']);
+    assert.equal(cap.canExecute, true);
+  }
+});
+
+test('multi-provider: slot endpoint must match provider capability', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  const res = await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-slot-endpoint-mismatch', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'codex', endpointId: 'claude-code-command' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('endpointId codex-command'));
+});
+
+test('multi-provider: cross-provider team still rejects parallel executing slot', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-cross-parallel', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'claude', endpointId: 'claude-code-command' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'codex', endpointId: 'codex-command' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-cross-parallel/approve');
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-cross-parallel/slots/s0/advance', { status: 'executing' });
+  assert.equal(res.statusCode, 200);
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-cross-parallel/slots/s1/advance', { status: 'executing' });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('not the current slot') || res.payload.message.includes('already executing'));
+});
+
 test('team create writes audit with teamId', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });
@@ -683,10 +785,49 @@ test('POST /teams/:teamId/artifacts records a valid artifact', async () => {
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.artifact.summary, 'Patched auth module');
   assert.equal(res.payload.artifact.proposedFiles.length, 1);
+  assert.equal(res.payload.artifact.providerId, 'claude');
+  assert.equal(res.payload.artifact.endpointId, 'claude-code-command');
+  assert.ok(res.payload.artifact.bridgeRunId);
 
   // Verify artifact in store
   const artifacts = runtime.teamStore.listArtifacts('t-art-api');
   assert.equal(artifacts.length, 1);
+});
+
+test('multi-provider: artifact records slot provider and rejects unredacted partial raw output', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) return;
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-art-provider', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'codex', endpointId: 'codex-command' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-art-provider/approve');
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-art-provider/artifacts', {
+    slotId: 's0',
+    summary: 'Partial provider output', proposedFiles: ['src/a.ts'],
+    rawProviderOutput: 'sk-secret raw provider output', outputRedacted: false,
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(runtime.teamStore.listArtifacts('t-art-provider').length, 0);
+
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-art-provider/artifacts', {
+    slotId: 's0',
+    summary: 'Redacted provider output', proposedFiles: ['src/a.ts'],
+    rawProviderOutput: '[redacted]', outputRedacted: true, bridgeRunId: 'run-codex-1', externalSessionId: 'session-codex-1',
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.artifact.providerId, 'codex');
+  assert.equal(res.payload.artifact.endpointId, 'codex-command');
+  assert.equal(res.payload.artifact.bridgeRunId, 'run-codex-1');
+  assert.equal(res.payload.artifact.externalSessionId, 'session-codex-1');
 });
 
 test('POST /teams/:teamId/artifacts rejects mismatched planStepId', async () => {
@@ -864,10 +1005,12 @@ test('GET /teams/:teamId/conflicts detects same-file conflict', async () => {
 
   runtime.teamStore.recordArtifact('t-same-file', {
     teamId: 't-same-file', slotId: 's0', planStepId: 'p0',
+    providerId: 'claude', endpointId: 'claude-code-command', bridgeRunId: 'run-claude',
     summary: 'a', proposedFiles: ['src/app.ts'], outputRedacted: true, createdAt: 1,
   });
   runtime.teamStore.recordArtifact('t-same-file', {
     teamId: 't-same-file', slotId: 's1', planStepId: 'p1',
+    providerId: 'codex', endpointId: 'codex-command', bridgeRunId: 'run-codex',
     summary: 'b', proposedFiles: ['src/app.ts'], outputRedacted: true, createdAt: 2,
   });
 
@@ -876,6 +1019,12 @@ test('GET /teams/:teamId/conflicts detects same-file conflict', async () => {
   assert.equal(res.payload.report.clean, false);
   assert.equal(res.payload.report.conflicts.length, 1);
   assert.equal(res.payload.report.conflicts[0].path, '/src/app.ts');
+  assert.equal(res.payload.report.conflicts[0].providerA, 'claude');
+  assert.equal(res.payload.report.conflicts[0].providerB, 'codex');
+  assert.equal(res.payload.meta.readOnly, true);
+  assert.equal(res.payload.meta.winnerSelected, false);
+  assert.equal(res.payload.meta.applyAvailable, false);
+  assert.equal('winner' in res.payload.report.conflicts[0], false);
 });
 
 test('GET /teams/:teamId/conflicts 404 on cross-project', async () => {
@@ -1008,6 +1157,33 @@ test('POST /slots/:slotId/advance failed slot stops team', async () => {
   assert.equal(res.statusCode, 409);
 });
 
+test('multi-provider: failed provider slot stops team and later provider slot does not auto-start', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-provider-fail-stop', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [
+      { id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'claude', endpointId: 'claude-code-command' },
+      { id: 's1', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only', providerId: 'codex', endpointId: 'codex-command' },
+    ],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-provider-fail-stop/approve');
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/t-provider-fail-stop/slots/s0/advance', { status: 'failed' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.team.status, 'failed');
+  assert.equal(res.payload.team.logicalSlots[1].status, 'pending');
+
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/t-provider-fail-stop/slots/s1/advance', { status: 'executing' });
+  assert.equal(res.statusCode, 409);
+  assert.equal(runtime.teamStore.get('t-provider-fail-stop').logicalSlots[1].status, 'pending');
+});
+
 test('POST /slots/:slotId/advance writes slot audit events', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });
@@ -1035,6 +1211,15 @@ test('POST /slots/:slotId/advance writes slot audit events', async () => {
   assert.ok(done, 'should emit slot_done');
   assert.equal(started.slotId, 's0');
   assert.equal(done.slotId, 's0');
+  const startedMeta = JSON.parse(started.result.failureReason);
+  const doneMeta = JSON.parse(done.result.failureReason);
+  assert.equal(startedMeta.providerId, 'claude');
+  assert.equal(startedMeta.endpointId, 'claude-code-command');
+  assert.ok(startedMeta.bridgeRunId);
+  assert.equal(doneMeta.providerId, 'claude');
+  const auditText = JSON.stringify(events);
+  assert.equal(auditText.includes('raw provider output'), false);
+  assert.equal(auditText.includes('sk-secret'), false);
 });
 
 test('POST /slots/:slotId/advance rejects non-approved/cancelled team', async () => {

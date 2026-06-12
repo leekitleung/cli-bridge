@@ -613,6 +613,10 @@ export interface AgentSlot {
   stepIndex: number;
   tier: string;
   isolation: TeamSpecIsolationMode;
+  /** v2.4b: optional per-slot provider binding; defaults to team.provider. */
+  providerId?: string;
+  /** v2.4b: optional per-slot endpoint binding; defaults to team.endpointId. */
+  endpointId?: string;
   status: SlotStatus;
 }
 
@@ -644,6 +648,11 @@ export interface SlotArtifact {
   teamId: string;
   slotId: string;
   planStepId: string;
+  /** v2.4b provider/session correlation. */
+  providerId?: string;
+  endpointId?: string;
+  bridgeRunId?: string;
+  externalSessionId?: string;
   summary: string;
   proposedFiles: string[];
   verificationNotes?: string;
@@ -654,7 +663,7 @@ export interface SlotArtifact {
 
 export interface ConflictReport {
   clean: boolean;
-  conflicts: Array<{ path: string; slotA: string; slotB: string }>;
+  conflicts: Array<{ path: string; slotA: string; slotB: string; providerA?: string; providerB?: string }>;
 }
 
 // --- Phase B: Project workspace model ---

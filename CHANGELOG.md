@@ -21,7 +21,9 @@ All notable changes to CLI Bridge are documented here.
   safety boundary is unchanged: sequential, concurrency 1, patch-only, read-only
   conflict reports. Parallel slots, worktree isolation, workspace-write,
   auto-commit/push/merge, merge queue, and model arbitration remain
-  unauthorized. No code until a v2.4b execution handoff is created.
+  unauthorized.
+- **v2.4b Multi-provider AgentTeam Implementation Handoff** added and
+  implemented within the existing TeamSpec routes.
 
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
@@ -69,6 +71,25 @@ All notable changes to CLI Bridge are documented here.
 - **No new endpoint, no new dependency, no self-iteration, no auto-apply,
   no commit/push/merge, no execution path, and no goal/plan/step mutation from
   critique output.**
+
+### Added — v2.4b Multi-provider AgentTeam
+- **Per-slot provider binding**: TeamSpec logical slots may declare
+  `providerId` and `endpointId`; omitted values default to the team-level
+  provider/endpoint for backward compatibility.
+- **Capability parity checks**: each slot provider is validated against the
+  shared static capability declaration; unknown providers fail closed.
+- **Provider/session correlation**: SlotArtifact and slot audit metadata carry
+  `providerId`, `endpointId`, `bridgeRunId`, and optional `externalSessionId`
+  without raw provider output or API keys.
+- **Conflict enrichment**: read-only conflict reports include provider ids for
+  conflicting artifacts and still expose no winner/apply behavior.
+- **Tests**: coverage for defaults, mixed providers, unknown provider
+  fail-closed, sequential/no-parallel guard across providers, failed-provider
+  stop behavior, artifact redaction, audit correlation, and read-only conflict
+  reports.
+- **No new endpoint, no bridge-governed parallel slots, no worktree, no
+  workspace-write auto-apply, no commit/push/merge, no model arbitration, and no
+  execution path from `canExecute=true` metadata.**
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 

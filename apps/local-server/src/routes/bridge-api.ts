@@ -220,6 +220,7 @@ async function handleTeamsPost(
     body.mode as string,
     body.isolation as string,
     body.maxConcurrentBridgeSlots as number,
+    body.endpointId as string,
   );
   if (!providerCheck.ok) return error(400, 'Provider capability mismatch: ' + providerCheck.errors.join(', '));
 
@@ -253,6 +254,20 @@ async function handleTeamsPost(
       if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= plan.steps.length) {
         return error(400, `logicalSlots[${i}].stepIndex out of range (0..${plan.steps.length - 1})`);
       }
+      const slotProviderId = typeof slot.providerId === 'string' && slot.providerId.trim().length > 0
+        ? slot.providerId
+        : body.provider;
+      const slotEndpointId = typeof slot.endpointId === 'string' && slot.endpointId.trim().length > 0
+        ? slot.endpointId
+        : body.endpointId;
+      const slotCheck = validateProviderCapability(
+        slotProviderId as string,
+        body.mode as string,
+        'patch-only',
+        body.maxConcurrentBridgeSlots as number,
+        slotEndpointId as string,
+      );
+      if (!slotCheck.ok) return error(400, `Provider capability mismatch for logicalSlots[${i}]: ` + slotCheck.errors.join(', '));
     }
   }
 
@@ -328,12 +343,20 @@ async function handleArtifactPost(
 
   const summary = body.summary;
   if (typeof summary !== 'string' || summary.trim().length === 0) return error(400, 'summary is required');
+  const providerId = slot.providerId ?? team.provider;
+  const endpointId = slot.endpointId ?? team.endpointId;
+  const bridgeRunId = typeof body.bridgeRunId === 'string' && body.bridgeRunId.trim().length > 0
+    ? body.bridgeRunId.trim()
+    : `slot-run-${teamId}-${slotId}-${Date.now()}`;
 
   // Build artifact.
   const artifact: Record<string, unknown> = {
     teamId,
     slotId,
     planStepId: resolvedPlanStepId,
+    providerId,
+    endpointId,
+    bridgeRunId,
     summary,
     proposedFiles: Array.isArray(body.proposedFiles) ? body.proposedFiles.filter((f: unknown) => typeof f === 'string') : [],
     outputRedacted: typeof body.outputRedacted === 'boolean' ? body.outputRedacted : false,
@@ -344,6 +367,9 @@ async function handleArtifactPost(
   }
   if (body.rawProviderOutput !== undefined && typeof body.rawProviderOutput === 'string') {
     artifact.rawProviderOutput = body.rawProviderOutput;
+  }
+  if (body.externalSessionId !== undefined && typeof body.externalSessionId === 'string' && body.externalSessionId.trim().length > 0) {
+    artifact.externalSessionId = body.externalSessionId.trim();
   }
 
   const recorded = runtime.teamStore.recordArtifact(teamId, artifact as any);
@@ -361,7 +387,15 @@ async function handleArtifactPost(
     teamId,
     slotId,
     planStepId: resolvedPlanStepId,
-    result: { ok: true },
+    result: {
+      ok: true,
+      failureReason: JSON.stringify({
+        providerId,
+        endpointId,
+        bridgeRunId,
+        externalSessionId: artifact.externalSessionId ?? 'unavailable',
+      }),
+    },
   });
 
   return created({ artifact: recorded });
@@ -383,9 +417,17 @@ function handleConflictGet(
 
   const artifacts = runtime.teamStore.listArtifacts(teamId);
   const report = detectFileConflicts(
-    artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles })),
+    artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles, providerId: a.providerId })),
   );
-  return ok({ teamId, report });
+  return ok({
+    teamId,
+    report,
+    meta: {
+      readOnly: true,
+      winnerSelected: false,
+      applyAvailable: false,
+    },
+  });
 }
 
 // ── v2.3 Controlled slot state advance ───────────────────────────
@@ -457,6 +499,9 @@ async function handleSlotAdvancePost(
   if (nextStatus === 'executing') {
     const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
     const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
+    const providerId = slot.providerId ?? team.provider;
+    const endpointId = slot.endpointId ?? team.endpointId;
+    const bridgeRunId = `slot-run-${teamId}-${slotId}-${Date.now()}`;
     runtime.auditLog.createAndAppend({
       sessionId: 'slot-start-' + teamId + '-' + slotId,
       projectId: projectKey,
@@ -466,7 +511,15 @@ async function handleSlotAdvancePost(
       teamId,
       slotId,
       planStepId: pStepId,
-      result: { ok: true },
+      result: {
+        ok: true,
+        failureReason: JSON.stringify({
+          providerId,
+          endpointId,
+          bridgeRunId,
+          externalSessionId: 'unavailable',
+        }),
+      },
     });
   }
 
@@ -481,6 +534,9 @@ async function handleSlotAdvancePost(
     const stepPlan = runtime.goalStore.getPlanByGoal(team.goalId);
     const pStepId = stepPlan?.steps?.[slot.stepIndex]?.id;
     const auditType = nextStatus === 'done' ? 'slot_done' : nextStatus === 'failed' ? 'slot_failed' : 'slot_gated';
+    const providerId = slot.providerId ?? team.provider;
+    const endpointId = slot.endpointId ?? team.endpointId;
+    const bridgeRunId = `slot-run-${teamId}-${slotId}-${Date.now()}`;
 
     runtime.auditLog.createAndAppend({
       sessionId: 'slot-' + nextStatus + '-' + teamId + '-' + slotId,
@@ -491,7 +547,15 @@ async function handleSlotAdvancePost(
       teamId,
       slotId,
       planStepId: pStepId,
-      result: { ok: true },
+      result: {
+        ok: true,
+        failureReason: JSON.stringify({
+          providerId,
+          endpointId,
+          bridgeRunId,
+          externalSessionId: 'unavailable',
+        }),
+      },
     });
   }
 
@@ -1652,13 +1716,13 @@ export async function handleBridgeRequest(
     const enriched = teams.map(team => {
       const artifacts = runtime.teamStore.listArtifacts(team.id);
       const conflictReport = detectFileConflicts(
-        artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles })),
+        artifacts.map(a => ({ slotId: a.slotId, proposedFiles: a.proposedFiles, providerId: a.providerId })),
       );
       return {
         ...team,
         artifactCount: artifacts.length,
         artifactSummaries: artifacts.map(a => ({
-          slotId: a.slotId, summary: a.summary, proposedFiles: a.proposedFiles,
+          slotId: a.slotId, providerId: a.providerId, endpointId: a.endpointId, summary: a.summary, proposedFiles: a.proposedFiles,
         })),
         conflictStatus: conflictReport.clean ? 'clean' : 'conflicts',
         conflictCount: conflictReport.conflicts.length,

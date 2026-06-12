@@ -38,7 +38,11 @@ export class InMemoryTeamSpecStore {
       goalId: input.goalId,
       planId: input.planId,
       logicalSlots: input.logicalSlots.map(s => ({
-        ...s, status: 'pending' as const, isolation: 'patch-only' as const,
+        ...s,
+        providerId: s.providerId ?? input.provider,
+        endpointId: s.endpointId ?? input.endpointId,
+        status: 'pending' as const,
+        isolation: 'patch-only' as const,
       })),
       maxConcurrentBridgeSlots: input.maxConcurrentBridgeSlots,
       mode: input.mode,

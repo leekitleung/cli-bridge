@@ -622,8 +622,8 @@ export function validateWorkBuddyExecutionLedgerEvent(value: unknown): SchemaVal
 
 const TEAMSPEC_ALLOWED_FIELDS: Record<string, string[]> = {
   team: ['id', 'projectId', 'goalId', 'planId', 'logicalSlots', 'maxConcurrentBridgeSlots', 'mode', 'isolation', 'provider', 'endpointId', 'policyRequirements', 'status', 'currentSlotIndex', 'createdAt', 'updatedAt', 'approvedAt'],
-  slot: ['id', 'role', 'stepIndex', 'tier', 'isolation', 'status'],
-  artifact: ['teamId', 'slotId', 'planStepId', 'summary', 'proposedFiles', 'verificationNotes', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
+  slot: ['id', 'role', 'stepIndex', 'tier', 'isolation', 'providerId', 'endpointId', 'status'],
+  artifact: ['teamId', 'slotId', 'planStepId', 'providerId', 'endpointId', 'bridgeRunId', 'externalSessionId', 'summary', 'proposedFiles', 'verificationNotes', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
 };
 
 export interface TeamSpecValidationResult { ok: boolean; errors: string[]; }
@@ -648,6 +648,8 @@ export function validateTeamSpecCreate(value: Record<string, unknown>): TeamSpec
       if (typeof s.stepIndex !== 'number' || !Number.isInteger(s.stepIndex) || s.stepIndex < 0) errors.push('logicalSlots[' + i + '].stepIndex must be a non-negative integer');
       if (typeof s.tier !== 'string') errors.push('logicalSlots[' + i + '].tier must be a string');
       if (s.isolation !== 'patch-only') errors.push('logicalSlots[' + i + '].isolation must be "patch-only"');
+      if (s.providerId !== undefined && (typeof s.providerId !== 'string' || s.providerId.trim().length === 0)) errors.push('logicalSlots[' + i + '].providerId must be a non-empty string when present');
+      if (s.endpointId !== undefined && (typeof s.endpointId !== 'string' || s.endpointId.trim().length === 0)) errors.push('logicalSlots[' + i + '].endpointId must be a non-empty string when present');
     }
   }
 
@@ -685,6 +687,10 @@ export function validateSlotArtifact(value: Record<string, unknown>): TeamSpecVa
   requireNonEmptyString(value, 'teamId', errors);
   requireNonEmptyString(value, 'slotId', errors);
   requireNonEmptyString(value, 'planStepId', errors);
+  if (value.providerId !== undefined && (typeof value.providerId !== 'string' || value.providerId.trim().length === 0)) errors.push('providerId must be a non-empty string when present');
+  if (value.endpointId !== undefined && (typeof value.endpointId !== 'string' || value.endpointId.trim().length === 0)) errors.push('endpointId must be a non-empty string when present');
+  if (value.bridgeRunId !== undefined && (typeof value.bridgeRunId !== 'string' || value.bridgeRunId.trim().length === 0)) errors.push('bridgeRunId must be a non-empty string when present');
+  if (value.externalSessionId !== undefined && (typeof value.externalSessionId !== 'string' || value.externalSessionId.trim().length === 0)) errors.push('externalSessionId must be a non-empty string when present');
   requireNonEmptyString(value, 'summary', errors);
   if (!Array.isArray(value.proposedFiles)) errors.push('proposedFiles must be an array');
   if (typeof value.outputRedacted !== 'boolean') errors.push('outputRedacted must be a boolean');
@@ -692,13 +698,13 @@ export function validateSlotArtifact(value: Record<string, unknown>): TeamSpecVa
   return errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
 }
 
-export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedFiles: string[] }>): { clean: boolean; conflicts: Array<{ path: string; slotA: string; slotB: string }> } {
-  const conflicts: Array<{ path: string; slotA: string; slotB: string }> = [];
-  const entries: Array<{ path: string; slotId: string }> = [];
+export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedFiles: string[]; providerId?: string }>): { clean: boolean; conflicts: Array<{ path: string; slotA: string; slotB: string; providerA?: string; providerB?: string }> } {
+  const conflicts: Array<{ path: string; slotA: string; slotB: string; providerA?: string; providerB?: string }> = [];
+  const entries: Array<{ path: string; slotId: string; providerId?: string }> = [];
 
   for (const artifact of artifacts) {
     for (const file of artifact.proposedFiles) {
-      entries.push({ path: file.startsWith('/') ? file : '/' + file, slotId: artifact.slotId });
+      entries.push({ path: file.startsWith('/') ? file : '/' + file, slotId: artifact.slotId, providerId: artifact.providerId });
     }
   }
 
@@ -712,7 +718,8 @@ export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedF
 
     // Check direct overlap.
     if (seen.has(path)) {
-      conflicts.push({ path, slotA: seen.get(path)!, slotB: slotId });
+      const prev = entries.find(e => e.path === path && e.slotId === seen.get(path));
+      conflicts.push({ path, slotA: seen.get(path)!, slotB: slotId, providerA: prev?.providerId, providerB: entries[i].providerId });
       continue;
     }
     seen.set(path, slotId);
@@ -722,7 +729,7 @@ export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedF
       const prev = entries[j].path;
       if (!path.startsWith(prev.substring(0, prev.lastIndexOf('/') + 1)) && prev !== path) break;
       if (path.startsWith(prev + '/')) {
-        conflicts.push({ path: path + ' ⇄ ' + prev, slotA: entries[j].slotId, slotB: slotId });
+        conflicts.push({ path: path + ' ⇄ ' + prev, slotA: entries[j].slotId, slotB: slotId, providerA: entries[j].providerId, providerB: entries[i].providerId });
       }
     }
   }

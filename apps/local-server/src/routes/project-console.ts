@@ -765,9 +765,9 @@ function renderSectionView() {
         html += '<span class="pill">' + escapeHtml(team.status) + '</span> ';
         html += '<span style="font-size:11px;color:var(--muted);">' + escapeHtml(team.provider) + ' · ' + escapeHtml(team.mode) + ' · ' + escapeHtml(team.isolation) + ' · ' + escapeHtml(String(team.maxConcurrentBridgeSlots)) + ' slot</span>';
         if (team.logicalSlots && team.logicalSlots.length) {
-          html += '<table style="margin-top:4px;"><thead><tr><th>role</th><th>#</th><th>tier</th><th>status</th></tr></thead><tbody>';
+          html += '<table style="margin-top:4px;"><thead><tr><th>role</th><th>provider</th><th>#</th><th>tier</th><th>status</th></tr></thead><tbody>';
           team.logicalSlots.forEach(s => {
-            html += '<tr><td>' + escapeHtml(s.role) + '</td><td>' + escapeHtml(String(s.stepIndex)) + '</td><td>' + escapeHtml(s.tier) + '</td><td><span class="pill">' + escapeHtml(s.status) + '</span></td></tr>';
+            html += '<tr><td>' + escapeHtml(s.role) + '</td><td>' + escapeHtml(s.providerId || team.provider || '') + '</td><td>' + escapeHtml(String(s.stepIndex)) + '</td><td>' + escapeHtml(s.tier) + '</td><td><span class="pill">' + escapeHtml(s.status) + '</span></td></tr>';
           });
           html += '</tbody></table>';
         }
@@ -783,7 +783,7 @@ function renderSectionView() {
         if (team.artifactCount > 0) {
           html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">';
           html += '<strong>Artifacts (' + escapeHtml(String(team.artifactCount)) + '):</strong> ';
-          const summaries = (team.artifactSummaries || []).map(a => escapeHtml(a.summary)).join('; ');
+          const summaries = (team.artifactSummaries || []).map(a => escapeHtml((a.providerId ? '[' + a.providerId + '] ' : '') + a.summary)).join('; ');
           html += escapeHtml(summaries);
           html += '</div>';
         } else if (team.status === 'approved' || team.status === 'executing' || team.status === 'done') {
