@@ -555,6 +555,56 @@ Reversibly remove the isolated directory. No effect on the main working tree.
 
 **Audit**: `workspace_apply_result` with typed `result.metadata`.
 
+## Read-only Apply-result Presentation (v2.5, ADR-0009)
+
+**Status**: Implemented | **ADR**: `docs/planning/ADR-0009-read-only-apply-result-presentation.md`
+**Handoff**: `docs/planning/CLI-BRIDGE-v2.5-APPLY-RESULT-PRESENTATION-HANDOFF.md`
+**Source**: `apps/local-server/src/storage/workspace-apply-store.ts` (`listAppliedFiles`, `readFilePreview`, `toApplyManifest`), `apps/local-server/src/routes/bridge-api.ts`
+**Tests**: `tests/apply-result-presentation.test.mjs`
+
+Strictly read-only inspection of an existing isolated apply result, using only
+data the bridge already records. **No mutation, no pre-apply baseline, no diff
+or diff-like view, no modified/unchanged/new classification, no main-tree write,
+no `git`/VCS, no spawn, no "apply from preview".** All three endpoints are
+opt-in gated on `Project.workspaceApplyEnabled === true` (default `false`); with
+apply disabled they return `409` and stay inert.
+
+### GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId
+
+Read-only manifest projection of an `ApplyRequest`. Never returns raw file
+content, secrets, or `isolatedDirPath` (an absolute host path) — exposes
+`isolatedDirId` only.
+
+**Returns**: `200` with `{ apply: ApplyManifest }` where `ApplyManifest` =
+`{ applyId, projectKey, teamId, slotId, planStepId, isolatedDirId, status, fileCount, byteTotal, caps, actor, createdAt, confirmedAt }`.
+
+**Fail-closed**: `404` if unknown applyId or wrong project/team; `409` if apply not enabled.
+
+### GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId/files
+
+Read-only list of the repository-relative file paths within the isolated
+directory and each file's byte size. Carries **no** modified/unchanged/new
+classification (there is no baseline to classify against).
+
+**Returns**: `200` with `{ files: [{ path, size }] }`.
+
+**Fail-closed**: `404` if unknown applyId; `409` if status is not `applied`
+(pending/discarded/failed → no on-disk result to list); `409` if apply not enabled.
+
+### GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId/files/preview?path=&lt;rel&gt;
+
+Read-only, size-capped (64 KB → `truncated: true`), secret-redacted preview of a
+single file within the isolated directory. `path` is validated with the same
+containment logic as apply (`validateAllPaths`); `..`, absolute, drive-letter,
+UNC, and any selector resolving outside the isolated root are rejected before any
+read. Redaction reuses `redactSensitiveContent`.
+
+**Returns**: `200` with `{ path, size, truncated, redacted, content }`.
+
+**Fail-closed**: `400` on missing/invalid/escaping `path`; `404` if unknown
+applyId or file not present; `409` if status is not `applied`; `409` if apply not
+enabled.
+
 ### Non-goals
 
 - No write to the user's main working tree
@@ -562,3 +612,6 @@ Reversibly remove the isolated directory. No effect on the main working tree.
 - No parallel apply, scheduler, daemon, background apply, or model-driven apply
 - No shell/exec/run/command endpoint
 - No persistence of raw file content in audit, snapshot, or metadata
+- No pre-apply baseline capture, diff, or diff-like view (presentation)
+- No modified/unchanged/new file classification (presentation)
+- No "apply from preview" / promote affordance in API or console

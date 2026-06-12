@@ -78,6 +78,34 @@ All notable changes to CLI Bridge are documented here.
   write, and no "apply from preview". Tests map to the ADR-0009 acceptance
   conditions; execution returns to `REVIEW-*`.
 
+### Added — v2.5 Read-only Apply-result Presentation (`EX-2.5-3`)
+- **`GET /bridge/projects/:key/teams/:teamId/apply-requests/:applyId`** —
+  read-only manifest projection of an `ApplyRequest` (exposes `isolatedDirId`,
+  never `isolatedDirPath`; no secrets, no raw content).
+- **`GET .../apply-requests/:applyId/files`** — read-only file list
+  `{ files: [{ path, size }] }` read from the isolated directory. No
+  modified/unchanged/new classification (no baseline exists).
+- **`GET .../apply-requests/:applyId/files/preview?path=<rel>`** — size-capped
+  (64 KB → `truncated: true`), secret-redacted single-file preview
+  `{ path, size, truncated, redacted, content }`.
+- **Store helpers** (`apps/local-server/src/storage/workspace-apply-store.ts`):
+  `toApplyManifest`, `listAppliedFiles`, `readFilePreview` — pure read-only `fs`
+  helpers reusing the existing `validateAllPaths` containment. No `git`,
+  `child_process`, or spawn; no mutation; no baseline; no diff.
+- **Opt-in**: all three endpoints gated on `workspaceApplyEnabled === true`
+  (default false); disabled → `409`, inert.
+- **Fail-closed**: unknown/wrong-owner applyId → 404; missing/invalid/escaping
+  `path` → 400; non-existent file → 404; status not `applied` → 409.
+- **Redaction**: previews reuse `redactSensitiveContent`; manifest never returns
+  `isolatedDirPath`.
+- **Console**: read-only "Apply Result (read-only)" viewer in the project
+  console teams view (manifest / file list / preview via GET only). No
+  apply/promote/commit/write affordance.
+- **Tests**: `tests/apply-result-presentation.test.mjs` mapped to all 8 ADR-0009
+  acceptance conditions.
+- **Boundary**: no pre-apply baseline, no diff/classification, no main-tree
+  write, no `git`/VCS, no spawn, no "apply from preview", no new dependency.
+
 ### Added — v2.4a PlannerModel Minimal Implementation
 - **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
   - `"review-cli"` (default): existing behavior unchanged.

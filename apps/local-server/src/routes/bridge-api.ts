@@ -23,6 +23,9 @@ import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
+import { toApplyManifest } from '../storage/workspace-apply-store.ts';
+import type { ApplyRequest } from '../storage/workspace-apply-store.ts';
+import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
 import { validateProviderCapability } from '../storage/provider-capability.ts';
@@ -199,9 +202,19 @@ function matchProjectTeamPath(pathname: string): {
   } catch { return { matched: true, key: undefined, sub: '' }; }
 }
 
-/** Matches /bridge/projects/:key/teams/:teamId/apply-requests[/:applyId/{confirm|discard}]. */
+/** Matches /bridge/projects/:key/teams/:teamId/apply-requests and sub-routes:
+ *  POST  .../apply-requests                          (sub '')
+ *  POST  .../apply-requests/:applyId/{confirm|discard}
+ *  GET   .../apply-requests/:applyId                 (sub 'manifest', read-only)
+ *  GET   .../apply-requests/:applyId/files           (sub 'files', read-only)
+ *  GET   .../apply-requests/:applyId/files/preview   (sub 'preview', read-only)
+ */
 function matchTeamApplyPath(pathname: string): {
-  matched: true; key: string | undefined; sub: '' | 'confirm' | 'discard'; teamId?: string; applyId?: string;
+  matched: true;
+  key: string | undefined;
+  sub: '' | 'confirm' | 'discard' | 'manifest' | 'files' | 'preview';
+  teamId?: string;
+  applyId?: string;
 } | { matched: false } {
   const prefix = BRIDGE_PROJECTS_PATH + '/';
   if (!pathname.startsWith(prefix)) return { matched: false };
@@ -211,7 +224,7 @@ function matchTeamApplyPath(pathname: string): {
   const raw = rest.slice(0, teamsIdx);
   if (raw.length === 0 || raw.includes('/')) return { matched: false };
   const remaining = rest.slice(teamsIdx + '/teams/'.length);
-  // remaining = "teamId/apply-requests" or "teamId/apply-requests/applyId/confirm" or ".../discard"
+  // remaining = "teamId/apply-requests[/applyId[/{confirm|discard|files[/preview]}]]"
   const parts = remaining.split('/');
   if (parts.length < 2 || parts[1] !== 'apply-requests') return { matched: false };
   try {
@@ -220,8 +233,20 @@ function matchTeamApplyPath(pathname: string): {
     const teamId = decodeURIComponent(parts[0]);
     if (teamId.length === 0) return { matched: false };
     if (parts.length === 2) return { matched: true, key, sub: '', teamId };
-    if (parts.length === 4 && (parts[3] === 'confirm' || parts[3] === 'discard')) {
-      return { matched: true, key, sub: parts[3] as 'confirm' | 'discard', teamId, applyId: decodeURIComponent(parts[2]) };
+    const applyId = decodeURIComponent(parts[2]);
+    if (applyId.length === 0) return { matched: false };
+    // Read-only manifest: .../apply-requests/:applyId
+    if (parts.length === 3) return { matched: true, key, sub: 'manifest', teamId, applyId };
+    if (parts.length === 4) {
+      if (parts[3] === 'confirm' || parts[3] === 'discard') {
+        return { matched: true, key, sub: parts[3] as 'confirm' | 'discard', teamId, applyId };
+      }
+      // Read-only file list: .../apply-requests/:applyId/files
+      if (parts[3] === 'files') return { matched: true, key, sub: 'files', teamId, applyId };
+    }
+    // Read-only preview: .../apply-requests/:applyId/files/preview
+    if (parts.length === 5 && parts[3] === 'files' && parts[4] === 'preview') {
+      return { matched: true, key, sub: 'preview', teamId, applyId };
     }
   } catch { return { matched: false }; }
   return { matched: false };
@@ -410,6 +435,92 @@ function handleApplyRequestDiscard(
   });
 
   return ok({ apply: req });
+}
+
+// ── v2.5 Read-only apply-result presentation (ADR-0009) ──────────
+//
+// Strictly read-only: manifest projection, file list, and size-capped,
+// secret-redacted single-file preview. No mutation, no baseline, no diff,
+// no git/spawn, no "apply from preview". Opt-in gated like the apply endpoints.
+
+/** Shared opt-in + ownership guard. Returns the request or an error result. */
+function resolveApplyForRead(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+): { ok: true; req: ApplyRequest } | { ok: false; result: BridgeResult } {
+  const proj = runtime.projectStore.get(projectKey);
+  if (!proj) return { ok: false, result: error(404, 'Project not found') };
+  // Opt-in default OFF: bound to the existing per-project apply opt-in.
+  if (!proj.workspaceApplyEnabled) {
+    return { ok: false, result: error(409, 'Workspace apply is not enabled for this project') };
+  }
+  const req = runtime.applyStore.getRequest(applyId);
+  // Fail-closed: unknown applyId or wrong project/team → 404, no disclosure.
+  if (!req || req.projectKey !== projectKey || req.teamId !== teamId) {
+    return { ok: false, result: error(404, 'Apply request not found') };
+  }
+  return { ok: true, req };
+}
+
+function handleApplyManifestGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+): BridgeResult {
+  const resolved = resolveApplyForRead(runtime, projectKey, teamId, applyId);
+  if (!resolved.ok) return resolved.result;
+  return ok({ apply: toApplyManifest(resolved.req) });
+}
+
+function handleApplyFilesGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+): BridgeResult {
+  const resolved = resolveApplyForRead(runtime, projectKey, teamId, applyId);
+  if (!resolved.ok) return resolved.result;
+  const result = runtime.applyStore.listAppliedFiles(applyId);
+  if (!result.ok) {
+    return error(result.code === 'not-found' ? 404 : 409, result.error);
+  }
+  // No modified/unchanged/new classification — only path + size.
+  return ok({ files: result.files });
+}
+
+function handleApplyPreviewGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+  query: URLSearchParams | undefined,
+): BridgeResult {
+  const resolved = resolveApplyForRead(runtime, projectKey, teamId, applyId);
+  if (!resolved.ok) return resolved.result;
+
+  const relPath = query?.get('path');
+  if (typeof relPath !== 'string' || relPath.length === 0) {
+    return error(400, 'path query parameter is required');
+  }
+
+  const result = runtime.applyStore.readFilePreview(applyId, relPath);
+  if (!result.ok) {
+    const status = result.code === 'invalid-path' ? 400 : result.code === 'not-applied' ? 409 : 404;
+    return error(status, result.error);
+  }
+
+  // Redact secrets before returning (reuse the existing redaction utility).
+  const redaction = redactSensitiveContent(result.content);
+  return ok({
+    path: result.path,
+    size: result.size,
+    truncated: result.truncated,
+    redacted: redaction.redactionApplied,
+    content: redaction.processedContent,
+  });
 }
 
 async function handleTeamsPost(
@@ -2020,6 +2131,19 @@ export async function handleBridgeRequest(
   if (applyMatch.matched && method === 'POST' && applyMatch.sub === 'discard') {
     if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
     return handleApplyRequestDiscard(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId);
+  }
+  // Read-only presentation (ADR-0009) — GET only.
+  if (applyMatch.matched && method === 'GET' && applyMatch.sub === 'manifest') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyManifestGet(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId);
+  }
+  if (applyMatch.matched && method === 'GET' && applyMatch.sub === 'files') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyFilesGet(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId);
+  }
+  if (applyMatch.matched && method === 'GET' && applyMatch.sub === 'preview') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyPreviewGet(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId, query);
   }
   if (applyMatch.matched) return error(405, 'Method not allowed');
 

@@ -22,6 +22,9 @@ export const DEFAULT_APPLY_CAPS: ApplyCaps = {
   maxTotalBytes: 5 * 1024 * 1024, // 5 MB
 };
 
+// v2.5 read-only presentation (ADR-0009): conservative per-file preview byte cap.
+export const DEFAULT_PREVIEW_BYTE_CAP = 64 * 1024; // 64 KB
+
 export type ApplyStatus = 'pending' | 'applied' | 'failed' | 'discarded';
 
 export interface ApplyRequest {
@@ -41,6 +44,59 @@ export interface ApplyRequest {
   fileCount?: number;
   byteTotal?: number;
 }
+
+// ── v2.5 Read-only presentation (ADR-0009) ───────────────────────
+//
+// Strictly read-only projections over an existing ApplyRequest. No mutation,
+// no pre-apply baseline, no diff/classification. Manifest deliberately omits
+// `isolatedDirPath` (an absolute host path) and exposes only `isolatedDirId`.
+
+export interface ApplyManifest {
+  applyId: string;
+  projectKey: string;
+  teamId: string;
+  slotId: string;
+  planStepId: string;
+  isolatedDirId?: string;
+  status: ApplyStatus;
+  fileCount?: number;
+  byteTotal?: number;
+  caps: ApplyCaps;
+  actor?: string;
+  createdAt: number;
+  confirmedAt?: number;
+}
+
+/** Read-only manifest projection. Never exposes `isolatedDirPath` or content. */
+export function toApplyManifest(req: ApplyRequest): ApplyManifest {
+  return {
+    applyId: req.applyId,
+    projectKey: req.projectKey,
+    teamId: req.teamId,
+    slotId: req.slotId,
+    planStepId: req.planStepId,
+    isolatedDirId: req.isolatedDirId,
+    status: req.status,
+    fileCount: req.fileCount,
+    byteTotal: req.byteTotal,
+    caps: { ...req.caps },
+    actor: req.actor,
+    createdAt: req.createdAt,
+    confirmedAt: req.confirmedAt,
+  };
+}
+
+// Fail-closed result codes mapped to HTTP status by the route layer:
+//   not-found → 404, not-applied → 409, invalid-path → 400, file-not-found → 404.
+export type ReadFailCode = 'not-found' | 'not-applied' | 'invalid-path' | 'file-not-found';
+
+export type ListAppliedFilesResult =
+  | { ok: true; files: { path: string; size: number }[] }
+  | { ok: false; code: ReadFailCode; error: string };
+
+export type ReadFilePreviewResult =
+  | { ok: true; path: string; size: number; truncated: boolean; content: string }
+  | { ok: false; code: ReadFailCode; error: string };
 
 // ── Path containment ─────────────────────────────────────────────
 
@@ -249,6 +305,87 @@ export class WorkspaceApplyStore {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     } catch { /* best-effort */ }
+  }
+
+  // ── v2.5 Read-only presentation (ADR-0009) ────────────────────
+  //
+  // Pure read-only fs helpers over an existing applied isolated directory.
+  // No mutation, no spawn, no git, no baseline capture, no diff.
+
+  /**
+   * List the repository-relative paths and byte sizes of the files written
+   * into the isolated directory for an applied request. Read-only.
+   */
+  listAppliedFiles(applyId: string): ListAppliedFilesResult {
+    const req = this.requests.get(applyId);
+    if (!req) return { ok: false, code: 'not-found', error: 'Apply request not found' };
+    if (req.status !== 'applied' || !req.isolatedDirPath) {
+      return { ok: false, code: 'not-applied', error: `Apply request is ${req.status}, not applied` };
+    }
+    const root = path.resolve(req.isolatedDirPath);
+    const files: { path: string; size: number }[] = [];
+    const walk = (dir: string): void => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(abs);
+        } else if (entry.isFile()) {
+          const rel = path.relative(root, abs).replace(/\\/g, '/');
+          files.push({ path: rel, size: fs.statSync(abs).size });
+        }
+      }
+    };
+    try {
+      walk(root);
+    } catch {
+      return { ok: false, code: 'not-found', error: 'Isolated directory not readable' };
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    return { ok: true, files };
+  }
+
+  /**
+   * Read a size-capped preview of a single file within the isolated directory.
+   * Path is validated with the same containment logic as apply (`validateAllPaths`)
+   * and double-checked to resolve inside the isolated root. Read-only; performs
+   * no redaction (the route layer redacts before returning).
+   */
+  readFilePreview(applyId: string, relPath: string, cap = DEFAULT_PREVIEW_BYTE_CAP): ReadFilePreviewResult {
+    const req = this.requests.get(applyId);
+    if (!req) return { ok: false, code: 'not-found', error: 'Apply request not found' };
+    if (req.status !== 'applied' || !req.isolatedDirPath) {
+      return { ok: false, code: 'not-applied', error: `Apply request is ${req.status}, not applied` };
+    }
+    const validatedList = validateAllPaths([relPath]);
+    if (!validatedList) return { ok: false, code: 'invalid-path', error: 'Invalid or escaping path' };
+    const validated = validatedList[0];
+
+    const root = path.resolve(req.isolatedDirPath);
+    const resolved = path.resolve(root, validated);
+    // Double-check containment after resolution (defense in depth).
+    const resolvedNorm = resolved.replace(/\\/g, '/');
+    const rootNorm = root.replace(/\\/g, '/');
+    if (!resolvedNorm.startsWith(rootNorm + '/') && resolvedNorm !== rootNorm) {
+      return { ok: false, code: 'invalid-path', error: 'Path escapes the isolated directory' };
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(resolved);
+    } catch {
+      return { ok: false, code: 'file-not-found', error: 'File not found in isolated directory' };
+    }
+    if (!stat.isFile()) return { ok: false, code: 'file-not-found', error: 'Not a file' };
+
+    const buf = fs.readFileSync(resolved);
+    let truncated = false;
+    let contentBuf = buf;
+    if (buf.byteLength > cap) {
+      contentBuf = buf.subarray(0, cap);
+      truncated = true;
+    }
+    return { ok: true, path: validated, size: stat.size, truncated, content: contentBuf.toString('utf8') };
   }
 
   getCaps(): ApplyCaps {

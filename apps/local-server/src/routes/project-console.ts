@@ -795,6 +795,22 @@ function renderSectionView() {
       html += '<span class="unavailable">No AgentTeams in this project. Create one via POST /bridge/projects/:key/teams.</span>';
     }
     html += '</div>';
+    // ── v2.5 Read-only apply-result presentation (ADR-0009) ──
+    // Strictly read-only: manifest / file list / size-capped redacted preview.
+    // No apply/promote/commit/write affordance — keep/discard stays the
+    // separate ADR-0008 gated controls, not exposed here.
+    html += '<div class="card" style="margin-top:16px;"><h3>Apply Result (read-only)</h3>';
+    html += '<p style="font-size:11px;color:var(--muted);">Inspect what an existing isolated apply produced: manifest, file list, and a size-capped, secret-redacted preview. Read-only — no diff, no baseline, no apply/promote/commit. Requires workspace apply to be enabled.</p>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">';
+    html += '<div><label for="apply-view-team" style="font-size:11px;color:var(--muted);">Team id</label><br><input id="apply-view-team" type="text" placeholder="teamId" size="18" style="font:inherit;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;" /></div>';
+    html += '<div><label for="apply-view-id" style="font-size:11px;color:var(--muted);">Apply id</label><br><input id="apply-view-id" type="text" placeholder="applyId" size="26" style="font:inherit;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;" /></div>';
+    html += '<button class="secondary" id="btn-apply-view" style="font-size:12px;padding:6px 12px;">View result</button>';
+    html += '<span class="action-status" id="apply-view-status" aria-live="polite" role="status"></span>';
+    html += '</div>';
+    html += '<div id="apply-view-manifest" style="margin-top:10px;"></div>';
+    html += '<div id="apply-view-files" style="margin-top:10px;"></div>';
+    html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
+    html += '</div>';
   } else if (store.view === 'workbuddy') {
     html = '<div class="card"><h3>WorkBuddy Tasks (non-executing)</h3>';
     html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records. All strictly non-executing — no dispatch, no confirm, no auto-send.</p>';
@@ -844,6 +860,73 @@ function renderSectionView() {
     const btn = document.getElementById('btn-run-review');
     if (btn) btn.addEventListener('click', runReviewFlow);
   }
+  // Bind read-only apply-result viewer if in teams view (GET-only; no write).
+  if (store.view === 'teams') {
+    const btn = document.getElementById('btn-apply-view');
+    if (btn) btn.addEventListener('click', viewApplyResult);
+  }
+}
+
+// ─── v2.5 Read-only apply-result viewer (ADR-0009) ───
+// Uses ONLY GET endpoints: manifest, file list, and size-capped redacted
+// preview. Issues no write requests of any kind.
+async function viewApplyResult() {
+  const teamId = (document.getElementById('apply-view-team') || {}).value;
+  const applyId = (document.getElementById('apply-view-id') || {}).value;
+  const statusEl = document.getElementById('apply-view-status');
+  const manifestEl = document.getElementById('apply-view-manifest');
+  const filesEl = document.getElementById('apply-view-files');
+  const previewEl = document.getElementById('apply-view-preview');
+  if (previewEl) { previewEl.style.display = 'none'; previewEl.textContent = ''; }
+  if (manifestEl) manifestEl.innerHTML = '';
+  if (filesEl) filesEl.innerHTML = '';
+  if (!teamId || !teamId.trim() || !applyId || !applyId.trim()) {
+    if (statusEl) { statusEl.textContent = 'enter team id and apply id'; statusEl.style.color = '#f87171'; }
+    return;
+  }
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey)
+    + '/teams/' + encodeURIComponent(teamId.trim())
+    + '/apply-requests/' + encodeURIComponent(applyId.trim());
+  if (statusEl) { statusEl.textContent = 'loading…'; statusEl.style.color = 'var(--muted)'; }
+  const man = await api(base);
+  if (!man.ok) { if (statusEl) { statusEl.textContent = 'failed: ' + (man.data?.message || man.status); statusEl.style.color = '#f87171'; } return; }
+  const m = man.data.apply;
+  if (manifestEl) {
+    manifestEl.innerHTML = '<table><tbody>'
+      + '<tr><td>applyId</td><td>' + escapeHtml(m.applyId) + '</td></tr>'
+      + '<tr><td>status</td><td><span class="pill">' + escapeHtml(m.status) + '</span></td></tr>'
+      + '<tr><td>isolatedDirId</td><td>' + escapeHtml(m.isolatedDirId || '—') + '</td></tr>'
+      + '<tr><td>fileCount</td><td>' + escapeHtml(String(m.fileCount ?? '—')) + '</td></tr>'
+      + '<tr><td>byteTotal</td><td>' + escapeHtml(String(m.byteTotal ?? '—')) + '</td></tr>'
+      + '</tbody></table>';
+  }
+  const fl = await api(base + '/files');
+  if (statusEl) { statusEl.textContent = fl.ok ? 'loaded' : ('files: ' + (fl.data?.message || fl.status)); statusEl.style.color = fl.ok ? 'var(--muted)' : '#f87171'; }
+  if (fl.ok && filesEl) {
+    const files = fl.data.files || [];
+    if (!files.length) { filesEl.innerHTML = '<span class="unavailable">No files</span>'; return; }
+    let t = '<table><thead><tr><th>path</th><th>size</th><th></th></tr></thead><tbody>';
+    files.forEach(f => {
+      t += '<tr><td>' + escapeHtml(f.path) + '</td><td>' + escapeHtml(String(f.size)) + '</td>'
+        + '<td><button class="secondary apply-preview-btn" data-path="' + escapeHtml(f.path) + '" style="font-size:11px;padding:2px 8px;">Preview</button></td></tr>';
+    });
+    t += '</tbody></table>';
+    filesEl.innerHTML = t;
+    filesEl.querySelectorAll('.apply-preview-btn').forEach(b => {
+      b.addEventListener('click', () => loadApplyPreview(base, b.dataset.path));
+    });
+  }
+}
+
+async function loadApplyPreview(base, relPath) {
+  const previewEl = document.getElementById('apply-view-preview');
+  if (!previewEl) return;
+  previewEl.style.display = '';
+  previewEl.textContent = 'loading preview…';
+  const res = await api(base + '/files/preview?path=' + encodeURIComponent(relPath));
+  if (!res.ok) { previewEl.textContent = 'preview failed: ' + (res.data?.message || res.status); return; }
+  const d = res.data;
+  previewEl.textContent = '# ' + d.path + '  (size ' + d.size + (d.truncated ? ', truncated' : '') + (d.redacted ? ', redacted' : '') + ')\\n\\n' + d.content;
 }
 
 async function runReviewFlow() {
