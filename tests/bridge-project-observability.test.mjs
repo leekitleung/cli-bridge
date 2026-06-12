@@ -232,6 +232,64 @@ test('POST /bridge/projects/:key/memory is rejected', async () => {
   assert.equal(res.statusCode, 405);
 });
 
+test('GET /bridge/projects/:key/memory includes verified artifact evidence', async () => {
+  const runtime = createBridgeRuntime();
+  const seeded = await seedTeamArtifact(runtime, 'mem-verif', 'team-mem-verif', 'npm test passed', 700);
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/mem-verif/memory');
+
+  assert.equal(res.statusCode, 200);
+  const verif = res.payload.entries.filter(e => e.sourceKind === 'verification');
+  assert.equal(verif.length, 1, `expected 1 verification entry, got ${verif.length}`);
+  assert.equal(verif[0].sourceId, 'team-mem-verif:slot-verify');
+  assert.equal(verif[0].timestamp, 700);
+  // Derived fact references the step, never echoes raw notes or infers pass/fail.
+  assert.ok(verif[0].fact.includes(seeded.stepId.slice(0, 8)));
+  assert.ok(!verif[0].fact.includes('npm test passed'));
+});
+
+test('GET /bridge/projects/:key/memory ignores blank artifact notes', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'mem-blank', 'team-mem-blank', '   ', 701);
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/mem-blank/memory');
+
+  assert.equal(res.statusCode, 200);
+  const verif = res.payload.entries.filter(e => e.sourceKind === 'verification');
+  assert.equal(verif.length, 0);
+});
+
+test('memory verification entries are project-isolated', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'mem-alpha-iso', 'team-mem-alpha', 'alpha evidence', 800);
+  await seedTeamArtifact(runtime, 'mem-beta-iso', 'team-mem-beta', 'beta evidence', 900);
+
+  const alpha = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/mem-alpha-iso/memory');
+  const beta = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/mem-beta-iso/memory');
+
+  assert.equal(alpha.statusCode, 200);
+  assert.equal(beta.statusCode, 200);
+  const alphaVerif = alpha.payload.entries.filter(e => e.sourceKind === 'verification');
+  const betaVerif = beta.payload.entries.filter(e => e.sourceKind === 'verification');
+  assert.equal(alphaVerif.length, 1);
+  assert.equal(betaVerif.length, 1);
+  assert.equal(alphaVerif[0].sourceId, 'team-mem-alpha:slot-verify');
+  assert.equal(betaVerif[0].sourceId, 'team-mem-beta:slot-verify');
+  assert.ok(!betaVerif.some(e => e.sourceId.startsWith('team-mem-alpha')));
+});
+
+test('GET /bridge/projects/:key/memory does not mutate team artifacts', async () => {
+  const runtime = createBridgeRuntime();
+  await seedTeamArtifact(runtime, 'mem-readonly', 'team-mem-readonly', 'readonly evidence', 950);
+  const before = runtime.teamStore.exportArtifacts();
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/mem-readonly/memory');
+
+  const after = runtime.teamStore.exportArtifacts();
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(after, before);
+});
+
 // ════════════════════════════════════════════════════════════════════
 // Verification
 // ════════════════════════════════════════════════════════════════════

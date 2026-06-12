@@ -317,6 +317,35 @@ export function buildDerivedMemory(
     });
   }
 
+  // Memory from verified artifact evidence.
+  //
+  // Only artifacts whose parent team is present in the (already project-scoped)
+  // input are considered, and only when verificationNotes is a non-empty string
+  // after trimming. This mirrors buildHarnessVerification's source rules. The
+  // derived fact reports that verification evidence was recorded; it never
+  // infers pass/fail from the free-text notes and never echoes the raw notes.
+  const teams = input.teams ?? [];
+  const artifacts = input.artifacts ?? [];
+  const teamIds = new Set(teams.map(team => team.id));
+  const verificationEntries: DerivedMemoryEntry[] = [];
+  for (const artifact of artifacts) {
+    const notes = artifact.verificationNotes?.trim();
+    if (!notes) continue;
+    if (!teamIds.has(artifact.teamId)) continue;
+    verificationEntries.push({
+      sourceKind: 'verification',
+      sourceId: `${artifact.teamId}:${artifact.slotId}`,
+      timestamp: artifact.createdAt,
+      fact: `Verification evidence recorded for step ${artifact.planStepId.slice(0, 8)} (team ${artifact.teamId.slice(0, 8)})`,
+    });
+  }
+  verificationEntries.sort((a, b) => {
+    const timeDelta = b.timestamp - a.timestamp;
+    if (timeDelta !== 0) return timeDelta;
+    return a.sourceId.localeCompare(b.sourceId);
+  });
+  entries.push(...verificationEntries);
+
   return {
     projectId: input.projectId,
     entries,

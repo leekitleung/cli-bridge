@@ -323,6 +323,52 @@ blocked because the default project cannot be archived.
 
 ---
 
+## GET /bridge/projects/:key/memory
+
+Returns a read-only derived memory view for a project. Entries are computed from
+already-persisted records (goals, plan steps, gates, reviews, and verified
+artifact evidence). The endpoint runs nothing, spawns nothing, and writes
+nothing.
+
+### Response (200)
+
+```json
+{
+  "projectId": "alpha",
+  "entries": [
+    { "sourceKind": "goal", "sourceId": "project-summary", "timestamp": 1234567890, "fact": "2 active goal(s) in this project" },
+    { "sourceKind": "verification", "sourceId": "team-1:slot-verify", "timestamp": 1234567000, "fact": "Verification evidence recorded for step 1a2b3c4d (team team-1)" }
+  ]
+}
+```
+
+Projects with no records return `{ "projectId": "...", "entries": [] }`.
+
+### Entry source kinds
+
+| `sourceKind` | Derived from |
+|--------------|--------------|
+| `goal` | Active and completed goal counts. |
+| `plan-step` | Completed steps per plan. |
+| `gate` | Steps waiting for gate approval. |
+| `review` | Review request counts (including returned). |
+| `verification` | One entry per `SlotArtifact` with non-blank `verificationNotes`. |
+
+### Verification-evidence source and isolation
+
+- A `verification` entry is derived only when `SlotArtifact.verificationNotes`
+  is a non-empty string after trimming; blank notes are ignored.
+- Artifacts are included only when their parent team is within the requested
+  project scope (`TeamSpec.projectId` matches the project key).
+- The derived `fact` reports only that evidence was recorded; it never infers
+  pass/fail from the notes and never echoes the raw note text.
+- `verification` entries are sorted newest first by `timestamp`
+  (`SlotArtifact.createdAt`), with deterministic fallback ordering by
+  `teamId:slotId`.
+- Mutation methods on this path return 405.
+
+---
+
 ## GET /bridge/projects/:key/verification
 
 Returns a read-only verification evidence view for a project. The endpoint does
