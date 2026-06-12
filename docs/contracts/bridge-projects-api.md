@@ -638,3 +638,34 @@ metadata. No raw content or absolute host path.
 
 **Non-goals**: diff/diff-like view, new/modified/unchanged classification,
 baseline preview endpoint, raw baseline content persistence.
+
+### Apply-result File Classification (v2.6, ADR-0011)
+
+**Status**: Implemented | **ADR**: `docs/planning/ADR-0011-read-only-apply-result-classification.md`
+**Handoff**: `docs/planning/CLI-BRIDGE-v2.6-APPLY-RESULT-CLASSIFICATION-HANDOFF.md`
+
+Read-only, metadata-only per-file classification comparing persisted ADR-0010
+baseline metadata against the isolated apply result. No raw content, no diff,
+no sha256 in response.
+
+### GET .../apply-requests/:applyId/classification
+
+**Response 200**:
+```json
+{
+  "files": [{ "path": "src/app.ts", "size": 123, "classification": "modified" }],
+  "summary": { "new": 1, "modified": 1, "unchanged": 2, "unreadableBaseline": 0, "total": 4 }
+}
+```
+
+`classification` ∈ `new | modified | unchanged | unreadable-baseline` (closed enum).
+
+**Fixed error semantics**:
+- workspaceApplyEnabled false → 409
+- Unknown applyId / wrong project/team → 404
+- Status not `applied` → 409
+- No baseline manifest → 409 (`"Baseline manifest not captured for this apply request"`), no per-file list
+- Path escape / cap exceed → 400/409
+
+**Non-goals**: sha256 in response, diff/diff-like view, raw content, main-tree access,
+git/spawn/VCS, apply-from-preview.

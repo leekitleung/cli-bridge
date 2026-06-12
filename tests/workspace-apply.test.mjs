@@ -799,3 +799,255 @@ test('EX-2.5-6: list response omits isolatedDirPath and baseline entries/sha256'
 
   cleanBaselineRoot(baselineRoot);
 });
+
+// ══════════════════════════════════════════════════════════════════
+// v2.6 ADR-0011: Classification tests
+// ══════════════════════════════════════════════════════════════════
+
+// Helper: seed an applied request WITH baseline capture enabled.
+async function seedAppliedWithBaseline(runtime, projectKey, opts = {}) {
+  const { proposedFiles, applyFiles } = opts;
+  runtime.projectStore.upsert({ key: projectKey, label: projectKey, workspaceApplyEnabled: true });
+  const goal = runtime.goalStore.createGoal({ sessionId: 'seed-class', description: 'Class test', projectId: projectKey });
+  const plan = runtime.goalStore.attachPlan({
+    goalId: goal.id,
+    steps: [{ intent: 'Plan', kind: 'review', tier: 'patch-proposal', isStateMutating: false, targetEndpointId: 'claude-code-command' }],
+    permittedTiers: ['patch-proposal'],
+  });
+  if (!plan) throw new Error('plan failed');
+  runtime.goalStore.approvePlan(goal.id);
+  await call(runtime, 'POST', TEAMS(projectKey), {
+    action: 'create', id: 't-class-' + randomUUID().slice(0, 8),
+    goalId: goal.id, planId: plan.id,
+    logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  const teams = runtime.teamStore.listByProject(projectKey);
+  const team = teams[teams.length - 1];
+  await call(runtime, 'POST', TEAMS(projectKey) + '/' + team.id + '/approve');
+  const files = proposedFiles || (applyFiles ? Object.keys(applyFiles) : ['src/app.ts', 'src/lib.ts']);
+  runtime.teamStore.recordArtifact(team.id, {
+    teamId: team.id, slotId: 's0', planStepId: plan.steps[0].id,
+    summary: 'class test artifact', proposedFiles: files,
+    outputRedacted: true, createdAt: Date.now(),
+  });
+  let res = await call(runtime, 'POST', TEAMS(projectKey) + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: plan.steps[0].id, proposedFiles: files,
+  });
+  const applyId = res.payload.apply.applyId;
+  const confirmFiles = applyFiles || {};
+  if (!applyFiles) {
+    for (const f of files) confirmFiles[f] = '// modified content';
+  }
+  res = await call(runtime, 'POST', TEAMS(projectKey) + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: confirmFiles,
+  });
+  assert.equal(res.statusCode, 200, 'seed with baseline should succeed');
+  return { team, plan, applyId };
+}
+
+// ── Classification: happy path ────────────────────────────────────
+
+test('ADR-0011: classification returns new/modified/unchanged per file', async () => {
+  const baselineRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(baselineRoot, 'src', 'app.ts'), '// app baseline', 'utf8');
+  fs.writeFileSync(path.join(baselineRoot, 'src', 'lib.ts'), '// lib baseline', 'utf8');
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: {
+      'src/app.ts': '// app baseline', // unchanged
+      'src/lib.ts': '// lib MODIFIED', // modified
+      'src/newfile.ts': '// new',     // new
+    },
+    proposedFiles: ['src/app.ts', 'src/lib.ts', 'src/newfile.ts'],
+  });
+
+  const res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(res.statusCode, 200);
+  const byPath = {};
+  res.payload.files.forEach(f => { byPath[f.path] = f; });
+  assert.equal(byPath['src/app.ts'].classification, 'unchanged');
+  assert.equal(byPath['src/lib.ts'].classification, 'modified');
+  assert.equal(byPath['src/newfile.ts'].classification, 'new');
+  assert.equal(res.payload.summary.new, 1);
+  assert.equal(res.payload.summary.modified, 1);
+  assert.equal(res.payload.summary.unchanged, 1);
+  assert.equal(res.payload.summary.total, 3);
+  // No hash/absolute path in response.
+  const body = JSON.stringify(res.payload);
+  assert.equal(body.includes('sha256'), false, 'no sha256 in response');
+  assert.equal(body.includes(baselineRoot), false, 'no absolute path');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── Classification: no-baseline → 409 ────────────────────────────
+
+test('ADR-0011: no-baseline returns 409, no per-file list', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+  res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('not captured') || res.payload.message.includes('Baseline'));
+  assert.equal(res.payload.files, undefined);
+});
+
+// ── Classification: read-only, no mutation ────────────────────────
+
+test('ADR-0011: classification does not mutate apply request', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// modified' },
+  });
+  const before = runtime.applyStore.getRequest(applyId).status;
+  await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(runtime.applyStore.getRequest(applyId).status, before);
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── Classification: opt-in OFF → 409 ─────────────────────────────
+
+test('ADR-0011: opt-in OFF rejects classification', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+  const res = await call(runtime, 'GET', TEAMS('alpha') + '/t-any/apply-requests/' + randomUUID() + '/classification');
+  assert.equal(res.statusCode, 409);
+});
+
+// ── Classification: not-applied → 409 ────────────────────────────
+
+test('ADR-0011: not-applied returns 409', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(res.statusCode, 409);
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── Classification: GET-only ──────────────────────────────────────
+
+test('ADR-0011: classification is GET-only', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// x' },
+  });
+  const base = TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification';
+  assert.equal((await call(runtime, 'POST', base, {})).statusCode, 405);
+  assert.equal((await call(runtime, 'PUT', base, {})).statusCode, 405);
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── Classification: no sha256/content/absolute path ──────────────
+
+test('ADR-0011: response has no sha256, content, or absolute path', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// modified content' },
+  });
+  const res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(res.statusCode, 200);
+  const body = JSON.stringify(res.payload);
+  assert.equal(body.includes('sha256'), false, 'no sha256');
+  assert.equal(body.includes('// modified'), false, 'no raw content');
+  assert.equal(body.includes(baselineRoot), false, 'no absolute baselineRoot');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+
+// ── Classification: cap-exceeded fail-closed (store-level, EX-2.6-1-followup) ──
+// REVIEW-2.6-1 F1: ADR-0011 AC6 / handoff §6 require cap-exceed → fail-closed.
+
+test('ADR-0011: classification fails closed on file-count cap exceed', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// app baseline', 'src/lib.ts': '// lib baseline' },
+    proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  // 2 result files with maxFiles=1 → cap-exceeded before any hashing/write.
+  const out = runtime.applyStore.classifyResult(applyId, { maxFiles: 1, maxTotalBytes: 5 * 1024 * 1024 });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'cap-exceeded');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+test('ADR-0011: classification fails closed on byte-total cap exceed', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// app baseline', 'src/lib.ts': '// lib baseline' },
+    proposedFiles: ['src/app.ts', 'src/lib.ts'],
+  });
+  // Readable baseline → result files are hashed; maxTotalBytes=1 → cap-exceeded
+  // as soon as the first readable file is read. No partial result returned.
+  const out = runtime.applyStore.classifyResult(applyId, { maxFiles: 200, maxTotalBytes: 1 });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'cap-exceeded');
+
+  cleanBaselineRoot(baselineRoot);
+});
+
+// ── Classification: unknown applyId → 404 (EX-2.6-1-followup) ──────
+// REVIEW-2.6-1 F2: ADR-0011 AC6 unknown applyId must 404 on the endpoint.
+
+test('ADR-0011: unknown applyId returns 404 on classification endpoint', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const res = await call(runtime, 'GET', TEAMS('alpha') + '/t-any/apply-requests/' + randomUUID() + '/classification');
+  assert.equal(res.statusCode, 404);
+});
+
+// ── Classification: exact item shape, no diff/sha256/content keys (EX-2.6-1-followup) ──
+// REVIEW-2.6-1 F4: ADR-0011 AC3 (no diff) + AC2 (metadata-only) shape assertion.
+
+test('ADR-0011: classification item shape is exactly {classification,path,size}', async () => {
+  const baselineRoot = createBaselineRoot();
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({ applyRoot: TEST_APPLY_ROOT, baselineRoot, baselineCaptureEnabled: true });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// app baseline', 'src/lib.ts': '// lib MODIFIED', 'src/newfile.ts': '// new' },
+    proposedFiles: ['src/app.ts', 'src/lib.ts', 'src/newfile.ts'],
+  });
+  const res = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(res.statusCode, 200);
+  const banned = ['diff', 'line', 'lineDetail', 'baseline', 'sha256', 'content'];
+  for (const item of res.payload.files) {
+    assert.deepEqual(Object.keys(item).sort(), ['classification', 'path', 'size'], 'item keys must be exactly classification/path/size');
+    for (const k of banned) assert.equal(k in item, false, 'item must not carry ' + k);
+  }
+});

@@ -264,6 +264,21 @@ All notable changes to CLI Bridge are documented here.
   baseline `entries`/`sha256` in the list payload, with `isolatedDirId` and baseline
   summary still present.
 
+### Added — v2.6 Apply-result File Classification (EX-2.6-1, ADR-0011)
+
+- **Classification endpoint**: `GET .../apply-requests/:applyId/classification`.
+  Returns `{ files: [{ path, size, classification }], summary }` with closed enum
+  classification ∈ {new, modified, unchanged, unreadable-baseline}.
+- **Metadata-only**: compares persisted ADR-0010 baseline sha256 against in-process
+  computed result-side sha256. Hashes never returned/audited/persisted. No raw content.
+- **Fixed error semantics**: no-baseline → 409 (request-level, no per-file list);
+  not-applied → 409; opt-in OFF → 409; unknown applyId → 404; path-escape/cap-exceed → 4xx.
+- **No diff, no sha256/content/absolute path in response, no main-tree access, no
+  git/spawn/VCS, no apply-from-preview, no ADR-0010 capture semantic change.**
+- **Tests**: 12 classification tests covering happy path, no-baseline, read-only,
+  opt-in, not-applied, GET-only, response boundary, cap-exceeded (file-count and
+  byte-total, store-level), unknown-applyId 404, and exact item shape.
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

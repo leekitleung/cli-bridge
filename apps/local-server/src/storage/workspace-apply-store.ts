@@ -180,6 +180,23 @@ export const DEFAULT_BASELINE_CAPS: BaselineCaps = {
   maxTotalBytes: 5 * 1024 * 1024, // 5 MB
 };
 
+// ── v2.6 Classification (ADR-0011) ───────────────────────────────
+// Metadata-only per-file classification. Hashes used only for in-process
+// comparison; never returned, audited, or persisted.
+
+export type ClassifyFailCode = 'not-found' | 'not-applied' | 'no-baseline' | 'path-escape' | 'cap-exceeded';
+export type ClassificationLabel = 'new' | 'modified' | 'unchanged' | 'unreadable-baseline';
+
+export interface ClassifiedFile {
+  path: string;
+  size: number;
+  classification: ClassificationLabel;
+}
+
+export type ClassifyResultOutput =
+  | { ok: true; files: ClassifiedFile[]; summary: { new: number; modified: number; unchanged: number; unreadableBaseline: number; total: number } }
+  | { ok: false; code: ClassifyFailCode; error: string };
+
 export class WorkspaceApplyStore {
   readonly applyRoot: string;
   private readonly requests = new Map<string, ApplyRequest>();
@@ -441,6 +458,80 @@ export class WorkspaceApplyStore {
         entries,
       },
     };
+  }
+
+  // ── v2.6 Read-only classification (ADR-0011) ──────────────────
+  // In-process metadata-only: compares persisted baseline sha256 against
+  // computed result-side sha256. Returns classification label per file.
+  // Hashes are never returned, audited, or persisted.
+
+  classifyResult(applyId: string, caps?: BaselineCaps): ClassifyResultOutput {
+    const req = this.requests.get(applyId);
+    if (!req) return { ok: false, code: 'not-found', error: 'Apply request not found' };
+    if (req.status !== 'applied' || !req.isolatedDirPath) {
+      return { ok: false, code: 'not-applied', error: `Apply request is ${req.status}, not applied` };
+    }
+    if (!req.baselineManifest) {
+      return { ok: false, code: 'no-baseline', error: 'Baseline manifest not captured for this apply request' };
+    }
+
+    const effectiveCaps = caps ?? this.baselineCaps;
+    const resultFiles = this.listAppliedFiles(applyId);
+    if (!resultFiles.ok) {
+      return { ok: false, code: resultFiles.code === 'not-found' ? 'not-found' : 'not-applied', error: resultFiles.error };
+    }
+
+    // Caps: file count check.
+    if (resultFiles.files.length > effectiveCaps.maxFiles) {
+      return { ok: false, code: 'cap-exceeded', error: `File count ${resultFiles.files.length} exceeds classification cap ${effectiveCaps.maxFiles}` };
+    }
+
+    const baselineMap = new Map(req.baselineManifest.entries.map(e => [e.path, e]));
+    const files: ClassifiedFile[] = [];
+    let totalBytesHashed = 0;
+    const summary = { new: 0, modified: 0, unchanged: 0, unreadableBaseline: 0, total: 0 };
+
+    const isolatedRoot = path.resolve(req.isolatedDirPath);
+
+    for (const rf of resultFiles.files) {
+      const validated = validateAllPaths([rf.path]);
+      if (!validated) {
+        return { ok: false, code: 'path-escape', error: `Invalid path in result: ${rf.path}` };
+      }
+      const resolved = path.resolve(isolatedRoot, validated[0]);
+      const resolvedNorm = resolved.replace(/\\/g, '/');
+      const rootNorm = isolatedRoot.replace(/\\/g, '/');
+      if (!resolvedNorm.startsWith(rootNorm + '/') && resolvedNorm !== rootNorm) {
+        return { ok: false, code: 'path-escape', error: `Path containment violation: ${rf.path}` };
+      }
+
+      let classification: ClassificationLabel = 'new'; // default
+      const baselineEntry = baselineMap.get(rf.path);
+
+      if (baselineEntry && baselineEntry.errorKind !== 'missing' && baselineEntry.exists !== false) {
+        if (baselineEntry.readable && baselineEntry.sha256) {
+          try {
+            const resultContent = fs.readFileSync(resolved);
+            totalBytesHashed += resultContent.byteLength;
+            if (totalBytesHashed > effectiveCaps.maxTotalBytes) {
+              return { ok: false, code: 'cap-exceeded', error: `Classification total bytes ${totalBytesHashed} exceeds cap ${effectiveCaps.maxTotalBytes}` };
+            }
+            const resultHash = createHash('sha256').update(resultContent).digest('hex');
+            classification = (resultHash === baselineEntry.sha256) ? 'unchanged' : 'modified';
+          } catch {
+            classification = 'new';
+          }
+        } else if (baselineEntry.errorKind === 'unreadable') {
+          classification = 'unreadable-baseline';
+        }
+      }
+
+      files.push({ path: rf.path, size: rf.size, classification });
+      summary[classification === 'unreadable-baseline' ? 'unreadableBaseline' : classification]++;
+      summary.total++;
+    }
+
+    return { ok: true, files, summary };
   }
 
   // ── Discard (reversible) ───────────────────────────────────────

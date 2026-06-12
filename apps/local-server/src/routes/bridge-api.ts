@@ -212,11 +212,12 @@ function matchProjectTeamPath(pathname: string): {
  *  GET   .../apply-requests/:applyId                 (sub 'manifest', read-only)
  *  GET   .../apply-requests/:applyId/files           (sub 'files', read-only)
  *  GET   .../apply-requests/:applyId/files/preview   (sub 'preview', read-only)
+ *  GET   .../apply-requests/:applyId/classification  (sub 'classification', read-only)
  */
 function matchTeamApplyPath(pathname: string): {
   matched: true;
   key: string | undefined;
-  sub: '' | 'confirm' | 'discard' | 'manifest' | 'files' | 'preview';
+  sub: '' | 'confirm' | 'discard' | 'manifest' | 'files' | 'preview' | 'classification';
   teamId?: string;
   applyId?: string;
 } | { matched: false } {
@@ -247,6 +248,8 @@ function matchTeamApplyPath(pathname: string): {
       }
       // Read-only file list: .../apply-requests/:applyId/files
       if (parts[3] === 'files') return { matched: true, key, sub: 'files', teamId, applyId };
+      // Read-only classification: .../apply-requests/:applyId/classification
+      if (parts[3] === 'classification') return { matched: true, key, sub: 'classification', teamId, applyId };
     }
     // Read-only preview: .../apply-requests/:applyId/files/preview
     if (parts.length === 5 && parts[3] === 'files' && parts[4] === 'preview') {
@@ -541,6 +544,38 @@ function handleApplyPreviewGet(
     redacted: redaction.redactionApplied,
     content: redaction.processedContent,
   });
+}
+
+// ── v2.6 Read-only classification (ADR-0011) ────────────────────
+// Metadata-only per-file classification using persisted baseline manifest
+// and in-process result-side SHA-256 comparison. Hashes never returned.
+
+function handleApplyClassificationGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  teamId: string,
+  applyId: string,
+): BridgeResult {
+  const resolved = resolveApplyForRead(runtime, projectKey, teamId, applyId);
+  if (!resolved.ok) return resolved.result;
+
+  // Additional: require status 'applied' (beyond resolveApplyForRead).
+  if (resolved.req.status !== 'applied') {
+    return error(409, 'Classification is only available for applied requests');
+  }
+
+  const result = runtime.applyStore.classifyResult(applyId);
+  if (!result.ok) {
+    switch (result.code) {
+      case 'no-baseline': return error(409, result.error);
+      case 'not-applied': return error(409, result.error);
+      case 'cap-exceeded': return error(409, result.error);
+      case 'path-escape': return error(400, result.error);
+      default: return error(404, result.error);
+    }
+  }
+
+  return ok({ files: result.files, summary: result.summary });
 }
 
 async function handleTeamsPost(
@@ -2168,6 +2203,11 @@ export async function handleBridgeRequest(
   if (applyMatch.matched && method === 'GET' && applyMatch.sub === 'preview') {
     if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
     return handleApplyPreviewGet(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId, query);
+  }
+  // v2.6 ADR-0011: Read-only classification (GET-only)
+  if (applyMatch.matched && method === 'GET' && applyMatch.sub === 'classification') {
+    if (!applyMatch.key || !applyMatch.teamId || !applyMatch.applyId) return error(400, 'Invalid project key, team id, or apply id');
+    return handleApplyClassificationGet(runtime, applyMatch.key, applyMatch.teamId, applyMatch.applyId);
   }
   if (applyMatch.matched) return error(405, 'Method not allowed');
 
