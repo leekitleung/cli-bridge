@@ -8,9 +8,30 @@ All notable changes to CLI Bridge are documented here.
 - Added repository agent workflow governance docs: `AGENTS.md` for hard batch
   rules and `docs/planning/CLI-BRIDGE-AGENT-WORKFLOW.md` for the RP/EX/REVIEW
   process.
-- **ADR-0004 Model API Middle Layer** ACCEPTED (`docs/planning/ADR-0004-model-api-middle-layer.md`). Senior review passed; covers API key handling, PlannerModel scope, redaction, prompt-injection controls, budget/retry/timeout, offline behavior, audit events, ADR-0003 invariants preservation. No runtime implementation.
-- **v2.4a PlannerModel Implementation Handoff** awaiting handoff review (`docs/planning/CLI-BRIDGE-v2.4a-MODEL-API-PLANNING-HANDOFF.md`). ADR-0004 accepted; implementation requires handoff review approval.
-- Post-v2.3 planning handoff and PLAN-AGENTTEAM updated to reference ADR-0004 draft.
+- **ADR-0004 Model API Middle Layer** ACCEPTED. Senior review passed.
+- **v2.4a PlannerModel Implementation Handoff** approved, handoff review complete.
+
+### Added — v2.4a PlannerModel Minimal Implementation
+- **`POST /bridge/goals/plan`** now supports optional `plannerSource` field:
+  - `"review-cli"` (default): existing behavior unchanged.
+  - `"model-api"`: uses memory-only API key + OpenAI-compatible adapter to
+    generate advisory PlanDraft. No plan attached to goal.
+- **Model provider interface**: `apps/local-server/src/model/provider-interface.ts`
+  with `ModelProvider.plan()` contract.
+- **OpenAI adapter**: `apps/local-server/src/model/openai-adapter.ts` using Node
+  built-in `fetch`, no npm dependencies. Supports timeout, budget, retry.
+- **In-memory API key store**: `apps/local-server/src/model/api-key.ts`. Keys
+  never persisted to disk, snapshot, audit, or HTTP response.
+- **PlannerModel**: `apps/local-server/src/model/planner-model.ts` with schema
+  validation, PolicyEngine checks, step ceiling enforcement, forbidden-kind
+  rejection.
+- **Fixed system preamble**: `apps/local-server/src/model/planner-prompt.ts`
+  with ADR-0003 boundary enforcement.
+- **Audit events**: `model_plan_request` and `model_plan_result` types.
+- **Tests**: 9 new tests covering happy path, missing key, provider failure,
+  schema rejection, step ceiling, audit redaction, forbidden kinds.
+- **No new endpoint, no npm dependencies, no auto-apply/commit/push/merge,
+  no parallel slots, no WorkBuddy executor, no CriticModel/ArbiterModel.**
 
 ## [v2.3] — 2026-06-12 — AgentTeam Sequential Closeout
 

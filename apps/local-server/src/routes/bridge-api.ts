@@ -21,6 +21,8 @@ import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
 import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
+import { InMemoryApiKeyStore } from '../model/api-key.ts';
+import type { ModelProvider } from '../model/provider-interface.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
 import { validateProviderCapability } from '../storage/provider-capability.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
@@ -101,6 +103,9 @@ export interface BridgeRuntime {
   // v2.2 WorkBuddy non-executing task system.
   workbuddyStore: InMemoryWorkBuddyStateStore;
   teamStore: InMemoryTeamSpecStore;
+  // v2.4a Model API
+  modelApiKeyStore: InMemoryApiKeyStore;
+  modelProviderFor?: (apiKey: string) => ModelProvider;
 }
 
 export interface BridgeRuntimeOptions {
@@ -113,6 +118,8 @@ export interface BridgeRuntimeOptions {
   // Override the command runner used by goal→plan generation (used by tests to
   // avoid spawning a real CLI). When omitted, the default runner is used.
   goalPlanCommandOptions?: CommandRunOptions;
+  // v2.4a: model provider factory for test injection. Default: OpenAiAdapter.
+  modelProviderFactory?: (apiKey: string) => ModelProvider;
 }
 
 
@@ -639,6 +646,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
 
   const workbuddyStore = new InMemoryWorkBuddyStateStore();
   const teamStore = new InMemoryTeamSpecStore();
+  // v2.4a Model API key store — memory-only, never persisted.
+  const modelApiKeyStore = new InMemoryApiKeyStore();
 
   if (snapshotStore) {
     const read = snapshotStore.read();
@@ -717,6 +726,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     goalPlanCommandOptions: options.goalPlanCommandOptions,
     workbuddyStore,
     teamStore,
+    modelApiKeyStore,
+    modelProviderFor: options.modelProviderFactory,
   };
 }
 
@@ -1704,6 +1715,94 @@ export async function handleBridgeRequest(
     // Reject the field if present; the server uses its own working directory.
     if ('cwd' in parsed.body) {
       return error(400, 'cwd must not be set from request input');
+    }
+
+    const plannerSource = typeof parsed.body.plannerSource === 'string'
+      ? parsed.body.plannerSource
+      : 'review-cli';
+
+    // ════════════════════════════════════════════════
+    // v2.4a Model API path
+    // ════════════════════════════════════════════════
+    if (plannerSource === 'model-api') {
+      const goal = runtime.goalStore.getGoal(goalId);
+      if (!goal) return error(400, 'Goal not found');
+      if (goal.status !== 'draft') return error(400, 'Goal must be in draft status for model plan');
+
+      const projectId = goal.projectId ?? 'cli-bridge';
+
+      // Accept API key from request body (opt-in, memory-only).
+      if (typeof parsed.body.apiKey === 'string' && parsed.body.apiKey.trim().length > 0) {
+        runtime.modelApiKeyStore.setKey(projectId, parsed.body.apiKey.trim());
+      }
+      const apiKey = runtime.modelApiKeyStore.getKey(projectId);
+      if (!apiKey) {
+        return error(409, 'No model API key configured for this project. Provide apiKey in request body or use plannerSource: review-cli.');
+      }
+
+      const { generateModelPlan } = await import('../model/planner-model.ts');
+      const provider = runtime.modelProviderFor
+        ? runtime.modelProviderFor(apiKey)
+        : new (await import('../model/openai-adapter.ts')).OpenAiAdapter(apiKey);
+
+      const start = Date.now();
+      const modelResult = await generateModelPlan(provider, {
+        goalDescription: goal.description,
+        endpoints: (Array.isArray(parsed.body.availableEndpoints)
+          ? (parsed.body.availableEndpoints as string[]).filter((v: unknown) => typeof v === 'string' && v.length > 0).map(id => ({ id, label: id }))
+          : [{ id: 'claude-code-command', label: 'Claude Code' }]),
+        permittedTiers: Array.isArray(parsed.body.permittedTiers)
+          ? (parsed.body.permittedTiers as string[]).filter((v: unknown) => v === 'patch-proposal' || v === 'workspace-write')
+          : ['patch-proposal'],
+        projectContext: goal.projectId,
+        maxSteps: 10,
+      });
+
+      // Audit: model_plan_request
+      runtime.auditLog.createAndAppend({
+        sessionId: 'model-plan-' + goalId,
+        projectId,
+        type: 'model_plan_request',
+        source: 'planner-model',
+        target: 'goal-' + goalId,
+        goalId,
+        result: { ok: modelResult.ok },
+      });
+
+      if (!modelResult.ok) {
+        return error(409, 'Model plan generation failed: ' + modelResult.reason);
+      }
+
+      // Audit: model_plan_result
+      runtime.auditLog.createAndAppend({
+        sessionId: 'model-plan-result-' + goalId,
+        projectId,
+        type: 'model_plan_result',
+        source: 'planner-model',
+        target: 'goal-' + goalId,
+        goalId,
+        result: { ok: true },
+      });
+
+      return ok({
+        draft: modelResult.draft,
+        plan: null,
+        meta: {
+          source: 'model-api',
+          modelSuggested: true,
+          provider: modelResult.provider,
+          usage: modelResult.usage,
+          latencyMs: modelResult.latencyMs,
+          validationIssues: modelResult.draft.validationIssues,
+        },
+      });
+    }
+
+    // ════════════════════════════════════════════════
+    // Default: review-cli path (unchanged)
+    // ════════════════════════════════════════════════
+    if (plannerSource !== 'review-cli') {
+      return error(400, 'plannerSource must be "review-cli" or "model-api"');
     }
     const availableEndpoints = Array.isArray(parsed.body.availableEndpoints)
       ? (parsed.body.availableEndpoints as string[]).filter(

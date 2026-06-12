@@ -69,6 +69,9 @@ export const AUDIT_EVENT_TYPES = [
   'slot_failed',
   'slot_gated',
   'artifact_recorded',
+  // v2.4a Model API
+  'model_plan_request',
+  'model_plan_result',
 ] as const;
 
 export const AUDIT_RISK_LEVELS = [
