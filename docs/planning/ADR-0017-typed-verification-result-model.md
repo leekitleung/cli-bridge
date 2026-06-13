@@ -9,9 +9,11 @@ Blocks: ADR-0018 (local live verification execution), ADR-0019 (Git/CI/GitHub pr
 Acceptance: NOT YET ACCEPTED. This ADR is the data-model-only foundation of the
             v2.12-v2.14 verification line. It authorizes a strictly additive,
             **non-executing** typed verification-result field plus its inert
-            display. It does NOT authorize running tests/harness/build,
-            spawn/exec, `git`/CI/GitHub/network, raw-notes/raw-output display,
-            pass/fail inference from free text, or any write/apply surface.
+            display. It does NOT authorize any product/runtime capability to run
+            tests/harness/build, spawn/exec, `git`/CI/GitHub/network,
+            raw-notes/raw-output display, pass/fail inference from free text, or
+            any write/apply surface. Execution-agent verification commands
+            remain allowed only as review checks, not as product behavior.
 
 ## Context
 
@@ -94,7 +96,7 @@ PERMIT a strictly additive, non-executing **typed verification result** model:
 
 ### 2. What is forbidden (unchanged from ADR-0016)
 
-This ADR MUST NOT, and does not authorize any code to:
+This ADR MUST NOT, and does not authorize product/runtime code to:
 
 - run tests, a harness, a build, or any command; spawn or exec anything;
 - read or run `git`, call any VCS/CI/GitHub API, or make any outbound network
@@ -198,8 +200,10 @@ ADR-0019 cannot store a trustworthy discrete outcome.
 
 An `EX-2.12-1` handoff and `REVIEW-2.12-1` closeout MUST verify:
 
-1. **No execution / no network**: no test/harness/build run, no spawn/exec, no
-   `git`, no CI, no GitHub/provider API, no outbound request anywhere.
+1. **No product execution / no network**: no test/harness/build runner, no
+   spawn/exec, no `git`, no CI, no GitHub/provider API, no outbound request
+   added to product/runtime code. Execution-agent verification commands are
+   permitted only for review and must not become bridge behavior.
 2. **Additive & backward compatible**: existing `verificationNotes`, `notes`,
    `harnessStatus`, and `VerificationStatusSummary` fields are unchanged; all new
    fields are optional.
@@ -246,8 +250,9 @@ otherwise STOP and report rather than expand scope.
 > touch `git`/CI/network, infer results from free text, or surface raw
 > notes/output. Keep all changes additive and backward compatible. Run
 > `npm run typecheck`, `npm run lint`, the listed `node --test` suites,
-> `npm test`, and `git diff --check`. One dedicated `EX-2.12-1` commit carrying
-> only the allowed files; do not commit/push until `REVIEW-2.12-1` authorizes.
+> `npm test`, and `git diff --check`. Prepare one dedicated `EX-2.12-1` diff
+> carrying only the allowed files; do not commit/push until `REVIEW-2.12-1`
+> authorizes the closeout commit.
 
 ## Status / Next
 

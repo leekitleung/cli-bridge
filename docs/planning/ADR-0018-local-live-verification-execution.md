@@ -10,9 +10,12 @@ Acceptance: NOT YET ACCEPTED. This ADR crosses the long-standing **no
             execution** boundary. It proposes a bounded, explicitly configured,
             human-gated **local** verification command run whose exit status is
             mapped to the typed `VerificationResult` from ADR-0017. It does NOT
-            authorize `git`/CI/GitHub/network (ADR-0019), arbitrary shell/exec
-            endpoints, auto-apply/commit/push/merge, autonomy/scheduler, or raw
-            output display.
+            authorize `git`/CI/GitHub/provider integration (ADR-0019), arbitrary
+            shell/exec endpoints, auto-apply/commit/push/merge, autonomy/
+            scheduler, or raw output display. Network isolation for the child
+            process is a pre-acceptance blocker: this ADR cannot be accepted
+            until the acceptance decision fixes how an execution batch proves or
+            enforces that the configured command is offline.
 
 ## Context
 
@@ -64,9 +67,11 @@ mapping its exit code to a typed `VerificationResult`:
 - Execution is **human-gated per run** (an explicit per-action gate, consistent
   with ADR-0003) — never triggered by a scheduler, plan advance, or model.
 - The run is contained: confined to the authorized project workspace root
-  (ADR-0014/0015 project-scoped root), with bounded timeout, bounded
-  output capture, and no inherited ambient secrets beyond what the host shell
-  already provides to the user.
+  (ADR-0014/0015 project-scoped root), with bounded timeout and bounded output
+  capture. It must use an explicit working directory, an explicit env policy,
+  no-shell argv execution unless a later acceptance review justifies otherwise,
+  and a single-run lock. Network isolation/proof is unresolved here and is a
+  blocker for acceptance, not an execution-agent judgment call.
 - The result mapping is typed only: exit code 0 → `passed`, non-zero → `failed`,
   timeout/spawn error → `errored`, not-run → `unknown`. The stored evidence is
   the typed `VerificationEvidence` (ADR-0017) — counts/result/recency — **not**
@@ -78,7 +83,7 @@ mapping its exit code to a typed `VerificationResult`:
 ### 2. What remains forbidden
 
 - `git` (status/diff/commit/push/merge/PR), CI reads, GitHub or any provider
-  API, and any outbound network request (that is ADR-0019).
+  API, and any bridge-initiated outbound network request (that is ADR-0019).
 - Any **arbitrary** shell/exec/run/command endpoint or free-form command input;
   only the pre-declared, opt-in `verifyCommand` may run.
 - Auto-apply/auto-commit/auto-push/auto-merge or any workspace/VCS mutation
@@ -86,6 +91,8 @@ mapping its exit code to a typed `VerificationResult`:
 - Autonomy: no scheduler/daemon/queue/background loop and no model-triggered
   run; every run needs a human gate at the point of execution.
 - Running anything outside the authorized project workspace root.
+- Accepting this ADR before a concrete offline-execution proof is written into
+  the handoff.
 - Surfacing raw stdout/stderr, environment, absolute paths, or `sha256` in any
   read surface.
 - Inferring results from free text (the typed result comes from the exit code,
@@ -95,7 +102,10 @@ mapping its exit code to a typed `VerificationResult`:
 
 In scope (for an accepted `EX-2.13-1`):
 
-- Project-scoped opt-in `verifyCommand` config (additive, default off).
+- Project-scoped opt-in `verifyCommand` config (additive, default off), with the
+  command represented as a structured argv vector plus sanitized label, not as a
+  shell string. A string form may be reconsidered only by the acceptance review
+  and must not silently become a general shell endpoint.
 - A contained executor that runs the configured command with bounded
   timeout/output, under a per-run human gate, within the project root.
 - Exit-code → typed `VerificationResult` mapping stored as ADR-0017 evidence.
@@ -105,7 +115,8 @@ In scope (for an accepted `EX-2.13-1`):
   human-gated "run verification" action, and the resulting typed status. No
   arbitrary input field.
 - Tests proving containment, the per-run gate, fail-closed, redaction, no
-  network/`git`, and no autonomy.
+  bridge-initiated network/`git`, no autonomy, and the offline-execution proof
+  chosen at acceptance.
 
 Out of scope:
 
@@ -119,18 +130,29 @@ Out of scope:
 
 | Prerequisite | ADR-0018 position |
 |---|---|
-| Reversibility | A verification run is read-with-side-effect-free w.r.t. the workspace: it executes a command but performs no bridge-driven write/commit. Any command that itself mutates is the user's own configured choice, gated per run. |
-| Containment | Runs only the pre-declared `verifyCommand`, inside the authorized project root, with bounded timeout and output caps; no path traversal; no network authorized. |
+| Reversibility | A verification run is intended to be read-only from the bridge's perspective, but arbitrary commands may mutate. Acceptance MUST either restrict the configured command to an allowlisted verification profile or document how mutation risk is surfaced to the user before the gate. No bridge-driven write/commit is authorized. |
+| Containment | Runs only the pre-declared structured `verifyCommand`, inside the authorized project root, with bounded timeout/output caps, explicit cwd/env, no-shell argv by default, and single-run locking. Network isolation/proof MUST be specified before acceptance. |
 | Human authority preserved | ADR-0003 gate model holds; each run requires an explicit per-action human gate. No run on plan advance or by a model. |
 | No autonomy | No scheduler/daemon/queue/background/model trigger. |
 | Audit completeness | Each run emits an audit event (actor, project, command label, typed result, timing) with secret/raw-output redaction. |
 | Fail-closed | Missing config, gate denial, timeout, spawn error, or non-project path → no run or aborted run with typed `errored`/`unknown`; no partial side effect surfaced as success. |
 | Opt-in and revocable | `verifyCommand` is opt-in per project and can be disabled; the no-execution flow remains fully functional when off. |
 
-### 5. Open questions the EX handoff/review must resolve
+### 5. Pre-acceptance blockers the next planning review must resolve
 
-- **Executor sandbox**: child-process spawn details, shell vs no-shell, argument
-  vector vs string (prefer no-shell argv to avoid injection), env scrubbing.
+These are not execution-agent design choices. ADR-0018 must not be promoted to
+ACCEPTED until a planning/review batch fixes each item below and carries the
+chosen answers into the `EX-2.13-1` handoff.
+
+- **Executor sandbox**: child-process spawn details, no-shell argv requirement,
+  command allowlist/profile model, env scrubbing, cwd containment, and single-run
+  lock.
+- **Offline proof**: whether network is prevented by sandboxing, prohibited by
+  command allowlist, or verified by source/static checks. This must be resolved
+  before acceptance; otherwise "no network" is not enforceable.
+- **Workspace mutation risk**: whether configured commands are restricted to
+  known read-only test profiles or merely user-gated. This must be explicit in
+  the acceptance decision.
 - **Output handling**: max captured bytes, truncation, where (if anywhere) a
   redacted capture is stored, and confirmation it is never rendered.
 - **Timeout/limits**: default timeout, kill behavior, concurrency lock
@@ -158,8 +180,9 @@ ADR forbade; far too large a blast radius.
 ## Risk Acceptance
 
 - **Execution blast radius**: an arbitrary command could do anything. Mitigation:
-  only a pre-declared opt-in `verifyCommand`, no free-form input, contained to
-  project root, bounded, human-gated, no network.
+  only a pre-declared structured `verifyCommand`, no free-form input, contained
+  to project root, bounded, human-gated, with an offline proof required before
+  acceptance.
 - **Boundary erosion to apply/commit**: a runner invites "also commit it".
   Mitigation: ADR-0007 line explicitly held; no VCS/write authorized; ADR-0019
   is separate.
@@ -185,12 +208,17 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
 1. **ADR-0017 prerequisite met**: a typed result sink exists and is the storage
    target; this ADR populates it from execution.
 2. **No arbitrary command**: only the project-scoped, opt-in, pre-declared
-   `verifyCommand` can run; no free-form shell/exec/run endpoint or input.
+   structured `verifyCommand` can run; no free-form shell/exec/run endpoint or
+   input.
 3. **Per-run human gate**: every execution requires an explicit human gate; no
    plan-advance/scheduler/model trigger.
 4. **Containment**: runs inside the authorized project root only; bounded
-   timeout and output caps; no path traversal; no network.
-5. **No `git`/CI/GitHub/network**: none authorized or present in the change.
+   timeout and output caps; explicit cwd/env; no-shell argv unless separately
+   accepted; no path traversal.
+5. **No `git`/CI/GitHub/provider integration; offline proof**: none authorized
+   or present in bridge code, and the handoff/review includes the accepted proof
+   that configured verification runs cannot become bridge-authorized network
+   activity.
 6. **No write/apply/commit/push/merge**: ADR-0007 line held; verify cannot
    become apply.
 7. **Typed mapping only**: exit code → typed `VerificationResult`; no free-text
@@ -202,13 +230,14 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
 10. **No autonomy**: no scheduler/daemon/queue/background/model trigger.
 11. **Opt-in revocable + backward compatible**: off by default; disabling
     restores the full no-execution flow; existing tests pass.
-12. **Tests**: containment, gate, fail-closed, redaction, no-network/no-`git`,
+12. **Tests**: containment, gate, fail-closed, redaction, offline proof/no-`git`,
     no-autonomy, and typed-mapping behavior.
 
 ## Allowed files (proposed for EX-2.13-1, to be finalized at acceptance)
 
-- `packages/shared/src/types.ts` — additive opt-in `verifyCommand` config on
-  `Project` and any execution-result DTO (reusing ADR-0017 evidence types).
+- `packages/shared/src/types.ts` — additive opt-in structured `verifyCommand`
+  config on `Project` and any execution-result DTO (reusing ADR-0017 evidence
+  types).
 - A new contained executor module under
   `apps/local-server/src/` (e.g. `verification/local-runner.ts`) — spawn,
   timeout, output cap, exit→typed mapping. New file, narrowly scoped.
@@ -225,14 +254,15 @@ outside it requires STOP-and-report.
 ## Handoff prompt sketch (EX-2.13-1)
 
 > Implement only ADR-0018, and only after ADR-0017/`EX-2.12-1` has closed.
-> Add an opt-in, project-scoped `verifyCommand`; a contained executor that runs
-> ONLY that command inside the project root with bounded timeout/output under a
-> per-run human gate; map exit code to the typed `VerificationResult` and store
-> it as ADR-0017 evidence; audit each run with redaction. Do NOT add a free-form
-> shell endpoint, touch `git`/CI/network, write/commit/apply, schedule runs, or
-> render raw output. Run the full verification command set and report containment
-> evidence. One dedicated `EX-2.13-1` commit; do not commit/push until
-> `REVIEW-2.13-1` authorizes.
+> Add an opt-in, project-scoped structured `verifyCommand`; a contained executor
+> that runs ONLY that command inside the project root with bounded timeout/output
+> under a per-run human gate; map exit code to the typed `VerificationResult` and
+> store it as ADR-0017 evidence; audit each run with redaction. Do NOT add a
+> free-form shell endpoint, touch `git`/CI/provider integration, write/commit/
+> apply, schedule runs, or render raw output. Implement the offline-execution
+> proof fixed by the acceptance review. Run the full verification command set and
+> report containment evidence. Prepare one dedicated `EX-2.13-1` diff; do not
+> commit/push until `REVIEW-2.13-1` authorizes the closeout commit.
 
 ## Status / Next
 

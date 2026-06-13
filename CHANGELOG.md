@@ -22,7 +22,14 @@ All notable changes to CLI Bridge are documented here.
   `ACCEPTED-INTENT — DEFERRED` and confer no authorization to write code. No ADR
   is accepted and no implementation is authorized by this planning batch; no
   execution, no `git`/CI/network, no write/apply surface is introduced. Awaits
-  explicit per-ADR / group acceptance before any `EX-2.12-1` handoff.
+  explicit per-ADR / group acceptance before any `EX-2.12-1` handoff. Planning
+  review tightened the bundle further: ADR-0017's no-execution boundary is
+  product/runtime-only (review verification commands remain allowed), ADR-0018
+  cannot be accepted until offline-execution proof, structured command
+  representation, env/cwd policy, and workspace-mutation risk are fixed, and
+  ADR-0019 cannot be accepted until provider scope, exact read endpoints/
+  commands, credential supply, timeout/rate-limit behavior, and redaction proof
+  are fixed.
 - Accepted **ADR-0016 Project Verification Evidence Status Source** (v2.11
   planning), after the verification-notes boundary revision. Authorizes a
   strictly read-only, note-free verification-evidence status summary for the

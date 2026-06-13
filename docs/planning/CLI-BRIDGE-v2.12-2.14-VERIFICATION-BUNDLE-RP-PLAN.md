@@ -45,9 +45,13 @@ closed.
 
 - **ADR-0017** depends on nothing; it is the foundation and can be accepted now.
 - **ADR-0018** must not be accepted or implemented until ADR-0017 is accepted
-  and `EX-2.12-1` has closed through `REVIEW-2.12-1`.
+  and `EX-2.12-1` has closed through `REVIEW-2.12-1`; its own acceptance must
+  also fix the offline-execution proof, structured-command representation, env/
+  cwd policy, and workspace-mutation risk posture.
 - **ADR-0019** must not be accepted or implemented until ADR-0018 is accepted
-  and `EX-2.13-1` has closed through `REVIEW-2.13-1`.
+  and `EX-2.13-1` has closed through `REVIEW-2.13-1`; its own acceptance must
+  also fix provider scope, exact read endpoint(s)/command(s), credential supply,
+  timeout/rate-limit behavior, and redaction proof.
 - Accepting the **group** (one-time) is allowed, but each ADR retains an
   independent status, independent acceptance conditions, and an independent
   ADR-0007 §2 prerequisite review (required for 0018 and 0019). Group acceptance
@@ -79,8 +83,8 @@ continues into the next slice without returning to review.
 | ADR | Handoff doc to author on acceptance | Pre-acceptance gate |
 |---|---|---|
 | 0017 | `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md` | ADR-0017 accepted |
-| 0018 | `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` | ADR-0017 closed + ADR-0018 accepted + ADR-0007 §2 review |
-| 0019 | `CLI-BRIDGE-v2.14-GIT-CI-PROVIDER-HANDOFF.md` | ADR-0018 closed + ADR-0019 accepted + ADR-0007 §2 + credential review |
+| 0018 | `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` | ADR-0017 closed + ADR-0018 accepted + ADR-0007 §2 review + offline-execution proof fixed |
+| 0019 | `CLI-BRIDGE-v2.14-GIT-CI-PROVIDER-HANDOFF.md` | ADR-0018 closed + ADR-0019 accepted + ADR-0007 §2 + credential review + provider scope/redaction proof fixed |
 
 (The handoff docs are authored in a follow-up planning step at each acceptance,
 mirroring the ADR-0016 → v2.11 handoff pattern. They are not pre-written here so
@@ -113,7 +117,8 @@ and does NOT promote every ADR to ACCEPTED:
 - `ACCEPTED-INTENT` confers no authorization to write code and does not satisfy
   any acceptance condition; it only records that the direction is endorsed
   pending the staged gates. Promotion of 0018/0019 to `ACCEPTED` is a separate,
-  explicit senior-review decision recorded in this ledger at its own gate.
+  explicit senior-review decision recorded in this ledger at its own gate, after
+  the unresolved sandbox/provider decisions named in §2 and §4 are fixed.
 - The bundle is never implemented as a single combined batch; the per-ADR EX /
   REVIEW sequence in §3 is binding.
 
@@ -135,5 +140,6 @@ and does NOT promote every ADR to ACCEPTED:
 ## 7. Next action
 
 Open group acceptance for ADR-0017/0018/0019. On acceptance, mark §5, set
-ADR-0017 ACCEPTED, author the v2.12 handoff, and run `EX-2.12-1` → `REVIEW-2.12-1`
-before any further execution.
+ADR-0017 ACCEPTED, author the v2.12 handoff, and run `EX-2.12-1` →
+`REVIEW-2.12-1` before any further execution. Do not author v2.13/v2.14 handoffs
+until their predecessor closeout and pre-acceptance design blockers are resolved.

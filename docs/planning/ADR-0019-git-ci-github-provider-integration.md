@@ -9,10 +9,13 @@ Depends on: ADR-0017 (typed verification result model) and ADR-0018 (local live
 Blocks: none (last member of the bundle)
 Acceptance: NOT YET ACCEPTED. This ADR crosses the long-standing **no network /
             no `git` / no CI / no provider API** boundary. It proposes a
-            strictly **read-only** integration that reads `git` and/or CI/GitHub
-            check status and maps it to the typed `VerificationResult` from
-            ADR-0017. It does NOT authorize any VCS write (commit/push/merge/PR
-            creation), workspace-write, autonomy, or credential persistence.
+            strictly **read-only** integration that reads local `git` metadata
+            and/or CI/GitHub check status and maps it to the typed
+            `VerificationResult` from ADR-0017. It does NOT authorize any VCS
+            write (commit/push/merge/PR creation), workspace-write, autonomy, or
+            credential persistence. Provider scope, credential supply, and
+            redaction proof are pre-acceptance blockers, not execution-batch
+            design choices.
 
 ## Context
 
@@ -55,10 +58,12 @@ to the typed `VerificationResult`:
 
 - **Local `git` read-only status**: read-only inspection (e.g. current
   branch/HEAD, clean/dirty, last-commit metadata) used as context for the typed
-  result. No `git` write of any kind.
+  result. No `git` write of any kind. The accepted handoff must name the exact
+  read commands or library calls; a broad "run git" authorization is not enough.
 - **CI / GitHub check status read**: read-only API calls (e.g. latest CI run or
   PR check conclusion for the project's branch/commit) mapped to typed
-  `passed`/`failed`/`errored`/`unknown`.
+  `passed`/`failed`/`errored`/`unknown`. The accepted handoff must choose the
+  provider(s), endpoint(s), token scope, timeout, and rate-limit behavior.
 - Stored as ADR-0017 typed `VerificationEvidence` (result + recency + sanitized
   provider/check label), **not** raw API payloads, logs, tokens, or URLs with
   secrets.
@@ -118,17 +123,23 @@ Out of scope:
 | Opt-in and revocable | Per-project opt-in, off by default, disableable; offline flow (ADR-0017/0018) remains fully functional when off. |
 | **Credential handling (addendum)** | Tokens supplied per request, **memory-only**, never persisted to store/disk/log/audit, never echoed; scoped to read-only status; documented redaction. |
 
-### 5. Open questions the EX handoff/review must resolve
+### 5. Pre-acceptance blockers the next planning review must resolve
+
+These are not execution-agent design choices. ADR-0019 must not be promoted to
+ACCEPTED until a planning/review batch fixes each item below and carries the
+chosen answers into the `EX-2.14-1` handoff.
 
 - **Provider scope**: `git` local read only, or also remote CI/GitHub? If
   GitHub, which read-only endpoints (checks/status), and minimal token scope.
+  This must be resolved before acceptance; otherwise EX-2.14-1 is not bounded.
 - **Credential supply**: how a read-only token is provided per request and
-  proven non-persistent; behavior when absent (fail-closed `unknown`).
+  proven non-persistent; behavior when absent (fail-closed `unknown`). This
+  must be resolved before acceptance.
 - **Identity mapping**: how a project maps to repo/branch/commit for the status
   query, without trusting arbitrary user-supplied URLs unsafely.
 - **Rate limiting / errors**: backoff, no retry storm, timeout, fail-closed.
 - **Redaction proof**: tests that tokens/URLs/raw payloads never reach store,
-  audit, log, or console.
+  audit, log, or console. This must be resolved before acceptance.
 - **Boundary confirmation**: read-only client cannot be extended into a write
   path (commit/push/PR) within this slice.
 
@@ -173,8 +184,10 @@ manual/typed (ADR-0017); external CI/remote truth remains out of scope.
 
 An `EX-2.14-1` handoff and `REVIEW-2.14-1` closeout MUST verify:
 
-1. **Predecessors closed**: ADR-0017 and ADR-0018 accepted and their EX batches
-   closed; this ADR reuses the typed sink and result-mapping patterns.
+1. **Predecessors closed + provider design fixed**: ADR-0017 and ADR-0018
+   accepted and their EX batches closed; provider scope, exact read endpoints/
+   commands, credential supply, timeout/rate-limit behavior, and redaction proof
+   are fixed before implementation.
 2. **Read-only only**: no `git` write, no commit/push/merge/rebase/tag/branch
    mutation, no PR/MR/review/merge-queue action, anywhere in the change.
 3. **No workspace-write/apply**: ADR-0007 line held.
@@ -199,8 +212,8 @@ An `EX-2.14-1` handoff and `REVIEW-2.14-1` closeout MUST verify:
 - `packages/shared/src/types.ts` — additive opt-in provider config on `Project`
   and any read-only status DTO (reusing ADR-0017 evidence types).
 - A new read-only provider module under `apps/local-server/src/` (e.g.
-  `verification/status-provider.ts`) — `git`-status read and/or CI/GitHub
-  read-only client, with redaction.
+  `verification/status-provider.ts`) — exact local `git` read(s) and/or exact
+  CI/GitHub read-only client fixed by the acceptance review, with redaction.
 - `apps/local-server/src/routes/bridge-api.ts` and/or
   `apps/local-server/src/routes/project-console.ts` — human-triggered fetch
   affordance and typed-result surfacing only.
@@ -214,15 +227,16 @@ outside it requires STOP-and-report.
 ## Handoff prompt sketch (EX-2.14-1)
 
 > Implement only ADR-0019, and only after ADR-0017 and ADR-0018 have closed.
-> Add an opt-in, per-project, read-only verification provider that reads local
-> `git` status and/or remote CI/GitHub check status (human-triggered fetch) and
-> maps the discrete status to the typed `VerificationResult`, stored as ADR-0017
-> evidence with sanitized labels. Handle any token memory-only; never persist,
-> audit, log, or echo it. Do NOT perform any VCS write (commit/push/merge/PR),
-> workspace-write, background polling, or raw-payload display. Run the full
-> verification command set and report read-only/credential-redaction evidence.
-> One dedicated `EX-2.14-1` commit; do not commit/push until `REVIEW-2.14-1`
-> authorizes.
+> Add an opt-in, per-project, read-only verification provider using only the
+> exact local `git` read(s) and/or remote CI/GitHub read-only endpoint(s) fixed
+> by the acceptance review. Fetches are human-triggered and map discrete status
+> to the typed `VerificationResult`, stored as ADR-0017 evidence with sanitized
+> labels. Handle any token memory-only; never persist, audit, log, or echo it.
+> Do NOT perform any VCS write (commit/push/merge/PR), workspace-write,
+> background polling, or raw-payload display. Run the full verification command
+> set and report read-only/credential-redaction evidence. Prepare one dedicated
+> `EX-2.14-1` diff; do not commit/push until `REVIEW-2.14-1` authorizes the
+> closeout commit.
 
 ## Status / Next
 
