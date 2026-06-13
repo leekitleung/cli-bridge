@@ -5,6 +5,20 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- Accepted **ADR-0018 Local Live Verification Execution** after
+  `REVIEW-ADR-0018-b` and drafted
+  `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` for `EX-2.13-1`.
+  The accepted slice authorizes only operator/server-configured verification
+  profiles: structured argv with `shell: false`, project `verifyProfileId`
+  reference, cwd resolved solely from `projectWorkspaceRoots[projectKey]` (no
+  runtime `baselineRoot` fallback), env allowlist, timeout/kill, output cap and
+  discard, per-project single-run lock, typed exit-status mapping into
+  ADR-0017 evidence, redacted audit, and a per-run human gate displaying
+  `networkRisk` and `mutationRisk`. It does NOT authorize project/console/API
+  supplied commands, generic shell/exec/run/command endpoints, raw output
+  display/persistence, `git`/CI/GitHub/provider/network integration,
+  credentials, apply/commit/push/merge, scheduler/model-triggered runs, or
+  ADR-0019. Execution must return to `REVIEW-2.13-1` before closeout.
 - **RP-2.13-b: revised ADR-0018 run root resolution** to close the one
   REVIEW-ADR-0018 blocker. Fixed that a verify run's working directory derives
   ONLY from the operator-configured `projectWorkspaceRoots[projectKey]` trusted
@@ -19,8 +33,8 @@ All notable changes to CLI Bridge are documented here.
   returned/audited/rendered. Updated §1/§2/§3/§4/§5, added acceptance condition
   #15 (run-root resolution with no-root→409, cross-project isolation, traversal
   rejection, audit-without-cwd tests), and the allowed-files/handoff sketch.
-  ADR-0018 stays NOT ACCEPTED; next gate is `REVIEW-ADR-0018-b`. No `EX-2.13-1`
-  handoff and no development execution agent are authorized by this batch.
+  This planning slice did not itself authorize implementation; the follow-up
+  `REVIEW-ADR-0018-b` acceptance and handoff now govern `EX-2.13-1`.
 - **RP-2.13-a: revised ADR-0018 Local Live Verification Execution** from an
   executable-direction draft into a **pre-acceptance design**, resolving the
   prior open blockers into fixed decisions before any acceptance or EX dispatch.
@@ -38,9 +52,8 @@ All notable changes to CLI Bridge are documented here.
   discarded; store only typed result + commandLabel + timing + flags), per-run
   human gate UX with `networkRisk`/`mutationRisk` disclosure, and revised the
   ADR-0007 §2 prerequisite positions and acceptance conditions accordingly.
-  ADR-0017 is closed, so the only remaining gate is `REVIEW-ADR-0018` (ADR-0007
-  §2 prerequisite review). ADR-0018 stays NOT ACCEPTED; no `EX-2.13-1` handoff
-  and no development execution agent are authorized by this batch. ADR-0019
+  ADR-0017 is closed; this planning slice intentionally stopped before
+  acceptance and left ADR-0018 to the later `REVIEW-ADR-0018-b` gate. ADR-0019
   remains PROPOSED — DEFERRED behind ADR-0018 closeout.
 - Accepted **ADR-0017 Typed Verification Result Model** for v2.12 (`EX-2.12-1`
   only) and drafted `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`.

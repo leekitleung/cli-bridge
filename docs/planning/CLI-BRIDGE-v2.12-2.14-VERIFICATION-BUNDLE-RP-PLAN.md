@@ -1,9 +1,9 @@
 # CLI Bridge v2.12–v2.14 — Verification Bundle — RP-2.12 Planning Bundle
 
 **Batch**: `RP-2.12` (review/planning — owned by the reviewing/planning agent)
-**Status**: ADR-0017 ACCEPTED; ADR-0018/ADR-0019 remain PROPOSED — DEFERRED
+**Status**: ADR-0017 and ADR-0018 ACCEPTED; ADR-0019 remains PROPOSED — DEFERRED
 **Date**: 2026-06-13
-**Produces**: ADR-0017 (ACCEPTED), ADR-0018/ADR-0019 (PROPOSED — DEFERRED) +
+**Produces**: ADR-0017 and ADR-0018 (ACCEPTED), ADR-0019 (PROPOSED — DEFERRED) +
 this execution roadmap
 
 This bundle continues the verification line opened by ADR-0016 (v2.11). It
@@ -45,10 +45,10 @@ closed.
 ## 2. Dependency and gating rules
 
 - **ADR-0017** depends on nothing; it is the foundation and can be accepted now.
-- **ADR-0018** must not be accepted or implemented until ADR-0017 is accepted
-  and `EX-2.12-1` has closed through `REVIEW-2.12-1`; its own acceptance must
-  also fix the offline-execution proof, structured-command representation, env/
-  cwd policy, and workspace-mutation risk posture.
+- **ADR-0018** was accepted after ADR-0017 closed through `REVIEW-2.12-1` and
+  after `REVIEW-ADR-0018-b` verified the fixed operator-profile design,
+  network-honesty posture, env/cwd policy, and no-`baselineRoot` verify-run root
+  rule. Implementation is authorized only through `EX-2.13-1`.
 - **ADR-0019** must not be accepted or implemented until ADR-0018 is accepted
   and `EX-2.13-1` has closed through `REVIEW-2.13-1`; its own acceptance must
   also fix provider scope, exact read endpoint(s)/command(s), credential supply,
@@ -68,7 +68,7 @@ closed.
 |---|---|---|---|---|
 | 1 | `EX-2.12-1` | execution | ADR-0017 typed model: types + builder + inert console display + contract + tests | `REVIEW-2.12-1` |
 | 2 | `REVIEW-2.12-1` | reviewing | Verify ADR-0017 acceptance conditions; authorize closeout commit | `RP`/next |
-| 3 | `EX-2.13-1` | execution | ADR-0018 local live execution: opt-in `verifyCommand`, contained runner, exit→typed mapping, audit | `REVIEW-2.13-1` |
+| 3 | `EX-2.13-1` | execution | ADR-0018 local live execution: operator verify profiles, project `verifyProfileId` opt-in, contained runner, human gate, exit→typed mapping, audit | `REVIEW-2.13-1` |
 | 4 | `REVIEW-2.13-1` | reviewing | Verify ADR-0018 acceptance conditions + ADR-0007 §2; authorize closeout | `RP`/next |
 | 5 | `EX-2.14-1` | execution | ADR-0019 read-only `git`/CI/GitHub status → typed result, memory-only creds, audit | `REVIEW-2.14-1` |
 | 6 | `REVIEW-2.14-1` | reviewing | Verify ADR-0019 acceptance conditions + ADR-0007 §2 + credential review | bundle close |
@@ -84,7 +84,7 @@ continues into the next slice without returning to review.
 | ADR | Handoff doc to author on acceptance | Pre-acceptance gate |
 |---|---|---|
 | 0017 | `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md` | ADR-0017 accepted |
-| 0018 | `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` | ADR-0017 closed + ADR-0018 accepted + ADR-0007 §2 review + offline-execution proof fixed |
+| 0018 | `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` | ADR-0017 closed + ADR-0018 accepted + ADR-0007 §2 review + operator-profile/root-resolution design fixed |
 | 0019 | `CLI-BRIDGE-v2.14-GIT-CI-PROVIDER-HANDOFF.md` | ADR-0018 closed + ADR-0019 accepted + ADR-0007 §2 + credential review + provider scope/redaction proof fixed |
 
 (The handoff docs are authored in a follow-up planning step at each acceptance,
@@ -101,7 +101,7 @@ review decision (per the workflow contract).
 | ADR | Capability | Risk | Status | Accepted on | Reviewer |
 |---|---|---|---|---|---|
 | 0017 | Typed verification result model (data + display) | low | ACCEPTED | 2026-06-13 | Senior review |
-| 0018 | Local live verification execution | high (execution) | PROPOSED — DEFERRED | — | — |
+| 0018 | Local live verification execution | high (execution) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0018-b |
 | 0019 | Git/CI/GitHub read-only provider | high (network + creds) | PROPOSED — DEFERRED | — | — |
 
 **Group-acceptance semantics (hard rule).** "Accepting the bundle" is bounded
@@ -140,8 +140,7 @@ and does NOT promote every ADR to ACCEPTED:
 
 ## 7. Next action
 
-Dispatch `EX-2.12-1` to an execution agent using
-`CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`, then return to
-`REVIEW-2.12-1` before any further execution. Do not author v2.13/v2.14 handoffs
-or accept ADR-0018/ADR-0019 until their predecessor closeout and
-pre-acceptance design blockers are resolved.
+Dispatch `EX-2.13-1` to an execution agent using
+`CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md`, then return to
+`REVIEW-2.13-1` before closeout or any further execution. Do not author or start
+v2.14 / ADR-0019 work until ADR-0018 closes through `REVIEW-2.13-1`.

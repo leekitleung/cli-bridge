@@ -1,33 +1,30 @@
 # ADR-0018: Local Live Verification Execution (v2.13 planning)
 
-Status: PROPOSED — PRE-ACCEPTANCE DESIGN FIXED (revised by RP-2.13-a, RP-2.13-b);
-        awaiting `REVIEW-ADR-0018-b` (ADR-0007 §2 prerequisite review)
+Status: ACCEPTED
 
 Date: 2026-06-13 (revised 2026-06-13: RP-2.13-a, then RP-2.13-b)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
 Depends on: ADR-0017 (typed verification result model) — ACCEPTED and CLOSED
             (`EX-2.12-1` / `REVIEW-2.12-1`, commit `cfce284`)
 Blocks: ADR-0019 (Git/CI/GitHub provider integration)
-Acceptance: NOT YET ACCEPTED. This ADR crosses the long-standing **no
-            execution** boundary. RP-2.13-a has converted the prior open
-            blockers into fixed design decisions (§5) so the ADR is now a
-            *pre-acceptance design*, not an executable-direction draft. It
-            proposes running an **operator-configured verification profile**
-            (structured argv, no shell, no project-supplied command) under a
-            per-run human gate, mapping exit status to the typed
-            `VerificationResult` (ADR-0017). It does NOT authorize `git`/CI/
-            GitHub/provider integration (ADR-0019), any free-form command/shell
-            endpoint, auto-apply/commit/push/merge, autonomy/scheduler, or raw
-            output display. **Network honesty**: the bridge initiates no network
-            and adds no network client; it does NOT and cannot claim OS-level
-            network isolation of the spawned child (this repo has no sandbox/
-            container), so each profile carries a `networkRisk` label that the
-            gate must display. **Run root resolution (RP-2.13-b)**: a verify run
-            executes ONLY in the operator-configured
-            `projectWorkspaceRoots[projectKey]` trusted root; if that
-            project-specific root is absent the run is fail-closed (409 /
-            unavailable, no spawn) and MUST NOT fall back to the runtime
-            `baselineRoot`.
+Acceptance: ACCEPTED by REVIEW-ADR-0018-b (2026-06-13) after RP-2.13-a and
+            RP-2.13-b resolved the pre-acceptance blockers. This ADR crosses
+            the long-standing **no execution** boundary, but only for an
+            operator-configured verification profile (structured argv, no
+            shell, no project-supplied command) under a per-run human gate,
+            mapping exit status to the typed `VerificationResult` (ADR-0017).
+            It does NOT authorize `git`/CI/GitHub/provider integration
+            (ADR-0019), any free-form command/shell endpoint, auto-apply/
+            commit/push/merge, autonomy/scheduler, or raw output display.
+            **Network honesty**: the bridge initiates no network and adds no
+            network client; it does NOT and cannot claim OS-level network
+            isolation of the spawned child (this repo has no sandbox/container),
+            so each profile carries a `networkRisk` label that the gate must
+            display. **Run root resolution (RP-2.13-b)**: a verify run executes
+            ONLY in the operator-configured `projectWorkspaceRoots[projectKey]`
+            trusted root; if that project-specific root is absent the run is
+            fail-closed (409 / unavailable, no spawn) and MUST NOT fall back to
+            the runtime `baselineRoot`.
 
 ## Context
 
@@ -58,12 +55,11 @@ authority-boundary decisions, not execution choices. §5 now fixes them.
 
 ### 0. Decision status
 
-**PROPOSED — PRE-ACCEPTANCE DESIGN.** No code and no acceptance yet. ADR-0017 is
-closed (prerequisite met). The remaining gate is an explicit `REVIEW-ADR-0018-b`
-that evaluates the ADR-0007 §2 prerequisites against the now-fixed §5 design and
-returns an accept / revise / reject decision. Only on acceptance is an
-`EX-2.13-1` handoff authored; implementation then runs in `EX-2.13-1` and
-returns to `REVIEW-2.13-1`. Acceptance does not imply acceptance of ADR-0019.
+**ACCEPTED** (2026-06-13). `REVIEW-ADR-0018-b` passed the ADR-0007 §2
+prerequisite review against the fixed RP-2.13-a / RP-2.13-b design. Proceed to
+`CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` for `EX-2.13-1`;
+implementation returns to `REVIEW-2.13-1`. Acceptance does not imply acceptance
+of ADR-0019.
 
 ### 1. What is proposed (operator-configured verification profile)
 
@@ -336,7 +332,7 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
     root → 409 + no spawn, cross-project root isolation, traversal rejection, and
     audit-without-cwd.
 
-## Allowed files (proposed for EX-2.13-1, to be finalized at acceptance)
+## Allowed file families for EX-2.13-1
 
 - `packages/shared/src/types.ts` — additive `VerifyProfile` shape, opt-in
   `verifyProfileId` on `Project`, and any execution-result DTO (reusing ADR-0017
@@ -357,19 +353,21 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
 - `docs/contracts/bridge-projects-api.md`, `CHANGELOG.md`, and the relevant
   `tests/*.mjs` suites.
 
-Exact file list is fixed in the `EX-2.13-1` handoff after acceptance; anything
-outside it requires STOP-and-report.
+The exact file list is fixed in
+`CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md`; anything outside it
+requires STOP-and-report.
 
-## Handoff prompt sketch (EX-2.13-1) — only after acceptance
+## Handoff prompt sketch (EX-2.13-1)
 
-> Implement only ADR-0018 as revised by RP-2.13-a. Add an operator-configured
-> verify-profile allowlist (structured argv, cwd-in-project-root, env allowlist,
-> timeout, output cap, `networkRisk`/`mutationRisk` labels), an opt-in
-> project-level `verifyProfileId` reference (default off), and a contained
-> executor that runs ONLY a referenced profile with `shell: false`, resolving cwd
-> only from `projectWorkspaceRoots[projectKey]` (no `baselineRoot` fallback;
-> missing root → 409 / no spawn), bounded timeout/kill, output cap + discard, and
-> a single-run lock. Map exit status to
+> Implement only ADR-0018 as revised by RP-2.13-a and RP-2.13-b. Add an
+> operator-configured verify-profile allowlist (structured argv,
+> cwd-in-project-root, env allowlist, timeout, output cap,
+> `networkRisk`/`mutationRisk` labels), an opt-in project-level
+> `verifyProfileId` reference (default off), and a contained executor that runs
+> ONLY a referenced profile with `shell: false`, resolving cwd only from
+> `projectWorkspaceRoots[projectKey]` (no `baselineRoot` fallback; missing root
+> → 409 / no spawn), bounded timeout/kill, output cap + discard, and a
+> single-run lock. Map exit status to
 > the typed `VerificationResult` and store typed evidence (label/timing/flags
 > only). Gate every run behind an explicit human confirm that displays the
 > profile label, `networkRisk`, and `mutationRisk`; expose no free-form input.
@@ -381,9 +379,6 @@ outside it requires STOP-and-report.
 
 ## Status / Next
 
-PROPOSED — PRE-ACCEPTANCE DESIGN FIXED. Next is `REVIEW-ADR-0018-b`: an
-ADR-0007 §2 prerequisite review of the §5 decisions (now including the RP-2.13-b
-run-root resolution rule) returning accept / revise / reject. No `EX-2.13-1`
-handoff and no development execution agent may be dispatched before that
-acceptance. ADR-0019 remains PROPOSED — DEFERRED behind ADR-0018 closeout and
-must not start early.
+ACCEPTED. Proceed to `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` for
+`EX-2.13-1`, then return to `REVIEW-2.13-1` before closeout. ADR-0019 remains
+PROPOSED — DEFERRED behind ADR-0018 closeout and must not start early.
