@@ -1,9 +1,9 @@
 # ADR-0018: Local Live Verification Execution (v2.13 planning)
 
-Status: PROPOSED — PRE-ACCEPTANCE DESIGN FIXED (revised by RP-2.13-a);
-        awaiting `REVIEW-ADR-0018` (ADR-0007 §2 prerequisite review)
+Status: PROPOSED — PRE-ACCEPTANCE DESIGN FIXED (revised by RP-2.13-a, RP-2.13-b);
+        awaiting `REVIEW-ADR-0018-b` (ADR-0007 §2 prerequisite review)
 
-Date: 2026-06-13 (revised 2026-06-13, RP-2.13-a)
+Date: 2026-06-13 (revised 2026-06-13: RP-2.13-a, then RP-2.13-b)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
 Depends on: ADR-0017 (typed verification result model) — ACCEPTED and CLOSED
             (`EX-2.12-1` / `REVIEW-2.12-1`, commit `cfce284`)
@@ -22,7 +22,12 @@ Acceptance: NOT YET ACCEPTED. This ADR crosses the long-standing **no
             and adds no network client; it does NOT and cannot claim OS-level
             network isolation of the spawned child (this repo has no sandbox/
             container), so each profile carries a `networkRisk` label that the
-            gate must display.
+            gate must display. **Run root resolution (RP-2.13-b)**: a verify run
+            executes ONLY in the operator-configured
+            `projectWorkspaceRoots[projectKey]` trusted root; if that
+            project-specific root is absent the run is fail-closed (409 /
+            unavailable, no spawn) and MUST NOT fall back to the runtime
+            `baselineRoot`.
 
 ## Context
 
@@ -54,7 +59,7 @@ authority-boundary decisions, not execution choices. §5 now fixes them.
 ### 0. Decision status
 
 **PROPOSED — PRE-ACCEPTANCE DESIGN.** No code and no acceptance yet. ADR-0017 is
-closed (prerequisite met). The remaining gate is an explicit `REVIEW-ADR-0018`
+closed (prerequisite met). The remaining gate is an explicit `REVIEW-ADR-0018-b`
 that evaluates the ADR-0007 §2 prerequisites against the now-fixed §5 design and
 returns an accept / revise / reject decision. Only on acceptance is an
 `EX-2.13-1` handoff authored; implementation then runs in `EX-2.13-1` and
@@ -89,6 +94,19 @@ configured out-of-band.
   allowlisted `verifyProfileId` (additive, default off, mirroring the
   `workspaceApplyEnabled` opt-in posture). The project record stores only the
   referenced id, never argv/env/cwd.
+- **Run root resolution by project-specific root only (no fallback)**: the verify
+  run's working directory is derived ONLY from the operator-configured
+  `projectWorkspaceRoots[projectKey]` trusted root (ADR-0014, "never set by
+  HTTP"). If that project-specific root is absent, the run endpoint is
+  **fail-closed** (HTTP 409 / unavailable) and **no process is spawned**. It MUST
+  NOT fall back to the runtime `baselineRoot` — unlike
+  `resolveBaselineRootForProject(projectKey)` used for read-only baseline
+  capture, which is permitted to fall back. Rationale: local execution has a
+  materially higher blast radius than baseline capture, so a runtime-wide
+  fallback root must never be silently promoted into an executable cwd. The
+  profile `cwdPolicy` then resolves to a subdirectory strictly within that
+  project-specific root (no traversal/escape), and runs of one project's profile
+  never execute in another project's root.
 - **Human-gated per run**: an explicit per-action gate (consistent with
   ADR-0003). The gate displays the profile `label`, `networkRisk`, and
   `mutationRisk` before the human confirms. Never triggered by a scheduler, plan
@@ -117,6 +135,9 @@ configured out-of-band.
 - Autonomy: no scheduler/daemon/queue/background loop and no model-triggered
   run; every run needs a human gate at the point of execution.
 - Running anything outside the authorized project workspace root.
+- Falling back to the runtime `baselineRoot` (or any non-project-specific root)
+  for a verify run, or spawning at all when `projectWorkspaceRoots[projectKey]`
+  is absent.
 - Persisting or rendering raw stdout/stderr, environment, absolute paths, or
   `sha256`.
 - Inferring results from free text (the typed result comes from exit status, not
@@ -133,8 +154,10 @@ In scope (for an accepted `EX-2.13-1`):
   policy, env allowlist, timeout, output cap, `networkRisk`/`mutationRisk`
   labels); not editable via any bridge endpoint/console.
 - Additive opt-in `verifyProfileId` reference on the project (default off).
-- A contained executor (`shell: false`, explicit cwd within project root, env
-  allowlist, bounded timeout with kill, output cap + discard, single-run lock).
+- A contained executor (`shell: false`, explicit cwd resolved within the
+  project-specific `projectWorkspaceRoots[projectKey]` root with no `baselineRoot`
+  fallback, env allowlist, bounded timeout with kill, output cap + discard,
+  single-run lock).
 - Exit-status → typed `VerificationResult` mapping stored as ADR-0017 evidence
   (label/timing/flags only).
 - Per-run human gate UX that displays label + `networkRisk` + `mutationRisk`,
@@ -142,9 +165,12 @@ In scope (for an accepted `EX-2.13-1`):
 - Audit event per run (actor, project, profile label, typed result, timing) with
   redaction; no raw output.
 - Tests for: profile-only execution, no project/console command path, `shell:
-  false`, cwd containment, env allowlist, single-run lock, timeout/kill,
-  fail-closed, no-raw-output, no bridge-initiated network/`git`, no autonomy,
-  typed mapping, and gate risk-label display.
+  false`, run-root resolution (project-specific root only; missing root → 409 /
+  no spawn; one project's profile cannot run in another project's root), cwd
+  containment + traversal rejection, env allowlist, single-run lock,
+  timeout/kill, fail-closed, no-raw-output, no bridge-initiated network/`git`, no
+  autonomy, typed mapping, gate risk-label display, and audit excluding absolute
+  cwd.
 
 Out of scope:
 
@@ -160,7 +186,7 @@ Out of scope:
 | Prerequisite | ADR-0018 position |
 |---|---|
 | Reversibility | The bridge performs no write/commit. A profiled command may itself mutate the workspace; this is bounded by the operator's profile choice and surfaced via `mutationRisk` at the gate. The bridge neither auto-cleans nor claims reversibility it cannot provide; `read-only` profiles are the recommended default. |
-| Containment | Operator-configured profiles only; `shell: false` structured argv; cwd resolved within the project root; env allowlist (no blanket inheritance); bounded timeout + kill; output cap + discard; single-run lock. No project/console-supplied command. |
+| Containment | Operator-configured profiles only; `shell: false` structured argv; cwd resolved **only** within the project-specific `projectWorkspaceRoots[projectKey]` root (no `baselineRoot` fallback; absent root → 409 / no spawn); env allowlist (no blanket inheritance); bounded timeout + kill; output cap + discard; single-run lock. No project/console-supplied command. |
 | Human authority preserved | ADR-0003 gate holds; each run needs an explicit per-action human confirm that displays `networkRisk` and `mutationRisk`. No plan-advance/model trigger. |
 | No autonomy | No scheduler/daemon/queue/background/model trigger. |
 | Audit completeness | Each run emits an audit event (actor, project, profile label, typed result, timing) with redaction; no raw output. |
@@ -168,10 +194,21 @@ Out of scope:
 | Opt-in and revocable | `verifyProfileId` is opt-in per project, default off, and removable; the no-execution flow remains fully functional when off. |
 | Network honesty (addendum) | The bridge initiates no network and adds no network client (enforceable/testable). It does NOT claim OS-level isolation of the child; `networkRisk` is a declared label shown at the gate. True offline enforcement requires an OS/container sandbox absent from this repo and is a separate future ADR. |
 
-### 5. Resolved pre-acceptance design decisions (RP-2.13-a)
+### 5. Resolved pre-acceptance design decisions (RP-2.13-a, RP-2.13-b)
 
-The previously-open blockers are now fixed. `REVIEW-ADR-0018` evaluates these;
+The previously-open blockers are now fixed. `REVIEW-ADR-0018-b` evaluates these;
 it does not re-delegate them to the execution agent.
+
+- **Run root resolution — FIXED (RP-2.13-b)**: the verify run's cwd derives ONLY
+  from the operator-configured `projectWorkspaceRoots[projectKey]` trusted root.
+  If that project-specific root is absent, the run endpoint is fail-closed (HTTP
+  409 / unavailable) and no process is spawned; it MUST NOT fall back to the
+  runtime `baselineRoot`. (Baseline capture's `resolveBaselineRootForProject`
+  fallback is deliberately NOT reused for execution.) The profile `cwdPolicy`
+  resolves to a subdirectory strictly inside that root with traversal rejected,
+  and a profile bound to project A can never execute in project B's root. The
+  absolute cwd is never returned, audited, or rendered (only opaque
+  project/profile identifiers).
 
 - **Executor model — FIXED**: operator-configured verify-profile allowlist;
   `shell: false` structured argv; explicit cwd within project root; env
@@ -288,7 +325,16 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
     `verifyProfileId` restores the full no-execution flow; existing tests pass.
 14. **Tests**: profile-only/no-defined-command, `shell: false`, gate risk
     display, cwd/env containment, single-run lock, timeout/kill, fail-closed,
-    no-raw-output, no bridge network/`git`, no-autonomy, and typed mapping.
+    no-raw-output, no bridge network/`git`, no-autonomy, typed mapping, and the
+    run-root tests in #15.
+15. **Run root resolution (no fallback)**: the run cwd derives only from
+    `projectWorkspaceRoots[projectKey]`; a missing project-specific root returns
+    409 / unavailable with no runner invoked and no `baselineRoot` fallback; a
+    profile of project B cannot run in project A's root; configured/`cwdPolicy`
+    subpath traversal is rejected; and the run response/audit/console expose only
+    opaque project/profile/timing, never the absolute cwd. Tests cover: missing
+    root → 409 + no spawn, cross-project root isolation, traversal rejection, and
+    audit-without-cwd.
 
 ## Allowed files (proposed for EX-2.13-1, to be finalized at acceptance)
 
@@ -298,8 +344,10 @@ An `EX-2.13-1` handoff and `REVIEW-2.13-1` closeout MUST verify:
 - `packages/shared/src/schemas.ts` — validation for `verifyProfileId` reference
   and profile shape; reject project/console-supplied argv/cwd/env/command.
 - A new contained executor module under `apps/local-server/src/` (e.g.
-  `verification/profile-runner.ts`) — `shell:false` spawn, cwd/env containment,
-  timeout/kill, output cap + discard, exit→typed mapping, single-run lock.
+  `verification/profile-runner.ts`) — `shell:false` spawn, project-specific root
+  resolution (no `baselineRoot` fallback; absent → 409/no spawn), cwd/env
+  containment, timeout/kill, output cap + discard, exit→typed mapping, single-run
+  lock.
 - Operator profile configuration loading (server/operator config source only,
   not a bridge-editable surface).
 - `apps/local-server/src/routes/bridge-api.ts` and/or
@@ -318,8 +366,10 @@ outside it requires STOP-and-report.
 > verify-profile allowlist (structured argv, cwd-in-project-root, env allowlist,
 > timeout, output cap, `networkRisk`/`mutationRisk` labels), an opt-in
 > project-level `verifyProfileId` reference (default off), and a contained
-> executor that runs ONLY a referenced profile with `shell: false`, bounded
-> timeout/kill, output cap + discard, and a single-run lock. Map exit status to
+> executor that runs ONLY a referenced profile with `shell: false`, resolving cwd
+> only from `projectWorkspaceRoots[projectKey]` (no `baselineRoot` fallback;
+> missing root → 409 / no spawn), bounded timeout/kill, output cap + discard, and
+> a single-run lock. Map exit status to
 > the typed `VerificationResult` and store typed evidence (label/timing/flags
 > only). Gate every run behind an explicit human confirm that displays the
 > profile label, `networkRisk`, and `mutationRisk`; expose no free-form input.
@@ -331,8 +381,9 @@ outside it requires STOP-and-report.
 
 ## Status / Next
 
-PROPOSED — PRE-ACCEPTANCE DESIGN FIXED. Next is `REVIEW-ADR-0018`: an ADR-0007
-§2 prerequisite review of the §5 decisions returning accept / revise / reject.
-No `EX-2.13-1` handoff and no development execution agent may be dispatched
-before that acceptance. ADR-0019 remains PROPOSED — DEFERRED behind ADR-0018
-closeout and must not start early.
+PROPOSED — PRE-ACCEPTANCE DESIGN FIXED. Next is `REVIEW-ADR-0018-b`: an
+ADR-0007 §2 prerequisite review of the §5 decisions (now including the RP-2.13-b
+run-root resolution rule) returning accept / revise / reject. No `EX-2.13-1`
+handoff and no development execution agent may be dispatched before that
+acceptance. ADR-0019 remains PROPOSED — DEFERRED behind ADR-0018 closeout and
+must not start early.

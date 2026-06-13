@@ -5,6 +5,22 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **RP-2.13-b: revised ADR-0018 run root resolution** to close the one
+  REVIEW-ADR-0018 blocker. Fixed that a verify run's working directory derives
+  ONLY from the operator-configured `projectWorkspaceRoots[projectKey]` trusted
+  root: if the project-specific root is absent the run endpoint is fail-closed
+  (HTTP 409 / unavailable) with no process spawned, and it MUST NOT fall back to
+  the runtime `baselineRoot` (unlike read-only baseline capture's
+  `resolveBaselineRootForProject`, which may fall back) — local execution has a
+  higher blast radius than baseline capture, so a runtime-wide fallback root must
+  never be silently promoted into an executable cwd. Profile `cwdPolicy` resolves
+  to a subdirectory strictly within that root (traversal rejected); one project's
+  profile can never run in another's root; and the absolute cwd is never
+  returned/audited/rendered. Updated §1/§2/§3/§4/§5, added acceptance condition
+  #15 (run-root resolution with no-root→409, cross-project isolation, traversal
+  rejection, audit-without-cwd tests), and the allowed-files/handoff sketch.
+  ADR-0018 stays NOT ACCEPTED; next gate is `REVIEW-ADR-0018-b`. No `EX-2.13-1`
+  handoff and no development execution agent are authorized by this batch.
 - **RP-2.13-a: revised ADR-0018 Local Live Verification Execution** from an
   executable-direction draft into a **pre-acceptance design**, resolving the
   prior open blockers into fixed decisions before any acceptance or EX dispatch.
