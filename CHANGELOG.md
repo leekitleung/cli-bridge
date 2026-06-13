@@ -5,6 +5,24 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **RP-2.12 Verification Bundle planning** completed. Drafted three PROPOSED
+  ADRs and an execution roadmap continuing the verification line after ADR-0016
+  (v2.11): **ADR-0017 Typed Verification Result Model** (data + inert display
+  only; the typed, non-free-text sink ADR-0016 §3 required; no execution, no
+  network), **ADR-0018 Local Live Verification Execution** (Alternative C:
+  bounded, opt-in, human-gated local `verifyCommand`, exit code → typed result;
+  PROPOSED — DEFERRED behind ADR-0017 closeout + an ADR-0007 §2 review), and
+  **ADR-0019 Git/CI/GitHub Verification Provider Integration** (Alternative D:
+  read-only `git`/CI/GitHub status → typed result, memory-only credentials;
+  PROPOSED — DEFERRED behind ADR-0018 closeout + ADR-0007 §2 + credential
+  review). Added `CLI-BRIDGE-v2.12-2.14-VERIFICATION-BUNDLE-RP-PLAN.md` with the
+  dependency chain (0017 → 0018 → 0019), the `EX`/`REVIEW` batch sequence, and a
+  hardened group-acceptance ledger: only ADR-0017 may be promoted to ACCEPTED on
+  group acceptance; ADR-0018/0019 may at most be recorded as
+  `ACCEPTED-INTENT — DEFERRED` and confer no authorization to write code. No ADR
+  is accepted and no implementation is authorized by this planning batch; no
+  execution, no `git`/CI/network, no write/apply surface is introduced. Awaits
+  explicit per-ADR / group acceptance before any `EX-2.12-1` handoff.
 - Accepted **ADR-0016 Project Verification Evidence Status Source** (v2.11
   planning), after the verification-notes boundary revision. Authorizes a
   strictly read-only, note-free verification-evidence status summary for the
