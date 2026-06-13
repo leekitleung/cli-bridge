@@ -5,6 +5,19 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- Drafted **ADR-0015 Project-scoped Opaque `rootRef` Naming** as PROPOSED
+  (v2.10 planning). Proposes allowing `baselineManifest.rootRef` to change from
+  the single constant `"runtime-baseline-root"` to a project-scoped opaque
+  reference (`project-root:<projectKey>`) for project-specific baseline-capture
+  roots, while the runtime-wide fallback keeps `"runtime-baseline-root"`. The
+  value is derived from the already-public `projectKey`, never from a filesystem
+  path. It unfreezes only the `rootRef` value/format frozen by ADR-0014 and
+  authorizes no implementation. It does NOT expose absolute paths, baseline
+  entries, `sha256`, raw content, or diff; adds no endpoint or console
+  capability; adds no root editing UI, project-record root field, or root
+  persistence; and does not touch main-tree writes, `git`/VCS, or
+  apply-from-preview. Awaits explicit accept/reject/revise before any
+  `EX-2.10-1` handoff.
 - Added repository agent workflow governance docs: `AGENTS.md` for hard batch
   rules and `docs/planning/CLI-BRIDGE-AGENT-WORKFLOW.md` for the RP/EX/REVIEW
   process.
