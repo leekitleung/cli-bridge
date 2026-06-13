@@ -136,16 +136,24 @@ All notable changes to CLI Bridge are documented here.
   absent-baseline render behavior, rootRef opaque/no-absolute-path assertions,
   GET-only viewer behavior, tests, verification commands, and closeout
   checklist.
-- Drafted **ADR-0014 Project-level Workspace Root Configuration** as PROPOSED
-  (v2.9 planning). Proposes a server/operator-controlled `projectKey -> trusted
-  workspace root` mapping for ADR-0010 baseline capture root selection, while
-  keeping root authority out of HTTP request bodies, project PATCH, console
-  input, model output, artifact data, responses, audit, and snapshots. It
-  keeps the existing `rootRef`/manifest/console response surface unchanged. It
-  authorizes no implementation and does NOT authorize baseline preview, raw
-  content persistence, diff/diff-like views, `sha256` exposure, main-tree
-  writes, `git`/VCS, apply-from-preview, root editing UI, or persisted absolute
-  roots. Awaits explicit accept/reject/revise before any `EX-2.9-1` handoff.
+- Accepted **ADR-0014 Project-level Workspace Root Configuration** (v2.9
+  planning), after a bounded `rootRef` boundary revision. Authorizes a
+  server/operator-controlled `projectKey -> trusted workspace root` mapping for
+  ADR-0010 baseline capture root selection, while keeping root authority out of
+  HTTP request bodies, project PATCH, console input, model output, artifact
+  data, responses, audit, and snapshots. It keeps the existing
+  `rootRef`/manifest/console response surface unchanged. It does NOT authorize
+  baseline preview, raw content persistence, diff/diff-like views, `sha256`
+  exposure, main-tree writes, `git`/VCS, apply-from-preview, root editing UI, or
+  persisted absolute roots. Implementation is gated behind the `EX-2.9-1`
+  handoff.
+- Drafted **v2.9 Project-level Workspace Root Resolution Handoff** (AUTHORIZED
+  for `EX-2.9-1`). Bounds implementation to server/operator `projectKey ->
+  trusted root` resolution for ADR-0010 baseline capture, fixed resolution
+  order (project root -> runtime `baselineRoot` -> fail-closed), required
+  boundary tests, verification commands, and closeout checklist. Keeps
+  `rootRef`/manifest/console response surface unchanged; no new endpoint, no
+  snapshot persistence, no project PATCH root field.
 - Drafted **v2.5 Read-only Apply-result Presentation Implementation Handoff**
   (AUTHORIZED for `EX-2.5-3`). Defines three strictly read-only endpoints under
   the existing apply surface — apply manifest, isolated-dir file list (path +

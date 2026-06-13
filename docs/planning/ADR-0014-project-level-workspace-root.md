@@ -1,8 +1,17 @@
 # ADR-0014: Project-level Workspace Root Configuration (v2.9 planning)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-13
+Acceptance: Senior review passed (2026-06-13) after a bounded revision that
+            fixed the `rootRef` boundary. Accepted with conditions on the
+            `EX-2.9-1` implementation handoff (see "Acceptance Conditions").
+            This authorizes only a server/operator-controlled `projectKey ->
+            trusted workspace root` resolution for ADR-0010 baseline capture.
+            It does NOT change the `rootRef`/manifest/console response surface,
+            and does NOT authorize baseline preview, diff, raw content, hash
+            exposure, main-tree writes, `git`/VCS, apply-from-preview, root
+            editing UI, request-supplied roots, or persisted absolute roots.
 
 ## Context
 
@@ -37,9 +46,11 @@ request-supplied filesystem roots.
 
 ### 0. Decision status
 
-**PROPOSED**. This ADR authorizes no implementation. It records a candidate
-decision for review. No code may be written until this ADR is explicitly
-accepted and a separate `EX-2.9-1` implementation handoff is created.
+**ACCEPTED** (2026-06-13). Senior review passed after the bounded `rootRef`
+boundary revision. This decision authorizes the scope in §1-§6 and the
+"Acceptance Conditions" only. No code may be written until the `EX-2.9-1`
+implementation handoff is created; implementation proceeds in an `EX-*` batch
+and returns to a `REVIEW-2.9-1` batch for closeout.
 
 ### 1. Whether project-level workspace roots are allowed
 
@@ -277,13 +288,14 @@ An `EX-2.9-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED. Await explicit accept/reject/revise decision.
+ACCEPTED (2026-06-13). Proceed to the implementation handoff.
 
-If accepted:
+Next:
 
-1. Draft `CLI-BRIDGE-v2.9-PROJECT-WORKSPACE-ROOT-HANDOFF.md` for `EX-2.9-1`.
+1. Author `CLI-BRIDGE-v2.9-PROJECT-WORKSPACE-ROOT-HANDOFF.md` for `EX-2.9-1`.
 2. Keep implementation bounded to runtime/server project root resolution,
    baseline capture integration, tests, docs, and changelog.
 3. Baseline preview, raw content, diff/diff-like views, hash exposure,
-   main-tree writes, `git`/VCS, apply-from-preview, root editing UI, and
-   persisted absolute roots remain deferred and require separate ADRs.
+   main-tree writes, `git`/VCS, apply-from-preview, root editing UI, persisted
+   absolute roots, and any `rootRef`/manifest/console response-surface change
+   remain deferred and require separate ADRs.
