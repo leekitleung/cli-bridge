@@ -568,6 +568,15 @@ function renderStatusPanel() {
     if (typeof verSummary.doneStepCount === 'number' && typeof verSummary.totalStepCount === 'number') {
       parts.push('<span>' + escapeHtml(String(verSummary.doneStepCount)) + ' / ' + escapeHtml(String(verSummary.totalStepCount)) + ' steps done</span>');
     }
+    const resultCounts = verSummary.resultCounts;
+    if (resultCounts && typeof resultCounts === 'object') {
+      const labels = ['passed', 'failed', 'skipped', 'errored', 'unknown'];
+      const typed = labels
+        .map(label => [label, resultCounts[label]])
+        .filter(pair => typeof pair[1] === 'number' && Number.isFinite(pair[1]) && pair[1] > 0)
+        .map(pair => escapeHtml(pair[0]) + ': ' + escapeHtml(String(pair[1])));
+      if (typed.length) parts.push('<span>typed: ' + typed.join(', ') + '</span>');
+    }
     $('status-verification').innerHTML = parts.join(' · ');
   } else {
     $('status-verification').innerHTML = '<span class="unavailable">not yet available</span>';
@@ -753,9 +762,10 @@ function renderSectionView() {
     const verView = store.cache.verification;
     html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {
-      html += '<table><thead><tr><th>step #</th><th>intent</th><th>harness</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>step #</th><th>intent</th><th>result</th><th>harness</th></tr></thead><tbody>';
       verView.records.forEach(r => {
-        html += '<tr><td>' + (r.stepIndex != null ? r.stepIndex : '-') + '</td><td>' + escapeHtml(r.stepIntent || '') + '</td><td><span class="unavailable">' + escapeHtml(r.harnessStatus) + '</span></td></tr>';
+        const result = r.result ? '<span class="pill">' + escapeHtml(r.result) + '</span>' : '<span class="unavailable">unknown</span>';
+        html += '<tr><td>' + (r.stepIndex != null ? r.stepIndex : '-') + '</td><td>' + escapeHtml(r.stepIntent || '') + '</td><td>' + result + '</td><td><span class="unavailable">' + escapeHtml(r.harnessStatus) + '</span></td></tr>';
       });
       html += '</tbody></table>';
     } else {

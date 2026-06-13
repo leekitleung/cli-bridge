@@ -572,6 +572,25 @@ export interface HarnessVerificationRecord {
   stepId?: string; stepIndex?: number; stepIntent?: string;
   stepStatus?: string; harnessStatus: string;
   notes?: string; teamId?: string; slotId?: string; createdAt?: number;
+  result?: VerificationResult;
+  verificationEvidence?: VerificationEvidence;
+}
+
+export const VERIFICATION_RESULTS = [
+  'passed',
+  'failed',
+  'skipped',
+  'errored',
+  'unknown',
+] as const;
+
+export type VerificationResult = typeof VERIFICATION_RESULTS[number];
+
+export interface VerificationEvidence {
+  result: VerificationResult;
+  /** Sanitized label only, never a raw command line or output. */
+  commandLabel?: string;
+  recordedAt?: number;
 }
 
 export interface VerificationStatusSummary {
@@ -579,6 +598,7 @@ export interface VerificationStatusSummary {
   lastRecordedAt?: number;
   doneStepCount: number;
   totalStepCount: number;
+  resultCounts?: Record<VerificationResult, number>;
 }
 
 export interface HarnessVerificationView {
@@ -677,6 +697,7 @@ export interface SlotArtifact {
   summary: string;
   proposedFiles: string[];
   verificationNotes?: string;
+  verificationEvidence?: VerificationEvidence;
   rawProviderOutput?: string;
   outputRedacted: boolean;
   createdAt: number;

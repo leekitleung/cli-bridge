@@ -15,6 +15,7 @@ import {
   PLAN_STEP_STATUSES,
   PLAN_STEP_KINDS,
   EXECUTION_TIERS,
+  VERIFICATION_RESULTS,
   type AgentEndpoint,
   type AgentReviewRequest,
   type AgentReviewResult,
@@ -630,7 +631,7 @@ export function validateWorkBuddyExecutionLedgerEvent(value: unknown): SchemaVal
 const TEAMSPEC_ALLOWED_FIELDS: Record<string, string[]> = {
   team: ['id', 'projectId', 'goalId', 'planId', 'logicalSlots', 'maxConcurrentBridgeSlots', 'mode', 'isolation', 'provider', 'endpointId', 'policyRequirements', 'status', 'currentSlotIndex', 'createdAt', 'updatedAt', 'approvedAt'],
   slot: ['id', 'role', 'stepIndex', 'tier', 'isolation', 'providerId', 'endpointId', 'status'],
-  artifact: ['teamId', 'slotId', 'planStepId', 'providerId', 'endpointId', 'bridgeRunId', 'externalSessionId', 'summary', 'proposedFiles', 'verificationNotes', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
+  artifact: ['teamId', 'slotId', 'planStepId', 'providerId', 'endpointId', 'bridgeRunId', 'externalSessionId', 'summary', 'proposedFiles', 'verificationNotes', 'verificationEvidence', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
 };
 
 export interface TeamSpecValidationResult { ok: boolean; errors: string[]; }
@@ -700,9 +701,43 @@ export function validateSlotArtifact(value: Record<string, unknown>): TeamSpecVa
   if (value.externalSessionId !== undefined && (typeof value.externalSessionId !== 'string' || value.externalSessionId.trim().length === 0)) errors.push('externalSessionId must be a non-empty string when present');
   requireNonEmptyString(value, 'summary', errors);
   if (!Array.isArray(value.proposedFiles)) errors.push('proposedFiles must be an array');
+  if (value.verificationEvidence !== undefined) {
+    validateVerificationEvidence(value.verificationEvidence, errors);
+  }
   if (typeof value.outputRedacted !== 'boolean') errors.push('outputRedacted must be a boolean');
   if (typeof value.createdAt !== 'number') errors.push('createdAt must be a number');
   return errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
+}
+
+function validateVerificationEvidence(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push('verificationEvidence must be an object');
+    return;
+  }
+
+  const allowed = new Set(['result', 'commandLabel', 'recordedAt']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      errors.push(`verificationEvidence.${key} must not be present`);
+    }
+  }
+
+  if (!isOneOf(value.result, VERIFICATION_RESULTS)) {
+    errors.push('verificationEvidence.result is invalid');
+  }
+
+  if (value.commandLabel !== undefined) {
+    if (typeof value.commandLabel !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/.test(value.commandLabel)) {
+      errors.push('verificationEvidence.commandLabel must be a sanitized label');
+    }
+  }
+
+  if (
+    value.recordedAt !== undefined &&
+    (typeof value.recordedAt !== 'number' || !Number.isFinite(value.recordedAt))
+  ) {
+    errors.push('verificationEvidence.recordedAt must be a finite number');
+  }
 }
 
 export function detectFileConflicts(artifacts: Array<{ slotId: string; proposedFiles: string[]; providerId?: string }>): { clean: boolean; conflicts: Array<{ path: string; slotA: string; slotB: string; providerA?: string; providerB?: string }> } {

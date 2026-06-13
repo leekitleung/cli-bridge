@@ -794,6 +794,65 @@ test('POST /teams/:teamId/artifacts records a valid artifact', async () => {
   assert.equal(artifacts.length, 1);
 });
 
+test('v2.12: POST /teams/:teamId/artifacts records explicit typed verification evidence', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-art-typed', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'verifier', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-art-typed/approve');
+
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-art-typed/artifacts', {
+    slotId: 's0',
+    summary: 'Typed verification recorded',
+    proposedFiles: ['src/auth.ts'],
+    verificationEvidence: { result: 'failed', commandLabel: 'unit-tests', recordedAt: 201 },
+    outputRedacted: true,
+    createdAt: 200,
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.deepEqual(res.payload.artifact.verificationEvidence, {
+    result: 'failed',
+    commandLabel: 'unit-tests',
+    recordedAt: 201,
+  });
+  assert.equal(res.payload.artifact.verificationNotes, undefined);
+});
+
+test('v2.12: POST /teams/:teamId/artifacts rejects malformed typed verification evidence', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const g = await seedApprovedGoalPlan(runtime, 'alpha');
+  if (!g) { assert.fail('seed failed'); return; }
+
+  await call(runtime, 'POST', TEAMS('alpha'), {
+    action: 'create', id: 't-art-typed-bad', goalId: g.goalId, planId: g.planId,
+    logicalSlots: [{ id: 's0', role: 'verifier', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
+    provider: 'claude', endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', TEAMS('alpha') + '/t-art-typed-bad/approve');
+
+  const res = await call(runtime, 'POST', TEAMS('alpha') + '/t-art-typed-bad/artifacts', {
+    slotId: 's0',
+    summary: 'Bad typed verification',
+    proposedFiles: ['src/auth.ts'],
+    verificationEvidence: { result: 'maybe', commandLabel: 'npm test', output: 'raw output' },
+    outputRedacted: true,
+    createdAt: 200,
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(runtime.teamStore.listArtifacts('t-art-typed-bad').length, 0);
+});
+
 test('multi-provider: artifact records slot provider and rejects unredacted partial raw output', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });

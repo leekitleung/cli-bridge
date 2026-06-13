@@ -542,6 +542,101 @@ test('v2.11: malformed verification summary fails closed and does not render not
   assert.equal(panel.innerHTML.includes('npm test passed'), false, 'raw notes not rendered on fail-closed path');
 });
 
+test('v2.12: verification status panel renders typed result counts without raw notes', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, returning: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      summary: {
+        evidenceCount: 2,
+        lastRecordedAt: 900,
+        doneStepCount: 1,
+        totalStepCount: 2,
+        resultCounts: { passed: 1, failed: 1, skipped: 0, errored: 0, unknown: 0 },
+      },
+      records: [
+        { harnessStatus: 'recorded', result: 'passed', notes: 'npm test passed', createdAt: 900 },
+      ],
+    },
+  });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const panel = document.getElementById('status-verification');
+  assert.ok(panel.innerHTML.includes('2 evidence records'), 'evidence count rendered');
+  assert.ok(panel.innerHTML.includes('typed: passed: 1, failed: 1'), 'typed counts rendered');
+  assert.equal(panel.innerHTML.includes('npm test passed'), false, 'raw notes not rendered');
+  assert.equal(panel.innerHTML.includes('sha256'), false, 'no hash displayed');
+  assert.equal(panel.querySelector('button'), null, 'no run/write button in status panel');
+
+  const verificationCalls = fetchCalls.filter(c => c.path.endsWith('/verification'));
+  assert.equal(verificationCalls.length, 1, 'uses existing verification fetch only');
+  assert.equal(verificationCalls[0].method, 'GET');
+});
+
+test('v2.12: verification tab renders typed result inertly and adds no execution affordance', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, returning: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      summary: {
+        evidenceCount: 1,
+        doneStepCount: 1,
+        totalStepCount: 2,
+        resultCounts: { passed: 0, failed: 0, skipped: 1, errored: 0, unknown: 0 },
+      },
+      records: [
+        {
+          stepIndex: 1,
+          stepIntent: 'Verify task',
+          harnessStatus: 'recorded',
+          result: 'skipped',
+          verificationEvidence: { result: 'skipped', commandLabel: 'manual-check' },
+          notes: 'raw verification note should stay hidden from typed display',
+        },
+      ],
+    },
+  });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 50));
+
+  const workspace = document.getElementById('workspace');
+  assert.ok(workspace.innerHTML.includes('skipped'), 'typed result rendered');
+  assert.ok(workspace.innerHTML.includes('Verify task'), 'record context rendered');
+  assert.equal(workspace.innerHTML.includes('raw verification note'), false, 'raw notes not rendered');
+  assert.equal(/stdout|stderr|sha256|diff|raw output/i.test(workspace.innerHTML), false, 'no raw surface rendered');
+  assert.equal(/run|execute|apply-from-preview|promote|commit|discard/i.test(workspace.innerHTML), false, 'no execution/write affordance text');
+  assert.equal(workspace.querySelector('button'), null, 'verification view has no action button');
+  assert.equal(workspace.querySelector('[href]'), null, 'verification view has no links');
+
+  const verificationCalls = fetchCalls.filter(c => c.path.endsWith('/verification'));
+  assert.equal(verificationCalls.every(c => c.method === 'GET'), true, 'verification calls are GET-only');
+});
+
 // ── Helpers for v2.7 ADR-0012 Apply Viewer JSDOM tests ──────────
 
 /** Switch to teams tab and return the JSDOM state. */

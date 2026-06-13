@@ -493,6 +493,22 @@ All notable changes to CLI Bridge are documented here.
 - **No new endpoint, no execution, no network, no `git`/CI/GitHub integration, no
   pass/fail inference, no write/apply-from-preview surface.**
 
+### Added — v2.12 Typed Verification Result Model (EX-2.12-1, ADR-0017)
+
+- **Typed verification evidence**: existing artifact recording accepts optional
+  `verificationEvidence` with a closed `result` (`passed`, `failed`, `skipped`,
+  `errored`, `unknown`), optional sanitized `commandLabel`, and optional
+  `recordedAt`. Existing `verificationNotes` / `records[].notes` remain
+  backward compatible.
+- **Verification summary/display**: `/bridge/projects/:key/verification` adds
+  optional `summary.resultCounts` and typed record fields derived only from
+  explicit typed evidence. The console renders typed counts/results as inert
+  text while still hiding raw notes.
+- **No inference or execution**: free-text notes such as "npm test passed" do not
+  produce typed results. No product test runner, spawn/exec, `git`, CI/GitHub/
+  provider/network integration, raw output/path/hash/diff display, or run/apply/
+  write affordance was added. ADR-0018/0019 remain deferred.
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

@@ -386,7 +386,14 @@ not run a harness, spawn a process, or infer pass/fail from free text.
     "evidenceCount": 1,
     "lastRecordedAt": 1234567890,
     "doneStepCount": 0,
-    "totalStepCount": 2
+    "totalStepCount": 2,
+    "resultCounts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "errored": 0,
+      "unknown": 0
+    }
   },
   "records": [
     {
@@ -395,6 +402,12 @@ not run a harness, spawn a process, or infer pass/fail from free text.
       "stepIntent": "Verify task",
       "stepStatus": "pending",
       "harnessStatus": "recorded",
+      "result": "passed",
+      "verificationEvidence": {
+        "result": "passed",
+        "commandLabel": "unit-tests",
+        "recordedAt": 1234567890
+      },
       "notes": "npm test passed",
       "teamId": "team-1",
       "slotId": "slot-verify",
@@ -425,24 +438,51 @@ placeholder records with `harnessStatus: "unavailable"`.
 ### Verification status summary
 
 The optional `summary` field is an additive, note-free status source for the
-project console. It contains only counts and recency metadata:
+project console. It contains only counts, recency metadata, and explicit typed
+result counts:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `evidenceCount` | number | Count of project-scoped team artifacts whose `verificationNotes` is non-blank. |
+| `evidenceCount` | number | Count of project-scoped team artifacts with non-blank `verificationNotes` or explicit typed `verificationEvidence`. |
 | `lastRecordedAt` | number? | Most recent evidence timestamp. Omitted when no evidence exists. |
 | `doneStepCount` | number | Count of existing project plan steps with status `done`. |
 | `totalStepCount` | number | Count of existing project plan steps. |
+| `resultCounts` | object? | Optional closed counts for explicit typed results only: `passed`, `failed`, `skipped`, `errored`, `unknown`. Omitted when no typed result exists. |
 
 The summary never includes `verificationNotes`, provider output, artifact
 content, paths, hashes, or inferred pass/fail status. The legacy
 `records[].notes` field remains in the response for backward compatibility, but
-the console status panel binds to `summary` only.
+typed status is derived only from explicit `verificationEvidence.result`, never
+from `records[].notes`.
+
+### Typed verification evidence
+
+ADR-0017 adds an optional typed, non-executing evidence field to existing
+artifact recording and verification views:
+
+```json
+{
+  "verificationEvidence": {
+    "result": "passed",
+    "commandLabel": "unit-tests",
+    "recordedAt": 1234567890
+  }
+}
+```
+
+`result` is a closed value: `passed`, `failed`, `skipped`, `errored`, or
+`unknown`. `commandLabel`, when present, is a sanitized label, not a raw command
+line. The bridge does not run the command, execute a harness, read `git`, call
+CI/GitHub/provider APIs, or infer this result from `verificationNotes`.
+
+Never exposed by typed evidence: raw notes, raw stdout/stderr, provider payload,
+artifact content, absolute/isolated paths, hashes, or diff.
 
 ### Source and isolation
 
-- Records are derived only from existing `SlotArtifact.verificationNotes`.
-- Blank or whitespace-only notes are ignored.
+- Records are derived only from existing `SlotArtifact.verificationNotes` and/or
+  explicit `SlotArtifact.verificationEvidence`.
+- Blank or whitespace-only notes are ignored unless typed evidence is present.
 - Artifacts are included only when their parent `TeamSpec.projectId` matches
   the requested project key.
 - Records are sorted newest first by `createdAt`.

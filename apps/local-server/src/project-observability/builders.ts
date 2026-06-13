@@ -8,6 +8,7 @@
 //   - Never write to stores, never modify state.
 //   - Enforce project-scoped isolation using projectId-first semantics.
 
+import { VERIFICATION_RESULTS } from '../../../../packages/shared/src/types.ts';
 import type {
   ConversationTimelineEntry,
   ConversationTimelineView,
@@ -17,6 +18,8 @@ import type {
   HarnessVerificationView,
   ProjectAuditEntry,
   ProjectAuditView,
+  VerificationEvidence,
+  VerificationResult,
   VerificationStatusSummary,
 } from '../../../../packages/shared/src/types.ts';
 
@@ -86,6 +89,7 @@ export interface ObservabilityInput {
     planStepId: string;
     summary: string;
     verificationNotes?: string;
+    verificationEvidence?: VerificationEvidence;
     createdAt: number;
   }>;
 }
@@ -94,6 +98,25 @@ export interface ObservabilityInput {
 
 const MAX_AUDIT_LIMIT = 200;
 const MAX_TIMELINE_ENTRIES = 500;
+
+function isVerificationResult(value: unknown): value is VerificationResult {
+  return typeof value === 'string' && (VERIFICATION_RESULTS as readonly string[]).includes(value);
+}
+
+function validVerificationEvidence(value: VerificationEvidence | undefined): VerificationEvidence | undefined {
+  if (!value || !isVerificationResult(value.result)) return undefined;
+  return value;
+}
+
+function emptyResultCounts(): Record<VerificationResult, number> {
+  return {
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    errored: 0,
+    unknown: 0,
+  };
+}
 
 // ---- Timeline builder ----
 
@@ -363,12 +386,19 @@ export function buildVerificationStatusSummary(
   const teamIds = new Set(teams.map(team => team.id));
   let evidenceCount = 0;
   let lastRecordedAt: number | undefined;
+  const resultCounts = emptyResultCounts();
+  let typedEvidenceCount = 0;
 
   for (const artifact of artifacts) {
     const notes = artifact.verificationNotes?.trim();
-    if (!notes) continue;
+    const evidence = validVerificationEvidence(artifact.verificationEvidence);
+    if (!notes && !evidence) continue;
     if (!teamIds.has(artifact.teamId)) continue;
     evidenceCount += 1;
+    if (evidence) {
+      typedEvidenceCount += 1;
+      resultCounts[evidence.result] += 1;
+    }
     if (lastRecordedAt === undefined || artifact.createdAt > lastRecordedAt) {
       lastRecordedAt = artifact.createdAt;
     }
@@ -388,6 +418,7 @@ export function buildVerificationStatusSummary(
     ...(lastRecordedAt === undefined ? {} : { lastRecordedAt }),
     doneStepCount,
     totalStepCount,
+    ...(typedEvidenceCount === 0 ? {} : { resultCounts }),
   };
 }
 
@@ -414,7 +445,8 @@ export function buildHarnessVerification(
   const artifactRecords: HarnessVerificationRecord[] = [];
   for (const artifact of artifacts) {
     const notes = artifact.verificationNotes?.trim();
-    if (!notes) continue;
+    const evidence = validVerificationEvidence(artifact.verificationEvidence);
+    if (!notes && !evidence) continue;
     const team = teamsById.get(artifact.teamId);
     if (!team) continue;
     const slot = team.logicalSlots.find(s => s.id === artifact.slotId);
@@ -425,7 +457,8 @@ export function buildHarnessVerification(
       stepIntent: planStep?.intent ?? artifact.summary,
       stepStatus: slot?.status,
       harnessStatus: 'recorded',
-      notes,
+      ...(notes ? { notes } : {}),
+      ...(evidence ? { result: evidence.result, verificationEvidence: evidence } : {}),
       teamId: artifact.teamId,
       slotId: artifact.slotId,
       createdAt: artifact.createdAt,

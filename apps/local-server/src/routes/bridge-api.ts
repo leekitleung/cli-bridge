@@ -752,6 +752,9 @@ async function handleArtifactPost(
   if (body.verificationNotes !== undefined && typeof body.verificationNotes === 'string') {
     artifact.verificationNotes = body.verificationNotes;
   }
+  if (body.verificationEvidence !== undefined && typeof body.verificationEvidence === 'object' && body.verificationEvidence !== null) {
+    artifact.verificationEvidence = body.verificationEvidence;
+  }
   if (body.rawProviderOutput !== undefined && typeof body.rawProviderOutput === 'string') {
     artifact.rawProviderOutput = body.rawProviderOutput;
   }
@@ -1476,6 +1479,7 @@ function buildObservabilityInput(
       planStepId: artifact.planStepId,
       summary: artifact.summary,
       verificationNotes: artifact.verificationNotes,
+      verificationEvidence: artifact.verificationEvidence,
       createdAt: artifact.createdAt,
     }));
 

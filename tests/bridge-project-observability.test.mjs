@@ -76,7 +76,7 @@ async function seedApprovedGoalPlan(runtime, projectId) {
   return { goalId: goal.id, planId: plan.id, stepId: plan.steps[1].id };
 }
 
-async function seedTeamArtifact(runtime, projectId, teamId, notes, createdAt = 200) {
+async function seedTeamArtifact(runtime, projectId, teamId, notes, createdAt = 200, verificationEvidence) {
   const seeded = await seedApprovedGoalPlan(runtime, projectId);
   const teamsPath = BRIDGE_PROJECTS_PATH + '/' + projectId + '/teams';
   const create = await call(runtime, 'POST', teamsPath, {
@@ -102,6 +102,7 @@ async function seedTeamArtifact(runtime, projectId, teamId, notes, createdAt = 2
     summary: 'Verifier checked patch',
     proposedFiles: ['src/feature.ts'],
     verificationNotes: notes,
+    ...(verificationEvidence ? { verificationEvidence } : {}),
     outputRedacted: true,
     createdAt,
   });
@@ -441,6 +442,103 @@ test('v2.11: verification summary is deterministic, note-free, and distinct from
   const summaryJson = JSON.stringify(first.summary);
   assert.equal(summaryJson.includes('npm test passed'), false, 'summary must not contain raw notes');
   assert.equal(/pass|fail|green|red/i.test(summaryJson), false, 'summary must not infer outcomes');
+});
+
+test('v2.12: explicit typed verification result appears in records and summary counts', async () => {
+  const runtime = createBridgeRuntime();
+  const seeded = await seedTeamArtifact(runtime, 'typed-alpha', 'team-typed', '', 900, {
+    result: 'passed',
+    commandLabel: 'unit-tests',
+    recordedAt: 901,
+  });
+
+  const res = await call(runtime, 'GET', BRIDGE_PROJECTS_PATH + '/typed-alpha/verification');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.status, 'recorded');
+  assert.equal(res.payload.records.length, 1);
+  assert.equal(res.payload.records[0].stepId, seeded.stepId);
+  assert.equal(res.payload.records[0].result, 'passed');
+  assert.deepEqual(res.payload.records[0].verificationEvidence, {
+    result: 'passed',
+    commandLabel: 'unit-tests',
+    recordedAt: 901,
+  });
+  assert.equal(res.payload.records[0].notes, undefined, 'typed-only record must not invent notes');
+  assert.deepEqual(res.payload.summary.resultCounts, {
+    passed: 1,
+    failed: 0,
+    skipped: 0,
+    errored: 0,
+    unknown: 0,
+  });
+  assert.equal(res.payload.summary.evidenceCount, 1);
+  assert.equal(JSON.stringify(res.payload).includes('sha256'), false);
+  assert.equal(JSON.stringify(res.payload).includes('raw output'), false);
+});
+
+test('v2.12: verificationNotes text never infers typed result', () => {
+  const input = {
+    projectId: 'no-infer',
+    goals: [],
+    plans: [],
+    reviews: [],
+    pendingPrompts: [],
+    auditEvents: [],
+    teams: [
+      { id: 'team-a', projectId: 'no-infer', planId: 'plan-1', logicalSlots: [{ id: 'slot-verify', stepIndex: 0, status: 'done' }] },
+    ],
+    artifacts: [
+      {
+        teamId: 'team-a',
+        slotId: 'slot-verify',
+        planStepId: 'step-1',
+        summary: 'Verifier checked patch',
+        verificationNotes: 'npm test passed',
+        createdAt: 902,
+      },
+    ],
+  };
+
+  const view = buildHarnessVerification(input);
+  assert.equal(view.records[0].notes, 'npm test passed');
+  assert.equal(view.records[0].result, undefined, 'free text must not create a typed result');
+  assert.equal(view.summary.resultCounts, undefined, 'free text must not create typed counts');
+});
+
+test('v2.12: malformed typed verification evidence is rejected at artifact recording', async () => {
+  const runtime = createBridgeRuntime();
+  const seeded = await seedApprovedGoalPlan(runtime, 'typed-reject');
+  const teamsPath = BRIDGE_PROJECTS_PATH + '/typed-reject/teams';
+  await call(runtime, 'POST', teamsPath, {
+    action: 'create',
+    id: 'team-reject',
+    goalId: seeded.goalId,
+    planId: seeded.planId,
+    logicalSlots: [{ id: 'slot-verify', role: 'verifier', stepIndex: 1, tier: 'patch-proposal', isolation: 'patch-only' }],
+    maxConcurrentBridgeSlots: 1,
+    mode: 'sequential',
+    isolation: 'patch-only',
+    provider: 'claude',
+    endpointId: 'claude-code-command',
+  });
+  await call(runtime, 'POST', teamsPath + '/team-reject/approve');
+
+  const res = await call(runtime, 'POST', teamsPath + '/team-reject/artifacts', {
+    slotId: 'slot-verify',
+    summary: 'Verifier checked patch',
+    proposedFiles: ['src/feature.ts'],
+    verificationEvidence: {
+      result: 'passed-by-notes',
+      commandLabel: 'npm test',
+      stdout: 'raw output',
+      sha256: 'abc',
+    },
+    outputRedacted: true,
+    createdAt: 903,
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(runtime.teamStore.listArtifacts('team-reject').length, 0);
 });
 
 test('POST /bridge/projects/:key/verification is rejected', async () => {
