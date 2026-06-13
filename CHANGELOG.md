@@ -5,6 +5,27 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **RP-2.13-a: revised ADR-0018 Local Live Verification Execution** from an
+  executable-direction draft into a **pre-acceptance design**, resolving the
+  prior open blockers into fixed decisions before any acceptance or EX dispatch.
+  Key changes: replaced the project/console-defined `verifyCommand` with an
+  **operator/server-configured verify-profile allowlist** (structured argv,
+  `shell: false`, cwd contained to the project root, env allowlist, bounded
+  timeout/kill, output cap, single-run lock) that projects may only reference by
+  `verifyProfileId` and the console may only select/trigger (no free-form
+  command, argv, cwd, or env anywhere). Adopted an **honest network stance**: the
+  bridge initiates no network and adds no `git`/CI/provider/network client
+  (assertable/testable), but does NOT claim OS-level isolation of the spawned
+  child (no sandbox in this repo); each profile carries a `networkRisk` label
+  displayed at the gate, and a hard offline guarantee is deferred to a future
+  sandbox ADR. Fixed strict **no-raw-output** handling (transient capped capture,
+  discarded; store only typed result + commandLabel + timing + flags), per-run
+  human gate UX with `networkRisk`/`mutationRisk` disclosure, and revised the
+  ADR-0007 §2 prerequisite positions and acceptance conditions accordingly.
+  ADR-0017 is closed, so the only remaining gate is `REVIEW-ADR-0018` (ADR-0007
+  §2 prerequisite review). ADR-0018 stays NOT ACCEPTED; no `EX-2.13-1` handoff
+  and no development execution agent are authorized by this batch. ADR-0019
+  remains PROPOSED — DEFERRED behind ADR-0018 closeout.
 - Accepted **ADR-0017 Typed Verification Result Model** for v2.12 (`EX-2.12-1`
   only) and drafted `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`.
   Authorizes a strictly additive, non-executing typed verification-result model
