@@ -382,6 +382,12 @@ not run a harness, spawn a process, or infer pass/fail from free text.
 {
   "projectId": "alpha",
   "status": "recorded",
+  "summary": {
+    "evidenceCount": 1,
+    "lastRecordedAt": 1234567890,
+    "doneStepCount": 0,
+    "totalStepCount": 2
+  },
   "records": [
     {
       "stepId": "step-2",
@@ -404,12 +410,34 @@ not run a harness, spawn a process, or infer pass/fail from free text.
 {
   "projectId": "alpha",
   "status": "unavailable",
+  "summary": {
+    "evidenceCount": 0,
+    "doneStepCount": 0,
+    "totalStepCount": 0
+  },
   "records": []
 }
 ```
 
 Projects with completed plan steps but no artifact notes may include legacy
 placeholder records with `harnessStatus: "unavailable"`.
+
+### Verification status summary
+
+The optional `summary` field is an additive, note-free status source for the
+project console. It contains only counts and recency metadata:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `evidenceCount` | number | Count of project-scoped team artifacts whose `verificationNotes` is non-blank. |
+| `lastRecordedAt` | number? | Most recent evidence timestamp. Omitted when no evidence exists. |
+| `doneStepCount` | number | Count of existing project plan steps with status `done`. |
+| `totalStepCount` | number | Count of existing project plan steps. |
+
+The summary never includes `verificationNotes`, provider output, artifact
+content, paths, hashes, or inferred pass/fail status. The legacy
+`records[].notes` field remains in the response for backward compatibility, but
+the console status panel binds to `summary` only.
 
 ### Source and isolation
 
@@ -418,6 +446,8 @@ placeholder records with `harnessStatus: "unavailable"`.
 - Artifacts are included only when their parent `TeamSpec.projectId` matches
   the requested project key.
 - Records are sorted newest first by `createdAt`.
+- `summary` is additive and note-free; it is derived from the same project-scoped
+  inputs without copying `records[].notes`.
 - Mutation methods on this path return 405.
 
 ---

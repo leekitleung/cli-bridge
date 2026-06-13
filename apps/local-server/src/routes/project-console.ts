@@ -558,9 +558,17 @@ function renderStatusPanel() {
 
   // Verification — from server-derived verification view.
   const verView = store.cache.verification;
-  if (verView) {
-    const recCount = (verView.records || []).length;
-    $('status-verification').innerHTML = '<span class="unavailable">' + escapeHtml(verView.status || 'unavailable') + (recCount > 0 ? ' (' + recCount + ' step records)' : '') + '</span>';
+  const verSummary = verView ? verView.summary : null;
+  if (verSummary && typeof verSummary.evidenceCount === 'number') {
+    const parts = [];
+    parts.push('<span>' + escapeHtml(String(verSummary.evidenceCount)) + ' evidence record' + (verSummary.evidenceCount === 1 ? '' : 's') + '</span>');
+    if (Number.isFinite(verSummary.lastRecordedAt)) {
+      parts.push('<span>latest: ' + escapeHtml(new Date(verSummary.lastRecordedAt).toISOString()) + '</span>');
+    }
+    if (typeof verSummary.doneStepCount === 'number' && typeof verSummary.totalStepCount === 'number') {
+      parts.push('<span>' + escapeHtml(String(verSummary.doneStepCount)) + ' / ' + escapeHtml(String(verSummary.totalStepCount)) + ' steps done</span>');
+    }
+    $('status-verification').innerHTML = parts.join(' · ');
   } else {
     $('status-verification').innerHTML = '<span class="unavailable">not yet available</span>';
   }

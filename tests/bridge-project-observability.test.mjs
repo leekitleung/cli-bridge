@@ -15,6 +15,7 @@ import {
   createBridgeRuntime,
   handleBridgeRequest,
 } from '../apps/local-server/src/routes/bridge-api.ts';
+import { buildHarnessVerification } from '../apps/local-server/src/project-observability/builders.ts';
 
 // ---- helpers ----
 
@@ -332,6 +333,15 @@ test('GET /bridge/projects/:key/verification returns artifact-backed records', a
     slotId: 'slot-verify',
     createdAt: 300,
   });
+  assert.deepEqual(res.payload.summary, {
+    evidenceCount: 1,
+    lastRecordedAt: 300,
+    doneStepCount: 0,
+    totalStepCount: 2,
+  });
+  const summaryText = JSON.stringify(res.payload.summary);
+  assert.equal(summaryText.includes('npm test passed'), false);
+  assert.equal(/pass|fail|green|red/i.test(summaryText), false);
 });
 
 test('GET /bridge/projects/:key/verification ignores blank artifact notes', async () => {
@@ -342,6 +352,11 @@ test('GET /bridge/projects/:key/verification ignores blank artifact notes', asyn
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.status, 'unavailable');
   assert.equal(res.payload.records.length, 0);
+  assert.deepEqual(res.payload.summary, {
+    evidenceCount: 0,
+    doneStepCount: 0,
+    totalStepCount: 2,
+  });
 });
 
 test('verification artifact records are project-isolated', async () => {
@@ -372,6 +387,60 @@ test('GET /bridge/projects/:key/verification does not mutate team artifacts', as
   const after = runtime.teamStore.exportArtifacts();
   assert.equal(res.statusCode, 200);
   assert.deepEqual(after, before);
+});
+
+test('v2.11: verification summary is deterministic, note-free, and distinct from legacy notes', () => {
+  const input = {
+    projectId: 'summary-alpha',
+    goals: [],
+    plans: [
+      {
+        id: 'plan-1',
+        goalId: 'goal-1',
+        status: 'approved',
+        steps: [
+          { id: 'step-1', index: 0, intent: 'Implement', kind: 'review', status: 'done' },
+          { id: 'step-2', index: 1, intent: 'Verify', kind: 'review', status: 'pending' },
+        ],
+      },
+    ],
+    reviews: [],
+    pendingPrompts: [],
+    auditEvents: [],
+    teams: [
+      {
+        id: 'team-a',
+        projectId: 'summary-alpha',
+        planId: 'plan-1',
+        logicalSlots: [{ id: 'slot-verify', stepIndex: 1, status: 'pending' }],
+      },
+    ],
+    artifacts: [
+      {
+        teamId: 'team-a',
+        slotId: 'slot-verify',
+        planStepId: 'step-2',
+        summary: 'Verifier checked patch',
+        verificationNotes: 'npm test passed',
+        createdAt: 800,
+      },
+    ],
+  };
+
+  const first = buildHarnessVerification(input);
+  const second = buildHarnessVerification(input);
+
+  assert.deepEqual(first.summary, second.summary, 'same input yields same summary');
+  assert.deepEqual(first.summary, {
+    evidenceCount: 1,
+    lastRecordedAt: 800,
+    doneStepCount: 1,
+    totalStepCount: 2,
+  });
+  assert.equal(first.records[0].notes, 'npm test passed', 'legacy records still carry notes');
+  const summaryJson = JSON.stringify(first.summary);
+  assert.equal(summaryJson.includes('npm test passed'), false, 'summary must not contain raw notes');
+  assert.equal(/pass|fail|green|red/i.test(summaryJson), false, 'summary must not infer outcomes');
 });
 
 test('POST /bridge/projects/:key/verification is rejected', async () => {

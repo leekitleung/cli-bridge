@@ -477,6 +477,71 @@ test('project switch clears old observability cache when fetches fail', async ()
     'alpha memory must not appear after switching to beta');
 });
 
+// ── v2.11 ADR-0016: Verification summary status panel ───────────
+
+test('v2.11: verification status panel renders summary without raw notes', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, returning: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      summary: { evidenceCount: 1, lastRecordedAt: 800, doneStepCount: 1, totalStepCount: 2 },
+      records: [{ harnessStatus: 'recorded', notes: 'npm test passed', createdAt: 800 }],
+    },
+  });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const panel = document.getElementById('status-verification');
+  assert.ok(panel.innerHTML.includes('1 evidence record'), 'summary evidence count rendered');
+  assert.ok(panel.innerHTML.includes('1 / 2 steps done'), 'summary step counts rendered');
+  assert.ok(panel.innerHTML.includes('1970-01-01T00:00:00.800Z'), 'summary recency rendered');
+  assert.equal(panel.innerHTML.includes('npm test passed'), false, 'raw notes not rendered');
+  assert.equal(/pass|fail|green|red/i.test(panel.innerHTML), false, 'no inferred outcome text');
+
+  const verificationCalls = fetchCalls.filter(c => c.path.endsWith('/verification'));
+  assert.equal(verificationCalls.length, 1, 'uses existing verification fetch only');
+  assert.equal(verificationCalls[0].method, 'GET');
+});
+
+test('v2.11: malformed verification summary fails closed and does not render notes', async () => {
+  const { document, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, returning: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      summary: { evidenceCount: 'bad' },
+      records: [{ harnessStatus: 'recorded', notes: 'npm test passed', createdAt: 800 }],
+    },
+  });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const panel = document.getElementById('status-verification');
+  assert.ok(panel.innerHTML.includes('not yet available'), 'malformed summary renders unavailable');
+  assert.equal(panel.innerHTML.includes('npm test passed'), false, 'raw notes not rendered on fail-closed path');
+});
+
 // ── Helpers for v2.7 ADR-0012 Apply Viewer JSDOM tests ──────────
 
 /** Switch to teams tab and return the JSDOM state. */

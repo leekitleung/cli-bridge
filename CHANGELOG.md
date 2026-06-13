@@ -441,6 +441,21 @@ All notable changes to CLI Bridge are documented here.
 - **Tests**: project-scoped rootRef assertion in manifest + audit; fallback backward
   compatibility; console opaque display + absolute sanitization.
 
+### Added — v2.11 Verification Evidence Status Source (EX-2.11-1, ADR-0016)
+
+- **Verification summary**: `/bridge/projects/:key/verification` now includes an
+  additive `summary` with evidence counts, latest evidence timestamp, and plan-step
+  counts. It is derived from existing records only and never includes raw
+  `verificationNotes`, provider output, artifact content, paths, hashes, or inferred
+  pass/fail status.
+- **Console status panel**: the Verification card now binds to the note-free
+  `summary` instead of legacy `records[].notes`; missing or malformed summaries
+  render inert unavailable state.
+- **Compatibility**: legacy `/verification.records[].notes` remains unchanged for
+  existing API consumers.
+- **No new endpoint, no execution, no network, no `git`/CI/GitHub integration, no
+  pass/fail inference, no write/apply-from-preview surface.**
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

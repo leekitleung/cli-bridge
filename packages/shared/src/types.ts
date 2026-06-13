@@ -574,9 +574,17 @@ export interface HarnessVerificationRecord {
   notes?: string; teamId?: string; slotId?: string; createdAt?: number;
 }
 
+export interface VerificationStatusSummary {
+  evidenceCount: number;
+  lastRecordedAt?: number;
+  doneStepCount: number;
+  totalStepCount: number;
+}
+
 export interface HarnessVerificationView {
   projectId: string; records: HarnessVerificationRecord[];
   status: string;
+  summary?: VerificationStatusSummary;
 }
 
 // --- Phase B: Project workspace model ---

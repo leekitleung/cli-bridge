@@ -17,6 +17,7 @@ import type {
   HarnessVerificationView,
   ProjectAuditEntry,
   ProjectAuditView,
+  VerificationStatusSummary,
 } from '../../../../packages/shared/src/types.ts';
 
 // ---- Public input types ----
@@ -354,12 +355,49 @@ export function buildDerivedMemory(
 
 // ---- Harness verification view builder ----
 
+export function buildVerificationStatusSummary(
+  input: ObservabilityInput,
+): VerificationStatusSummary {
+  const teams = input.teams ?? [];
+  const artifacts = input.artifacts ?? [];
+  const teamIds = new Set(teams.map(team => team.id));
+  let evidenceCount = 0;
+  let lastRecordedAt: number | undefined;
+
+  for (const artifact of artifacts) {
+    const notes = artifact.verificationNotes?.trim();
+    if (!notes) continue;
+    if (!teamIds.has(artifact.teamId)) continue;
+    evidenceCount += 1;
+    if (lastRecordedAt === undefined || artifact.createdAt > lastRecordedAt) {
+      lastRecordedAt = artifact.createdAt;
+    }
+  }
+
+  let doneStepCount = 0;
+  let totalStepCount = 0;
+  for (const plan of input.plans) {
+    for (const step of plan.steps) {
+      totalStepCount += 1;
+      if (step.status === 'done') doneStepCount += 1;
+    }
+  }
+
+  return {
+    evidenceCount,
+    ...(lastRecordedAt === undefined ? {} : { lastRecordedAt }),
+    doneStepCount,
+    totalStepCount,
+  };
+}
+
 export function buildHarnessVerification(
   input: ObservabilityInput,
 ): HarnessVerificationView {
   const teams = input.teams ?? [];
   const artifacts = input.artifacts ?? [];
   const teamsById = new Map(teams.map(team => [team.id, team]));
+  const summary = buildVerificationStatusSummary(input);
   const planStepsById = new Map<string, {
     id: string;
     index: number;
@@ -407,6 +445,7 @@ export function buildHarnessVerification(
       projectId: input.projectId,
       records: artifactRecords,
       status: 'recorded',
+      summary,
     };
   }
 
@@ -429,5 +468,6 @@ export function buildHarnessVerification(
     projectId: input.projectId,
     records,
     status: 'unavailable',
+    summary,
   };
 }
