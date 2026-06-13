@@ -630,8 +630,17 @@ Metadata-only capture of proposed file states before an isolated apply write. No
 raw content, no diff, no classification. Trusted root from server config only.
 
 **ApplyManifest extension**: `ApplyManifest.baselineManifest` exposes summary
-metadata (fileCount, readableCount, missingCount, unreadableCount, byteTotal,
-rootRef) — never per-file entries, sha256, or raw content.
+metadata **only** — exactly seven fields:
+- `capturedAt` (number, Unix ms timestamp)
+- `fileCount` (number)
+- `readableCount` (number)
+- `missingCount` (number)
+- `unreadableCount` (number)
+- `byteTotal` (number)
+- `rootRef` (string, always `"runtime-baseline-root"` — opaque, never an absolute host path)
+
+Never exposed via `ApplyManifest`: `entries` (per-file list), per-file `sha256`,
+raw baseline content, absolute host path, isolated directory path.
 
 **Audit**: `workspace_apply_result.result.metadata.baseline` with summary
 metadata. No raw content or absolute host path.
@@ -669,3 +678,32 @@ no sha256 in response.
 
 **Non-goals**: sha256 in response, diff/diff-like view, raw content, main-tree access,
 git/spawn/VCS, apply-from-preview.
+
+### Project Console Apply-result Viewer (v2.7-v2.8, ADR-0012/ADR-0013)
+
+The project console's Apply Result (read-only) panel displays the full apply-result
+surface in the browser, using only GET requests:
+
+| Section | Source | Endpoint |
+|---------|--------|----------|
+| Manifest | `man.data.apply` | `GET .../apply-requests/:applyId` |
+| Baseline summary | `man.data.apply.baselineManifest` | (from manifest — no extra fetch) |
+| Classification | separate fetch (non-blocking) | `GET .../apply-requests/:applyId/classification` |
+| File list | separate fetch | `GET .../apply-requests/:applyId/files` |
+| File preview | on-demand per file | `GET .../apply-requests/:applyId/files/preview?path=...` |
+
+**Baseline summary display**:
+- Shows 7 fields from `baselineManifest`: capturedAt, fileCount, readableCount,
+  missingCount (including 0), unreadableCount (including 0), byteTotal, rootRef.
+- rootRef is rendered as inert text only; absolute-looking values (drive letter,
+  UNC, POSIX absolute, backslash-containing) are sanitized to a placeholder (`—`).
+- Malformed baseline summary fails closed — shows "unavailable" without blocking
+  classification/files/preview rendering.
+- Absent baselineManifest shows "Baseline not captured".
+
+**Classification display**: per-file labels in file table, summary counts. 409
+no-baseline shows "unavailable" without blocking files/preview.
+
+**Hard boundary**: all calls are GET-only. No POST/PUT/DELETE/PATCH. No
+apply/promote/commit/discard/write controls. No sha256/entries/raw content/diff/
+line detail/absolute host path in rendered output.

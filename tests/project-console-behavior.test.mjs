@@ -855,3 +855,48 @@ test('v2.8: baseline display is GET-only, preview unchanged, no write controls',
   assert.equal(baselineEl.innerHTML.includes('button'), false, 'no button in baseline');
   assert.equal(/promote|apply-from-preview/i.test(baselineEl.innerHTML), false, 'no promote');
 });
+
+// ── v2.8 Contract convergence boundary test ─────────────────────
+
+test('v2.8: baseline viewer boundary — no extra fetch, no forbidden fields, no write paths', async () => {
+  const { window, document, setFixture, fetchCalls } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-boundary';
+  const applyId = 'apply-boundary';
+
+  await switchToTeamsTab(window, document);
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // 1) No extra baseline endpoint call.
+  const fetches = fetchCalls.map(c => c.path);
+  assert.equal(fetches.some(p => p.includes('/baseline') && !p.includes('/classification')), false,
+    'no standalone /baseline endpoint fetch');
+
+  // 2) All viewer calls are GET.
+  const viewerCalls = fetchCalls.filter(c => c.path.includes('/apply-requests/'));
+  for (const c of viewerCalls) assert.equal(c.method, 'GET', 'all viewer calls GET');
+
+  // 3) Baseline rendered output — no forbidden fields.
+  const bl = document.getElementById('apply-view-baseline').innerHTML;
+  for (const banned of ['entries', 'sha256', 'rawContent', 'baselineContent', 'originalContent',
+    'diff', 'lineDetail', '/confirm', '/discard']) {
+    assert.equal(bl.includes(banned), false, 'baseline output must not contain ' + banned);
+  }
+
+  // 4) No button/link/write controls.
+  assert.equal(bl.includes('<button'), false, 'no button element in baseline');
+  assert.equal(bl.includes('href='), false, 'no href in baseline');
+  assert.equal(bl.includes('src='), false, 'no src in baseline');
+  assert.equal(bl.includes('onclick='), false, 'no onclick in baseline');
+
+  // 5) rootRef rendered but not as a clickable link.
+  assert.ok(bl.includes('runtime-baseline-root'), 'opaque rootRef present');
+  assert.equal(bl.includes('file:'), false, 'no file: protocol');
+
+  // 6) Manifest and files still functional.
+  assert.ok(document.getElementById('apply-view-manifest').innerHTML.includes(applyId));
+  assert.ok(document.getElementById('apply-view-files').innerHTML.includes('src/a.ts'));
+});

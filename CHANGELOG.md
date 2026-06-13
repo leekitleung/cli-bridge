@@ -336,13 +336,17 @@ All notable changes to CLI Bridge are documented here.
 
 - **Console baseline summary**: displays `baselineManifest` metadata from existing
   manifest GET (capturedAt, fileCount, readableCount, missingCount, unreadableCount,
-  byteTotal, rootRef) in Apply Result viewer. rootRef is opaque text only — no path
-  or link. Absent baseline shows inert "not captured".
+  byteTotal, rootRef) in Apply Result viewer. All 7 fields always shown, including
+  0-value counts. rootRef is opaque text — absolute-looking values (drive letter,
+  UNC, POSIX absolute, backslash-containing) are sanitized to placeholder. Absent
+  baseline shows inert "not captured". Malformed baseline summary fails closed
+  (unavailable) without blocking classification/files/preview.
 - **No new endpoint**: reads from existing manifest response. No classification/
   preview/apply behavior changed. No entries/sha256/raw content/diff/absolute path
   displayed. No write controls.
-- **Tests**: 3 JSDOM behavior tests: summary render + no extra fetch + rootRef opaque,
-  absent-baseline unavailable with classification/files intact, preview regression.
+- **Tests**: 6 JSDOM behavior tests: 7-field render + no extra fetch, malformed
+  fail-closed, absent-baseline unavailable, rootRef opaque display + absolute
+  sanitization, preview regression, GET-only/no write controls.
 
 ### Added — v2.5 Workspace Apply (Approach A)
 
