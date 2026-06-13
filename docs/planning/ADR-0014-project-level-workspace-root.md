@@ -94,8 +94,9 @@ else no trusted root
 
 - Preserve `baselineCaptureEnabled` as a separate default-OFF opt-in.
 - Preserve `workspaceApplyEnabled` as the project-level apply opt-in.
-- Preserve `rootRef` as opaque; it may become project-scoped (for example
-  `project-root:<projectKey>`) but must not contain an absolute path.
+- Preserve `rootRef` as the existing opaque constant
+  `"runtime-baseline-root"` in v2.9. Project-scoped `rootRef` naming is
+  deferred to a separate ADR.
 - Tests proving request bodies cannot set or override roots.
 - Tests proving absolute roots do not appear in responses, audit, snapshots, or
   console output.
@@ -106,6 +107,8 @@ Out of scope:
 - Project PATCH/POST accepting a filesystem root.
 - Console UI for selecting or editing roots.
 - Snapshot persistence of absolute roots.
+- Any change to `rootRef` value/format or to the manifest/console response
+  surface.
 - Baseline preview endpoint or UI.
 - Per-file baseline entries in responses or console.
 - Returning or displaying `sha256`.
@@ -132,14 +135,15 @@ such as:
 
 ```json
 {
-  "workspaceRootConfigured": true,
-  "workspaceRootRef": "project-root:alpha"
+  "workspaceRootConfigured": true
 }
 ```
 
 Those fields are optional and must be carefully reviewed in the implementation
 handoff. They must not be accepted from create/PATCH bodies unless the ADR is
-revised and accepted with a stronger persistence and authorization story.
+revised and accepted with a stronger persistence and authorization story. This
+v2.9 ADR does not authorize any new root reference format in project records,
+apply manifests, audit metadata, or console output.
 
 ### 4. Interaction with ADR-0010 baseline capture
 
@@ -178,13 +182,13 @@ This ADR does not weaken prior invariants.
 | Invariant | ADR-0014 position |
 |---|---|
 | Runtime/server root authority | Preserved; project roots are configured by the operator, not by request input. |
-| No absolute path exposure | Preserved; rootRef is opaque and responses/audit/console must not leak roots. |
+| No absolute path exposure | Preserved; existing rootRef format remains unchanged and responses/audit/console must not leak roots. |
 | No raw content persistence | Preserved; root mapping does not authorize content persistence. |
 | No diff / line-level detail | Preserved. |
 | No main-tree write | Preserved; root may be read for baseline metadata only. |
 | No `git` / VCS | Preserved. |
 | No apply-from-preview / promote | Preserved. |
-| Existing apply-result APIs | Backward compatible; response shapes do not need new root paths. |
+| Existing apply-result APIs | Backward compatible; no manifest or console response-surface change in v2.9. |
 
 ## Alternatives Considered
 
@@ -210,8 +214,8 @@ boundary. It is the smallest useful step.
 ## Risk Acceptance
 
 - **Absolute path leakage**: project roots are sensitive host details.
-  Mitigation: never return, audit, persist, or render absolute roots; use opaque
-  rootRef only.
+  Mitigation: never return, audit, persist, or render absolute roots; keep the
+  existing opaque rootRef surface unchanged in v2.9.
 - **Wrong-root capture**: a misconfigured mapping could compare against the
   wrong workspace. Mitigation: explicit project-key mapping, fail-closed
   validation, tests for project isolation, and clear operator configuration.
@@ -248,17 +252,20 @@ An `EX-2.9-1` handoff and closeout review MUST verify all of the following:
    otherwise existing runtime `baselineRoot` behavior remains backward
    compatible; otherwise capture has no trusted root and fails closed when
    required.
-5. **No absolute path exposure**: API responses, manifests, audit metadata,
-   snapshots, docs examples for responses, and console output contain only
-   opaque root references, never absolute host paths.
+5. **No absolute path exposure / no response-surface change**: API responses,
+   manifests, audit metadata, snapshots, docs examples for responses, and
+   console output never contain absolute host paths. v2.9 MUST NOT change
+   `ApplyManifest.baselineManifest` field values/shape or project-console
+   output; the existing `"runtime-baseline-root"` rootRef surface remains valid.
 6. **No snapshot persistence of roots**: absolute roots are not written to the
    JSON snapshot in this slice.
 7. **No project PATCH/root mutation**: `POST /bridge/projects` and
    `PATCH /bridge/projects/:key` reject or ignore `workspaceRoot`,
    `baselineRoot`, `cwd`, and equivalent root fields; tests must prove this.
-8. **Baseline metadata semantics unchanged**: no raw baseline content, no
-   baseline preview, no diff, no line-level detail, no sha256 response exposure,
-   no main-tree write, and no ADR-0010 capture relaxation.
+8. **Baseline metadata and presentation semantics unchanged**: no raw baseline
+   content, no baseline preview, no diff, no line-level detail, no sha256
+   response exposure, no main-tree write, no ADR-0010 capture relaxation, and
+   no manifest/console surface change.
 9. **Project isolation**: a project with a configured root uses its own root and
    cannot read another project's root through apply requests or team ids.
 10. **Backward compatibility**: existing apply, baseline, classification,

@@ -141,6 +141,7 @@ All notable changes to CLI Bridge are documented here.
   workspace root` mapping for ADR-0010 baseline capture root selection, while
   keeping root authority out of HTTP request bodies, project PATCH, console
   input, model output, artifact data, responses, audit, and snapshots. It
+  keeps the existing `rootRef`/manifest/console response surface unchanged. It
   authorizes no implementation and does NOT authorize baseline preview, raw
   content persistence, diff/diff-like views, `sha256` exposure, main-tree
   writes, `git`/VCS, apply-from-preview, root editing UI, or persisted absolute
