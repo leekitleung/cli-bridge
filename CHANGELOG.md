@@ -6,16 +6,19 @@ All notable changes to CLI Bridge are documented here.
 
 ### Planning / ADR
 - Drafted **ADR-0016 Project Verification Evidence Status Source** as PROPOSED
-  (v2.11 planning). Proposes a strictly read-only verification-evidence status
-  source for the project console status panel, aggregating only records the
-  bridge already exposes (`/verification`, `/memory`, `/audit`, project detail)
-  via the existing redaction-safe derived builders. Surfaces presence/counts/
-  recency and, at most, inert already-stored text. It authorizes no
-  implementation. It does NOT run tests/harness/build, spawn/exec, read `git`,
-  call CI/GitHub/provider APIs or any network, echo raw `verificationNotes`/
-  content, infer pass/fail from free text, expose `sha256`/absolute paths/diff,
-  or add any write/apply-from-preview surface. Awaits explicit accept/reject/
-  revise before any `EX-2.11-1` handoff.
+  (v2.11 planning), then revised it to correct a factual error: `/verification`
+  (`buildHarnessVerification`) currently returns raw `verificationNotes` as
+  `records[].notes`, whereas `/memory` is presence-only. The ADR proposes a
+  strictly read-only, **note-free** verification-evidence status source for the
+  console status panel, derived from existing records (recommended Shape B: an
+  additive sanitized server-side summary that excludes notes/provider output/
+  content/paths/hashes/inferred outcomes; the panel binds to the summary, not
+  the raw note-carrying records). Stored verification-text display is deferred
+  until a typed non-free-text field exists. It authorizes no implementation and
+  does NOT run tests/harness/build, spawn/exec, read `git`, call CI/GitHub/
+  network, echo raw notes/content, infer pass/fail, expose `sha256`/absolute
+  paths/diff, or add any write/apply-from-preview surface. Awaits explicit
+  accept/reject/revise before any `EX-2.11-1` handoff.
 - **ADR-0015 Project-scoped Opaque `rootRef` Naming** ACCEPTED for v2.10.
   Authorizes only the `baselineManifest.rootRef` value/format change from a
   single constant to a project-scoped opaque reference

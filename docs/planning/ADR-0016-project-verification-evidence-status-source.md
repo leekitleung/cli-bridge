@@ -9,28 +9,34 @@ Date: 2026-06-13
 The project console's right-side status panel has a **Verification** card that
 is still a placeholder. Today:
 
-- `apps/local-server/src/project-observability/builders.ts`
-  `buildHarnessVerification()` already derives a read-only
-  `HarnessVerificationView` from existing store data: team slot artifacts whose
-  `verificationNotes` is a non-empty trimmed string, plus a v2.1 placeholder
-  fallback derived from plan steps. It never echoes raw notes and never infers
-  pass/fail.
-- `buildDerivedMemory()` already emits a `sourceKind: 'verification'` entry
-  ("Verification evidence recorded for step …") with the same source rules and
-  the same no-echo / no-pass-fail posture.
-- `GET /bridge/projects/:key/verification` returns `buildHarnessVerification`;
-  `GET /bridge/projects/:key/memory` and `/audit` return the other derived
-  views.
-- The console right-panel Verification card renders only
-  `verView.status` + a record count, styled "unavailable"; the Verification
-  section view shows the v2.1 placeholder records table.
+The two existing read-only views have **different** exposure postures, which
+this ADR must not conflate:
 
-So the data plumbing for read-only verification evidence already exists and is
-already redaction-safe (presence-only, no raw notes, no pass/fail). What is
-missing is a real, consolidated **status source** for the panel: a compact,
-read-only summary that tells an operator what verification evidence has been
-recorded for the active project, sourced entirely from records the bridge
-already holds.
+- `apps/local-server/src/project-observability/builders.ts`
+  `buildDerivedMemory()` emits a `sourceKind: 'verification'` entry
+  ("Verification evidence recorded for step …"). This is **presence-only**: it
+  reports that evidence exists and never echoes the raw notes or infers
+  pass/fail.
+- `buildHarnessVerification()` (returned by `GET /bridge/projects/:key/verification`)
+  is read-only but **currently includes the raw trimmed `verificationNotes`** as
+  `HarnessVerificationRecord.notes` (`builders.ts:380`), plus a v2.1 placeholder
+  fallback derived from `done` plan steps. The contract documents this:
+  `docs/contracts/bridge-projects-api.md` shows `"notes": "npm test passed"` in
+  the `/verification` response. So `/verification` is **not** note-free today.
+- `GET /bridge/projects/:key/audit` and `/memory` return their own derived
+  views; `/audit` and `/memory` do not echo raw verification notes.
+- The console right-panel Verification card currently renders only
+  `verView.status` + a record count (styled "unavailable") and **does not render
+  `notes`**; the Verification section view shows the v2.1 placeholder records
+  table (also without notes).
+
+So the data plumbing for read-only verification evidence already exists, but it
+is **not uniformly note-free**: `/memory` is presence-only while `/verification`
+API records still carry raw notes. The console panel happens to display only
+status/count today, so a status summary can still be built safely — but only if
+v2.11 derives a **sanitized summary that excludes notes** rather than relying on
+the raw `/verification.records`. What is missing is that real, consolidated,
+note-free **status source** for the panel.
 
 This continues the lowest-risk branch of the roadmap. v2.5-v2.10 closed the
 apply / baseline / classification / project-root line. The remaining read-only
@@ -59,18 +65,18 @@ The status source MAY surface, for the active project:
 - goal / plan status counts already available in the project detail/status
   (e.g. active vs terminal goals, plan step completion);
 - a **count** of team slot artifacts that carry verification evidence
-  (`verificationNotes` present), reusing the existing
-  `buildHarnessVerification` / `buildDerivedMemory` source rules;
+  (`verificationNotes` present), computed from existing inputs — but it MUST NOT
+  consume or pass through the raw `notes` text itself;
 - the most recent verification-evidence timestamps (presence/recency only);
-- a small count of recent relevant audit events already in the audit view;
-- any already-recorded **test-command text evidence** that exists as stored
-  artifact text, surfaced as inert text only (see §3 boundary).
+- a small count of recent relevant audit events already in the audit view.
 
 The status source MUST NOT:
 
 - run tests, a harness, a build, or any command; spawn or exec anything;
 - read `git` status, run `git`, or call any VCS/CI/GitHub API;
-- echo raw `verificationNotes`, raw provider output, or raw artifact content;
+- consume, render, or echo raw `verificationNotes` (including the existing
+  `HarnessVerificationRecord.notes` field on `/verification`), raw provider
+  output, or raw artifact content;
 - infer or display pass/fail/green/red beyond what is explicitly stored as a
   discrete status field (it must not parse free-text notes to guess outcomes);
 - read raw baseline/result content, produce diff or line-level detail;
@@ -86,8 +92,9 @@ In scope for a future accepted implementation:
   existing derived views and store data only.
 - Console status-panel rendering of that summary (counts, recency, inert
   labels), replacing the current placeholder.
-- Reuse of the existing redaction posture (presence-only, no raw notes, no
-  pass/fail inference).
+- Reuse of the **presence-only** posture for the new summary (no raw notes, no
+  pass/fail inference), matching `buildDerivedMemory` rather than the
+  note-carrying `/verification.records`.
 - Tests proving no execution, no raw-content/notes echo, no `git`/CI/network,
   and no pass/fail inference.
 - Contract and CHANGELOG updates.
@@ -104,21 +111,18 @@ Out of scope:
 - Scheduler/model-triggered refresh or autonomy.
 - New project-record fields or any write surface.
 
-### 3. Test-command text evidence boundary
+### 3. Test-command text evidence — deferred
 
-If test-command evidence is surfaced, it is limited to **inert display of text
-already stored** as artifact evidence (for example a recorded command string or
-a short recorded summary), shown verbatim-but-redacted under the existing
-redaction rules, with no execution and no interpretation. The status source must
-not:
+Surfacing stored test-command text is **deferred** for v2.11. The only stored
+verification text today is the free-text `verificationNotes` field, and
+displaying it would directly undermine the no-raw-notes boundary. Therefore
+v2.11 surfaces verification evidence as **presence / counts / recency only**
+("test evidence recorded (N)", most-recent timestamp), never as note text.
 
-- execute the command,
-- attribute a pass/fail result to it,
-- fetch or compute any new result for it.
-
-If presence-only is safer for v2.11, the implementation MAY surface only "test
-evidence recorded (N)" counts and defer any text display to a later ADR. The
-implementation handoff must choose one and lock it.
+Inert display of stored verification text may be reconsidered only by a later
+ADR, and only if a **typed, non-free-text** evidence field (for example a
+discrete `result` enum or a structured command record) is introduced first.
+Until then, no stored verification text is rendered.
 
 ### 4. Source-of-truth and aggregation shape
 
@@ -129,13 +133,20 @@ Two implementation shapes are possible; the handoff must pick one:
   summary). No new endpoint. Mirrors the ADR-0013 console pattern.
 - **B. Server-side derived summary** (a new pure builder, e.g.
   `buildVerificationStatusSummary`, over existing `ObservabilityInput`, exposed
-  via the existing `/verification` response or a sibling read-only field). No
-  new raw data; deterministic; matches the existing builders pattern.
+  via the existing `/verification` response as an **additive** read-only summary
+  field or a sibling read-only field). The summary is derived from existing
+  records but **excludes** `notes`, provider output, artifact content, absolute
+  paths, `sha256`, and any inferred outcome — it carries only counts, recency,
+  and discrete stored status. It does not modify or remove the existing
+  `records[].notes` field (backward compatible), but the new summary and the
+  console panel consume only the sanitized summary, never `records[].notes`.
 
-**Recommended: B**, as a small additive field on the existing read-only
-verification view, because the redaction/source rules already live server-side
-in `builders.ts` and are easier to test and keep consistent there. Either way,
-no new raw-data surface and no execution.
+**Recommended: B**, as a small additive sanitized summary field on the existing
+read-only verification view, because the redaction/source rules already live
+server-side in `builders.ts` and a note-free summary is easier to test and keep
+consistent there. Because `/verification.records` still carries raw `notes`, the
+v2.11 status panel must bind to the new sanitized summary, not to the raw
+records. Either shape introduces no new raw-data surface and no execution.
 
 ### 5. ADR-0007 prerequisites
 
@@ -189,9 +200,12 @@ Deferred to a separate ADR.
 - **Pass/fail temptation**: a verification panel invites inferring green/red
   from notes. Mitigation: forbid free-text outcome inference; show only stored
   discrete status and presence/counts.
-- **Raw-notes leakage**: surfacing verification evidence could leak raw notes.
-  Mitigation: reuse the existing presence-only builder rules; tests assert no
-  raw notes appear.
+- **Raw-notes leakage**: the existing `/verification.records[].notes` field
+  already carries raw notes, so a new summary must not pass them through.
+  Mitigation: derive a sanitized, note-free summary (matching the presence-only
+  `buildDerivedMemory` posture); bind the panel to the summary, not the raw
+  records; tests assert no raw notes appear in the new surface even when input
+  notes are present.
 - **Scope creep to execution**: a status source can invite "just run it."
   Mitigation: this ADR forbids any execution/spawn and defers live verification
   to a separate ADR.
@@ -216,14 +230,18 @@ An `EX-2.11-1` handoff and closeout review MUST verify all of the following:
 2. **Existing records only**: the summary is derived solely from existing store
    data / derived views (`/verification`, `/memory`, `/audit`, project detail).
    No new raw-data field beyond an optional additive read-only summary (Shape B).
-3. **No raw notes / content**: no raw `verificationNotes`, provider output,
-   artifact content, `sha256`, absolute path, or isolated dir path appears in
-   responses or console output.
+3. **No raw notes / content in the new surface**: the new status summary and the
+   console status panel never expose raw `verificationNotes`, provider output,
+   artifact content, `sha256`, absolute path, or isolated dir path. Note that
+   the existing `/verification.records[].notes` field may still legally carry
+   raw notes for backward compatibility; tests MUST assert that even when input
+   artifacts / legacy `/verification.records` contain raw `verificationNotes`,
+   the new summary field and the console panel do **not** surface that text.
 4. **No pass/fail inference**: only explicitly stored discrete status is shown;
    free-text notes are never parsed to derive an outcome.
 5. **Presence/counts posture**: verification evidence is surfaced as
-   presence/counts/recency (and, if chosen, inert stored text per §3), never as
-   a computed result.
+   presence/counts/recency only, never as note text and never as a computed
+   result. Stored verification text display remains deferred (§3).
 6. **Fail-closed rendering**: missing/malformed records render inert
    "unavailable" without triggering any read, run, or network call.
 7. **No write/affordance**: no apply/promote/commit/run/discard control, link,
