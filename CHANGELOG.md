@@ -5,6 +5,22 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- Accepted **ADR-0016 Project Verification Evidence Status Source** (v2.11
+  planning), after the verification-notes boundary revision. Authorizes a
+  strictly read-only, note-free verification-evidence status summary for the
+  console status panel, derived from existing records (Shape B: an additive
+  sanitized server-side summary; the panel binds to the summary, not the raw
+  note-carrying `/verification.records`). Does NOT authorize test/harness
+  execution, spawn/exec, `git`/CI/GitHub/network, raw-notes/content display,
+  pass/fail inference, `sha256`/absolute-path/diff exposure, stored
+  verification-text display, or any write/apply-from-preview surface.
+  Implementation is gated behind the `EX-2.11-1` handoff.
+- Drafted **v2.11 Verification Evidence Status Source Handoff** (AUTHORIZED for
+  `EX-2.11-1`). Bounds implementation to an additive note-free
+  `VerificationStatusSummary` (counts/recency/discrete status), console
+  status-panel binding to that summary, contract/changelog, and tests proving
+  raw `verificationNotes` in input/legacy `records` are not surfaced. No new
+  endpoint, no execution, no network, no pass/fail inference, no write surface.
 - Drafted **ADR-0016 Project Verification Evidence Status Source** as PROPOSED
   (v2.11 planning), then revised it to correct a factual error: `/verification`
   (`buildHarnessVerification`) currently returns raw `verificationNotes` as

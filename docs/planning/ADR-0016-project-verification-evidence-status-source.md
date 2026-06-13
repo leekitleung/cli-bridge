@@ -1,8 +1,19 @@
 # ADR-0016: Project Verification Evidence Status Source (v2.11 planning)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-13
+Acceptance: Senior review passed (2026-06-13) after a bounded revision that
+            corrected the verification-notes boundary (`/verification.records`
+            may carry raw `notes`; `/memory` is presence-only). Accepted with
+            conditions on the `EX-2.11-1` handoff (see "Acceptance Conditions").
+            Authorizes only a strictly read-only, note-free verification-evidence
+            status source for the console status panel, derived from existing
+            records (recommended Shape B: additive sanitized server-side
+            summary). Does NOT authorize test/harness execution, spawn/exec,
+            `git`/CI/GitHub/network, raw-notes/content display, pass/fail
+            inference, `sha256`/absolute-path/diff exposure, stored
+            verification-text display, or any write/apply-from-preview surface.
 
 ## Context
 
@@ -48,9 +59,11 @@ raw content, diff, writes, or any execution.
 
 ### 0. Decision status
 
-**PROPOSED**. This ADR authorizes no implementation. No code may be written
-until it is explicitly accepted and a separate `EX-2.11-1` implementation
-handoff is created.
+**ACCEPTED** (2026-06-13). Senior review passed after the bounded
+verification-notes boundary revision. This decision authorizes the scope in
+§1-§6 and the "Acceptance Conditions" only. No code may be written until the
+`EX-2.11-1` implementation handoff is created; implementation proceeds in an
+`EX-*` batch and returns to a `REVIEW-2.11-1` batch for closeout.
 
 ### 1. Whether a real verification-evidence status source is allowed
 
@@ -256,14 +269,14 @@ An `EX-2.11-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED. Await explicit accept/reject/revise decision.
+ACCEPTED (2026-06-13). Proceed to the implementation handoff.
 
-If accepted:
+Next:
 
-1. Draft `CLI-BRIDGE-v2.11-VERIFICATION-EVIDENCE-STATUS-HANDOFF.md` for
+1. Author `CLI-BRIDGE-v2.11-VERIFICATION-EVIDENCE-STATUS-HANDOFF.md` for
    `EX-2.11-1`.
-2. Keep implementation bounded to read-only aggregation, console status-panel
-   rendering, tests, contract, and changelog.
+2. Keep implementation bounded to the read-only sanitized summary, console
+   status-panel binding, tests, contract, and changelog.
 3. Live harness/test execution, `git`/CI/GitHub integration, raw-notes display,
-   diff/raw content, and apply-from-preview remain deferred and each require a
-   separate ADR.
+   stored verification-text display, diff/raw content, and apply-from-preview
+   remain deferred and each require a separate ADR.
