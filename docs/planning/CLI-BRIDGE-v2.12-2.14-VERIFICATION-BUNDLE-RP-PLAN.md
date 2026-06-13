@@ -1,9 +1,10 @@
 # CLI Bridge v2.12–v2.14 — Verification Bundle — RP-2.12 Planning Bundle
 
 **Batch**: `RP-2.12` (review/planning — owned by the reviewing/planning agent)
-**Status**: PLANNING COMPLETE — awaiting explicit group acceptance
+**Status**: ADR-0017 ACCEPTED; ADR-0018/ADR-0019 remain PROPOSED — DEFERRED
 **Date**: 2026-06-13
-**Produces**: ADR-0017, ADR-0018, ADR-0019 (all PROPOSED) + this execution roadmap
+**Produces**: ADR-0017 (ACCEPTED), ADR-0018/ADR-0019 (PROPOSED — DEFERRED) +
+this execution roadmap
 
 This bundle continues the verification line opened by ADR-0016 (v2.11). It
 plans the full chain in one pass while preserving strict batch boundaries: each
@@ -99,7 +100,7 @@ review decision (per the workflow contract).
 
 | ADR | Capability | Risk | Status | Accepted on | Reviewer |
 |---|---|---|---|---|---|
-| 0017 | Typed verification result model (data + display) | low | PROPOSED | — | — |
+| 0017 | Typed verification result model (data + display) | low | ACCEPTED | 2026-06-13 | Senior review |
 | 0018 | Local live verification execution | high (execution) | PROPOSED — DEFERRED | — | — |
 | 0019 | Git/CI/GitHub read-only provider | high (network + creds) | PROPOSED — DEFERRED | — | — |
 
@@ -139,7 +140,8 @@ and does NOT promote every ADR to ACCEPTED:
 
 ## 7. Next action
 
-Open group acceptance for ADR-0017/0018/0019. On acceptance, mark §5, set
-ADR-0017 ACCEPTED, author the v2.12 handoff, and run `EX-2.12-1` →
+Dispatch `EX-2.12-1` to an execution agent using
+`CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`, then return to
 `REVIEW-2.12-1` before any further execution. Do not author v2.13/v2.14 handoffs
-until their predecessor closeout and pre-acceptance design blockers are resolved.
+or accept ADR-0018/ADR-0019 until their predecessor closeout and
+pre-acceptance design blockers are resolved.

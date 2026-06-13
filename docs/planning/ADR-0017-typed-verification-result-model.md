@@ -1,19 +1,21 @@
 # ADR-0017: Typed Verification Result Model (v2.12 planning)
 
-Status: PROPOSED — awaiting explicit senior acceptance
+Status: ACCEPTED
 
 Date: 2026-06-13
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
 Depends on: none (foundation of the bundle)
 Blocks: ADR-0018 (local live verification execution), ADR-0019 (Git/CI/GitHub provider)
-Acceptance: NOT YET ACCEPTED. This ADR is the data-model-only foundation of the
-            v2.12-v2.14 verification line. It authorizes a strictly additive,
+Acceptance: ACCEPTED by senior review (2026-06-13) for `EX-2.12-1` only.
+            This ADR is the data-model-only foundation of the v2.12-v2.14
+            verification line. It authorizes a strictly additive,
             **non-executing** typed verification-result field plus its inert
             display. It does NOT authorize any product/runtime capability to run
             tests/harness/build, spawn/exec, `git`/CI/GitHub/network,
             raw-notes/raw-output display, pass/fail inference from free text, or
             any write/apply surface. Execution-agent verification commands
             remain allowed only as review checks, not as product behavior.
+            ADR-0018 and ADR-0019 remain PROPOSED — DEFERRED.
 
 ## Context
 
@@ -64,11 +66,11 @@ field exists. Hence this foundation lands first.
 
 ### 0. Decision status
 
-**PROPOSED — not accepted.** No code may be written until (a) this ADR is
-explicitly accepted by senior review and (b) an `EX-2.12-1` implementation
-handoff is authored. Implementation proceeds in an `EX-2.12-1` batch and returns
-to `REVIEW-2.12-1` for closeout. Acceptance of this ADR does **not** imply
-acceptance of ADR-0018 or ADR-0019.
+**ACCEPTED** (2026-06-13). Senior review accepted ADR-0017 only, with execution
+delegated to a separate execution agent. No runtime code may be written until an
+`EX-2.12-1` implementation handoff is authored. Implementation proceeds in an
+`EX-2.12-1` batch and returns to `REVIEW-2.12-1` for closeout. Acceptance of
+this ADR does **not** imply acceptance of ADR-0018 or ADR-0019.
 
 ### 1. What is permitted
 
@@ -228,18 +230,23 @@ An `EX-2.12-1` handoff and `REVIEW-2.12-1` closeout MUST verify:
   `VerificationEvidence` type, optional typed field on `SlotArtifact` and/or the
   observability record; extend `VerificationStatusSummary`/
   `HarnessVerificationView` additively.
+- `packages/shared/src/schemas.ts` — update artifact validation/allowlists for
+  the additive typed result field only; do not allow command/output/path/hash
+  fields.
 - `apps/local-server/src/project-observability/builders.ts` — populate typed
   counts / typed record fields from existing inputs; no new source.
 - `apps/local-server/src/routes/project-console.ts` — render the discrete typed
   status inertly.
+- `apps/local-server/src/routes/bridge-api.ts` — wiring-only acceptance of the
+  typed artifact field if required by the existing artifact-recording path; no
+  new route and no execution/provider logic.
 - `docs/contracts/bridge-projects-api.md` — document the additive typed fields.
 - `CHANGELOG.md` — record `EX-2.12-1`.
 - `tests/bridge-project-observability.test.mjs`,
-  `tests/project-console-behavior.test.mjs` (and `-ui` if needed) — boundary
-  tests.
+  `tests/project-console-behavior.test.mjs`, `tests/bridge-teams-api.test.mjs`
+  (and `-ui` if needed) — boundary tests.
 
-Wiring-only touches to `routes/bridge-api.ts` are allowed if strictly required;
-otherwise STOP and report rather than expand scope.
+Otherwise STOP and report rather than expand scope.
 
 ## Handoff prompt sketch (EX-2.12-1)
 
@@ -256,7 +263,7 @@ otherwise STOP and report rather than expand scope.
 
 ## Status / Next
 
-PROPOSED. On acceptance, author `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`
-for `EX-2.12-1`, then return to `REVIEW-2.12-1`. ADR-0018 and ADR-0019 remain
-PROPOSED/DEFERRED and each require their own acceptance and their predecessor's
-closeout.
+ACCEPTED. Proceed to `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md` for
+`EX-2.12-1`, then return to `REVIEW-2.12-1`. ADR-0018 and ADR-0019 remain
+PROPOSED — DEFERRED and each require their own acceptance and their
+predecessor's closeout.

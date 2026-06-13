@@ -5,6 +5,18 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- Accepted **ADR-0017 Typed Verification Result Model** for v2.12 (`EX-2.12-1`
+  only) and drafted `CLI-BRIDGE-v2.12-TYPED-VERIFICATION-MODEL-HANDOFF.md`.
+  Authorizes a strictly additive, non-executing typed verification-result model
+  and inert console display: closed `VerificationResult`, typed evidence fields,
+  schema validation, note-free summary/display updates, contract/tests, and
+  wiring-only artifact-recording support if needed. It does NOT authorize
+  product/runtime test execution, spawn/exec, `git`/CI/GitHub/network/provider
+  integration, credential handling, pass/fail inference from `verificationNotes`,
+  raw notes/output/content/path/hash/diff display, or run/apply/write
+  affordances. ADR-0018 and ADR-0019 remain PROPOSED — DEFERRED; execution is
+  delegated to an `EX-2.12-1` execution agent and must return to
+  `REVIEW-2.12-1` before closeout.
 - **RP-2.12 Verification Bundle planning** completed. Drafted three PROPOSED
   ADRs and an execution roadmap continuing the verification line after ADR-0016
   (v2.11): **ADR-0017 Typed Verification Result Model** (data + inert display
