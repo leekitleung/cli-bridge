@@ -24,6 +24,7 @@ import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
 import { toApplyManifest } from '../storage/workspace-apply-store.ts';
+import { normalizeProjectWorkspaceRoots } from '../storage/workspace-apply-store.ts';
 import type { ApplyRequest } from '../storage/workspace-apply-store.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
@@ -131,6 +132,8 @@ export interface BridgeRuntimeOptions {
   applyRoot?: string;
   // v2.5 ADR-0010: trusted root for pre-apply baseline manifest capture. Absent/OFF = disabled.
   baselineRoot?: string;
+  // v2.9 ADR-0014: server/operator project -> trusted root registry. Never set by HTTP.
+  projectWorkspaceRoots?: Record<string, string>;
   baselineCaptureEnabled?: boolean;
   baselineCaps?: { maxFiles: number; maxTotalBytes: number };
 }
@@ -1098,8 +1101,13 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
+  const projectWorkspaceRoots = normalizeProjectWorkspaceRoots(
+    options.projectWorkspaceRoots,
+    validateProjectKey,
+  );
   const applyStore = new WorkspaceApplyStore(applyRoot + '/cli-bridge-apply', {
     baselineRoot: options.baselineRoot,
+    projectWorkspaceRoots,
     baselineCaptureEnabled: options.baselineCaptureEnabled ?? false,
     baselineCaps: options.baselineCaps,
   });

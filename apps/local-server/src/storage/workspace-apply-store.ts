@@ -180,6 +180,25 @@ export const DEFAULT_BASELINE_CAPS: BaselineCaps = {
   maxTotalBytes: 5 * 1024 * 1024, // 5 MB
 };
 
+export function normalizeProjectWorkspaceRoots(
+  roots: Record<string, string> | undefined,
+  validateProjectKey: (value: unknown) => string | null,
+): Record<string, string> | undefined {
+  if (roots === undefined) return undefined;
+  const normalized: Record<string, string> = {};
+  for (const [projectKey, root] of Object.entries(roots)) {
+    const key = validateProjectKey(projectKey);
+    if (!key || key !== projectKey) {
+      throw new Error(`Invalid projectWorkspaceRoots key: ${projectKey}`);
+    }
+    if (typeof root !== 'string' || root.trim().length === 0) {
+      throw new Error(`Invalid projectWorkspaceRoots root for project: ${projectKey}`);
+    }
+    normalized[key] = path.resolve(root);
+  }
+  return normalized;
+}
+
 // ── v2.6 Classification (ADR-0011) ───────────────────────────────
 // Metadata-only per-file classification. Hashes used only for in-process
 // comparison; never returned, audited, or persisted.
@@ -203,6 +222,8 @@ export class WorkspaceApplyStore {
   private caps: ApplyCaps;
   /** v2.5 ADR-0010: trusted root for pre-apply baseline capture. Absent = disabled. */
   readonly baselineRoot?: string;
+  /** v2.9 ADR-0014: server/operator-provided project -> trusted root registry. */
+  readonly projectWorkspaceRoots?: Record<string, string>;
   readonly baselineCaps: BaselineCaps;
   /** v2.5 ADR-0010: baseline capture opt-in. Default false. */
   readonly baselineCaptureEnabled: boolean;
@@ -210,12 +231,16 @@ export class WorkspaceApplyStore {
   constructor(applyRoot: string, opts?: {
     caps?: ApplyCaps;
     baselineRoot?: string;
+    projectWorkspaceRoots?: Record<string, string>;
     baselineCaps?: BaselineCaps;
     baselineCaptureEnabled?: boolean;
   }) {
     this.applyRoot = path.resolve(applyRoot);
     this.caps = opts?.caps ?? { ...DEFAULT_APPLY_CAPS };
     this.baselineRoot = opts?.baselineRoot ? path.resolve(opts.baselineRoot) : undefined;
+    this.projectWorkspaceRoots = opts?.projectWorkspaceRoots
+      ? { ...opts.projectWorkspaceRoots }
+      : undefined;
     this.baselineCaps = opts?.baselineCaps ?? { ...DEFAULT_BASELINE_CAPS };
     this.baselineCaptureEnabled = opts?.baselineCaptureEnabled ?? false;
   }
@@ -314,10 +339,11 @@ export class WorkspaceApplyStore {
     // ── v2.5 ADR-0010: Pre-apply baseline manifest capture ──────
     // Must happen BEFORE any isolated directory write.
     if (this.baselineCaptureEnabled) {
-      if (!this.baselineRoot) {
+      const trustedRoot = this.resolveBaselineRootForProject(req.projectKey);
+      if (!trustedRoot) {
         return { ok: false, error: 'Baseline capture is enabled but no trusted root is configured' };
       }
-      const captureResult = this.captureBaseline(req.proposedFiles);
+      const captureResult = this.captureBaseline(req.proposedFiles, trustedRoot);
       if (!captureResult.ok) {
         return { ok: false, error: 'Baseline capture failed: ' + captureResult.error };
       }
@@ -373,8 +399,11 @@ export class WorkspaceApplyStore {
   // No raw content. Fail-closed on unreadable/non-regular/cap-exceed/path-escape.
   // Missing proposed files are NOT failures (exists:false, errorKind:'missing').
 
-  private captureBaseline(proposedFiles: string[]): { ok: true; manifest: BaselineManifest } | { ok: false; error: string } {
-    const root = this.baselineRoot!;
+  private resolveBaselineRootForProject(projectKey: string): string | undefined {
+    return this.projectWorkspaceRoots?.[projectKey] ?? this.baselineRoot;
+  }
+
+  private captureBaseline(proposedFiles: string[], root: string): { ok: true; manifest: BaselineManifest } | { ok: false; error: string } {
     const entries: BaselineManifestEntry[] = [];
     let readableCount = 0;
     let missingCount = 0;

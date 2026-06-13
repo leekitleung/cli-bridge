@@ -629,6 +629,22 @@ enabled.
 Metadata-only capture of proposed file states before an isolated apply write. No
 raw content, no diff, no classification. Trusted root from server config only.
 
+**Trusted root resolution (v2.9, ADR-0014)**: baseline capture can resolve the
+trusted root from server/operator runtime configuration in this order:
+
+1. `projectWorkspaceRoots[projectKey]` when configured for the apply request's
+   project;
+2. otherwise the existing runtime-wide `baselineRoot`;
+3. otherwise no trusted root, which fails closed when baseline capture is
+   enabled.
+
+Project workspace roots are never set from HTTP request bodies, query strings,
+project create/PATCH payloads, console input, model output, or artifact data.
+They are normalized server-side, are not persisted to snapshots, and are never
+returned or audited as absolute host paths. v2.9 does not change response
+shapes, console output, or `rootRef`; the manifest summary still uses the
+existing opaque `"runtime-baseline-root"` value.
+
 **ApplyManifest extension**: `ApplyManifest.baselineManifest` exposes summary
 metadata **only** — exactly seven fields:
 - `capturedAt` (number, Unix ms timestamp)

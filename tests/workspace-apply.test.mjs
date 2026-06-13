@@ -740,6 +740,186 @@ test('ADR-0010 AC8: manifest exposes baseline summary only, no entries', async (
 // ── AC9: No VCS/spawn — already covered by existing AC6 test ────
 // ── AC10: Backward compatibility — existing tests pass ───────────
 
+// ══════════════════════════════════════════════════════════════════
+// v2.9 ADR-0014: Project-level workspace root resolution
+// ══════════════════════════════════════════════════════════════════
+
+test('ADR-0014: project-specific root wins over runtime baselineRoot and keeps surface unchanged', async () => {
+  const fallbackRoot = createBaselineRoot();
+  const alphaRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(fallbackRoot, 'src', 'app.ts'), '// fallback app', 'utf8');
+  fs.writeFileSync(path.join(alphaRoot, 'src', 'app.ts'), '// alpha app', 'utf8');
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    baselineRoot: fallbackRoot,
+    projectWorkspaceRoots: { alpha: alphaRoot },
+    baselineCaptureEnabled: true,
+  });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// alpha app' },
+    proposedFiles: ['src/app.ts'],
+  });
+
+  const classRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(classRes.statusCode, 200);
+  assert.equal(classRes.payload.files[0].classification, 'unchanged', 'project-specific root must be used');
+
+  const manifestRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId);
+  assert.equal(manifestRes.statusCode, 200);
+  assert.deepEqual(Object.keys(manifestRes.payload.apply.baselineManifest).sort(), [
+    'byteTotal', 'capturedAt', 'fileCount', 'missingCount', 'readableCount', 'rootRef', 'unreadableCount',
+  ]);
+  assert.equal(manifestRes.payload.apply.baselineManifest.rootRef, 'runtime-baseline-root');
+
+  const body = JSON.stringify({
+    manifest: manifestRes.payload,
+    classification: classRes.payload,
+    audit: runtime.auditLog.exportEvents(),
+  });
+  assert.equal(body.includes(alphaRoot), false, 'project root must not leak');
+  assert.equal(body.includes(fallbackRoot), false, 'fallback root must not leak');
+  assert.equal(body.includes('sha256'), false, 'responses/audit projection must not expose sha256');
+
+  cleanBaselineRoot(fallbackRoot);
+  cleanBaselineRoot(alphaRoot);
+});
+
+test('ADR-0014: runtime baselineRoot fallback remains backward compatible', async () => {
+  const fallbackRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(fallbackRoot, 'src', 'app.ts'), '// fallback app', 'utf8');
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    baselineRoot: fallbackRoot,
+    projectWorkspaceRoots: { beta: createBaselineRoot() },
+    baselineCaptureEnabled: true,
+  });
+  const { team, applyId } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// fallback app' },
+    proposedFiles: ['src/app.ts'],
+  });
+
+  const classRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(classRes.statusCode, 200);
+  assert.equal(classRes.payload.files[0].classification, 'unchanged', 'runtime baselineRoot fallback must be used');
+
+  cleanBaselineRoot(runtime.applyStore.projectWorkspaceRoots.beta);
+  cleanBaselineRoot(fallbackRoot);
+});
+
+test('ADR-0014: no project root and no runtime root fails closed when capture enabled', async () => {
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    projectWorkspaceRoots: { beta: createBaselineRoot() },
+    baselineCaptureEnabled: true,
+  });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0', planStepId: stepId, proposedFiles: ['src/app.ts'],
+  });
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true, files: { 'src/app.ts': '// new' },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message.includes('no trusted root') || res.payload.message.includes('not configured'));
+  assert.equal(runtime.applyStore.getRequest(applyId).status, 'pending');
+
+  cleanBaselineRoot(runtime.applyStore.projectWorkspaceRoots.beta);
+});
+
+test('ADR-0014: invalid projectWorkspaceRoots key fails closed at runtime construction', () => {
+  const root = createBaselineRoot();
+  assert.throws(
+    () => createBridgeRuntime({ projectWorkspaceRoots: { '../alpha': root } }),
+    /Invalid projectWorkspaceRoots key/,
+  );
+  cleanBaselineRoot(root);
+});
+
+test('ADR-0014: apply request body root fields cannot override server config', async () => {
+  const alphaRoot = createBaselineRoot();
+  const maliciousRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(alphaRoot, 'src', 'app.ts'), '// alpha app', 'utf8');
+  fs.writeFileSync(path.join(maliciousRoot, 'src', 'app.ts'), '// malicious app', 'utf8');
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    projectWorkspaceRoots: { alpha: alphaRoot },
+    baselineCaptureEnabled: true,
+  });
+  runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha', workspaceApplyEnabled: true });
+  const { team, plan } = await seedTeam(runtime, 'alpha');
+  const stepId = plan.steps[0].id;
+
+  let res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests', {
+    slotId: 's0',
+    planStepId: stepId,
+    proposedFiles: ['src/app.ts'],
+    workspaceRoot: maliciousRoot,
+    baselineRoot: maliciousRoot,
+    cwd: maliciousRoot,
+  });
+  assert.equal(res.statusCode, 201);
+  const applyId = res.payload.apply.applyId;
+  res = await call(runtime, 'POST', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/confirm', {
+    confirmed: true,
+    files: { 'src/app.ts': '// alpha app' },
+    workspaceRoot: maliciousRoot,
+    baselineRoot: maliciousRoot,
+    cwd: maliciousRoot,
+  });
+  assert.equal(res.statusCode, 200);
+
+  const classRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
+  assert.equal(classRes.statusCode, 200);
+  assert.equal(classRes.payload.files[0].classification, 'unchanged', 'server-configured root must win');
+
+  const body = JSON.stringify({ response: res.payload, classification: classRes.payload, audit: runtime.auditLog.exportEvents() });
+  assert.equal(body.includes(alphaRoot), false, 'configured root must not leak');
+  assert.equal(body.includes(maliciousRoot), false, 'request-supplied root must not leak or take effect');
+
+  cleanBaselineRoot(alphaRoot);
+  cleanBaselineRoot(maliciousRoot);
+});
+
+test('ADR-0014: project isolation uses each project root only for that project', async () => {
+  const alphaRoot = createBaselineRoot();
+  const betaRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(alphaRoot, 'src', 'app.ts'), '// alpha app', 'utf8');
+  fs.writeFileSync(path.join(betaRoot, 'src', 'app.ts'), '// beta app', 'utf8');
+  cleanTestRoot();
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    projectWorkspaceRoots: { alpha: alphaRoot, beta: betaRoot },
+    baselineCaptureEnabled: true,
+  });
+
+  const alpha = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// beta app' },
+    proposedFiles: ['src/app.ts'],
+  });
+  const beta = await seedAppliedWithBaseline(runtime, 'beta', {
+    applyFiles: { 'src/app.ts': '// beta app' },
+    proposedFiles: ['src/app.ts'],
+  });
+
+  const alphaRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + alpha.team.id + '/apply-requests/' + alpha.applyId + '/classification');
+  const betaRes = await call(runtime, 'GET', TEAMS('beta') + '/' + beta.team.id + '/apply-requests/' + beta.applyId + '/classification');
+  assert.equal(alphaRes.statusCode, 200);
+  assert.equal(betaRes.statusCode, 200);
+  assert.equal(alphaRes.payload.files[0].classification, 'modified', 'alpha must not read beta root');
+  assert.equal(betaRes.payload.files[0].classification, 'unchanged', 'beta uses beta root');
+
+  cleanBaselineRoot(alphaRoot);
+  cleanBaselineRoot(betaRoot);
+});
+
 
 // ════════════════════════════════════════════════════════════════
 // EX-2.5-6: apply-request LIST response uses the safe manifest projection

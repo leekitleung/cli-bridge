@@ -159,6 +159,33 @@ test('project archivedAt persists and rehydrates across restarts', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('ADR-0014: project workspace roots are runtime config and never persisted to snapshot', () => {
+  const dir = tempDir();
+  const rootParent = tempDir();
+  const root = resolve(rootParent, 'alpha-root');
+  try {
+    const runtime = createBridgeRuntime({
+      dataDir: dir,
+      projectWorkspaceRoots: { alpha: root },
+    });
+    runtime.projectStore.upsert({ key: 'alpha', label: 'Alpha' });
+    runtime.persist();
+
+    const snapshotText = readFileSync(resolve(dir, SNAPSHOT_FILENAME), 'utf8');
+    assert.equal(snapshotText.includes(root), false, 'absolute project root must not be persisted');
+    assert.equal(snapshotText.includes('projectWorkspaceRoots'), false, 'root registry must not be persisted');
+
+    const restored = createBridgeRuntime({ dataDir: dir });
+    const project = restored.projectStore.get('alpha');
+    assert.ok(project);
+    assert.equal(project.workspaceRoot, undefined);
+    assert.equal(project.baselineRoot, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(rootParent, { recursive: true, force: true });
+  }
+});
+
 test('AuditEvent.projectId persists and rehydrates across restarts', () => {
   const dir = tempDir();
   let runtime1 = createBridgeRuntime({ dataDir: dir });

@@ -366,6 +366,26 @@ All notable changes to CLI Bridge are documented here.
   fail-closed, absent-baseline unavailable, rootRef opaque display + absolute
   sanitization, preview regression, GET-only/no write controls.
 
+### Added — v2.9 Project Workspace Root Resolution (EX-2.9-1, ADR-0014)
+
+- **Server-controlled project root registry**: `createBridgeRuntime()` now
+  accepts `projectWorkspaceRoots` as operator/runtime config for ADR-0010
+  baseline capture root selection. Keys are validated with existing project-key
+  rules and roots are normalized server-side.
+- **Fixed resolution order**: project-specific root wins when configured;
+  otherwise runtime `baselineRoot` is used; otherwise baseline capture fails
+  closed when enabled and no trusted root exists.
+- **No response-surface change**: `rootRef` remains
+  `"runtime-baseline-root"`, `ApplyManifest.baselineManifest` shape is unchanged,
+  and console output is unchanged.
+- **No root mutation or persistence**: HTTP request bodies, project POST/PATCH,
+  console input, model output, and artifact data cannot set or override roots.
+  Absolute roots are not returned, audited, or persisted to snapshots.
+- **Tests**: added v2.9 coverage for project-specific root precedence, fallback
+  behavior, fail-closed no-root behavior, invalid registry keys, request-body
+  override attempts, project isolation, project POST/PATCH root-field rejection/
+  ignore behavior, and snapshot non-persistence.
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

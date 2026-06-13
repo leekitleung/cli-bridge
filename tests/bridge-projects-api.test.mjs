@@ -545,6 +545,37 @@ test('PATCH /bridge/projects/:key rejects disallowed fields', async () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('ADR-0014: POST/PATCH project root fields are not accepted into project metadata', async () => {
+  const runtime = createBridgeRuntime();
+
+  let res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, {
+    key: 'root-test',
+    label: 'Root Test',
+    workspaceRoot: 'H:/should/not/store',
+    baselineRoot: 'H:/should/not/store',
+    cwd: 'H:/should/not/store',
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.project.workspaceRoot, undefined);
+  assert.equal(res.payload.project.baselineRoot, undefined);
+  assert.equal(res.payload.project.cwd, undefined);
+
+  res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/root-test`, {
+    workspaceRoot: 'H:/other',
+    baselineRoot: 'H:/other',
+    cwd: 'H:/other',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.workspaceRoot, undefined);
+  assert.equal(res.payload.project.baselineRoot, undefined);
+  assert.equal(res.payload.project.cwd, undefined);
+
+  const stored = runtime.projectStore.get('root-test');
+  assert.equal(stored.workspaceRoot, undefined);
+  assert.equal(stored.baselineRoot, undefined);
+  assert.equal(stored.cwd, undefined);
+});
+
 test('PATCH /bridge/projects/:key rejects unknown project', async () => {
   const runtime = createBridgeRuntime();
   const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/unknown`, {
