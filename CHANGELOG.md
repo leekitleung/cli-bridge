@@ -5,19 +5,18 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
-- Drafted **ADR-0015 Project-scoped Opaque `rootRef` Naming** as PROPOSED
-  (v2.10 planning). Proposes allowing `baselineManifest.rootRef` to change from
-  the single constant `"runtime-baseline-root"` to a project-scoped opaque
-  reference (`project-root:<projectKey>`) for project-specific baseline-capture
-  roots, while the runtime-wide fallback keeps `"runtime-baseline-root"`. The
-  value is derived from the already-public `projectKey`, never from a filesystem
-  path. It unfreezes only the `rootRef` value/format frozen by ADR-0014 and
-  authorizes no implementation. It does NOT expose absolute paths, baseline
-  entries, `sha256`, raw content, or diff; adds no endpoint or console
-  capability; adds no root editing UI, project-record root field, or root
-  persistence; and does not touch main-tree writes, `git`/VCS, or
-  apply-from-preview. Awaits explicit accept/reject/revise before any
-  `EX-2.10-1` handoff.
+- **ADR-0015 Project-scoped Opaque `rootRef` Naming** ACCEPTED for v2.10.
+  Authorizes only the `baselineManifest.rootRef` value/format change from a
+  single constant to a project-scoped opaque reference
+  (`project-root:<projectKey>`) when a project-specific baseline-capture root is
+  used; runtime-wide fallback remains `"runtime-baseline-root"`. The value is
+  derived from the already-public `projectKey`, never from a filesystem path.
+  It does NOT expose absolute paths, baseline entries, `sha256`, raw content, or
+  diff; adds no endpoint or console capability; adds no root editing UI,
+  project-record root field, or root persistence; and does not touch main-tree
+  writes, `git`/VCS, or apply-from-preview. Added the retroactive
+  `CLI-BRIDGE-v2.10-PROJECT-SCOPED-ROOTREF-HANDOFF.md` closeout record for
+  `EX-2.10-1`.
 - Added repository agent workflow governance docs: `AGENTS.md` for hard batch
   rules and `docs/planning/CLI-BRIDGE-AGENT-WORKFLOW.md` for the RP/EX/REVIEW
   process.
@@ -398,6 +397,19 @@ All notable changes to CLI Bridge are documented here.
   behavior, fail-closed no-root behavior, invalid registry keys, request-body
   override attempts, project isolation, project POST/PATCH root-field rejection/
   ignore behavior, and snapshot non-persistence.
+
+### Added — v2.10 Project-scoped rootRef Naming (EX-2.10-1, ADR-0015)
+
+- **Project-scoped rootRef**: when baseline capture uses a project-specific workspace
+  root, `rootRef` is `"project-root:<projectKey>"`. Runtime fallback still produces
+  `"runtime-baseline-root"`. manifest 7-field shape unchanged; audit syncs rootRef
+  automatically.
+- **Console**: `project-root:<key>` displayed as opaque text (not sanitized). Absolute-looking
+  rootRef values remain sanitized to placeholder.
+- **No new endpoint, no schema change, no absolute path in rootRef.**
+- **Governance**: ADR-0015 accepted; retroactive v2.10 handoff/closeout recorded.
+- **Tests**: project-scoped rootRef assertion in manifest + audit; fallback backward
+  compatibility; console opaque display + absolute sanitization.
 
 ### Added — v2.5 Workspace Apply (Approach A)
 

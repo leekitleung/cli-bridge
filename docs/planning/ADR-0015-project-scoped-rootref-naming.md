@@ -1,8 +1,10 @@
-# ADR-0015: Project-scoped Opaque `rootRef` Naming (v2.10 planning)
+# ADR-0015: Project-scoped Opaque `rootRef` Naming (v2.10)
 
-Status: PROPOSED
+Status: ACCEPTED
 
 Date: 2026-06-13
+
+Accepted: 2026-06-13
 
 ## Context
 
@@ -48,13 +50,14 @@ write/VCS action.
 
 ### 0. Decision status
 
-**PROPOSED**. This ADR authorizes no implementation. No code may be written
-until it is explicitly accepted and a separate `EX-2.10-1` implementation
-handoff is created.
+**ACCEPTED**. Explicit review acceptance authorizes the narrow v2.10
+`rootRef` value/format change described below. The retroactive execution
+handoff is recorded in
+`CLI-BRIDGE-v2.10-PROJECT-SCOPED-ROOTREF-HANDOFF.md`.
 
 ### 1. Whether project-scoped `rootRef` naming is allowed
 
-**Proposed decision**: PERMIT `rootRef` to change from the single constant
+**Decision**: PERMIT `rootRef` to change from the single constant
 `"runtime-baseline-root"` to a project-scoped **opaque reference** computed
 server-side, on the explicit condition that it never contains or encodes an
 absolute host path.
@@ -86,7 +89,7 @@ The bridge MUST NOT:
 
 ### 2. Scope
 
-In scope for a future accepted implementation:
+In scope for the accepted implementation:
 
 - Change the single production point so `rootRef` is computed from the
   resolution outcome: project key for a project-specific root, constant for the
@@ -262,14 +265,10 @@ An `EX-2.10-1` handoff and closeout review MUST verify all of the following:
 
 ## Status / Next
 
-PROPOSED. Await explicit accept/reject/revise decision.
+ACCEPTED. The v2.10 implementation is bounded by the retroactive
+`CLI-BRIDGE-v2.10-PROJECT-SCOPED-ROOTREF-HANDOFF.md` closeout record.
 
-If accepted:
-
-1. Draft `CLI-BRIDGE-v2.10-PROJECT-SCOPED-ROOTREF-HANDOFF.md` for `EX-2.10-1`.
-2. Keep implementation bounded to the `rootRef` value/format, contract, audit
-   expectation, console boundary test, and changelog.
-3. Baseline preview, raw content, diff/diff-like views, `sha256` exposure,
-   root editing UI, project-record root fields, snapshot persistence of roots,
-   main-tree writes, `git`/VCS, and apply-from-preview remain deferred and each
-   require a separate ADR.
+Baseline preview, raw content, diff/diff-like views, `sha256` exposure, root
+editing UI, project-record root fields, snapshot persistence of roots,
+main-tree writes, `git`/VCS, and apply-from-preview remain deferred and each
+require a separate ADR.

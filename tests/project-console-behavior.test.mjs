@@ -900,3 +900,43 @@ test('v2.8: baseline viewer boundary — no extra fetch, no forbidden fields, no
   assert.ok(document.getElementById('apply-view-manifest').innerHTML.includes(applyId));
   assert.ok(document.getElementById('apply-view-files').innerHTML.includes('src/a.ts'));
 });
+
+// ── v2.10 ADR-0015: project-root:<key> display in console ──────
+
+test('v2.10: project-root:<key> rendered as opaque text, not sanitized', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+
+  await switchToTeamsTab(window, document);
+  document.getElementById('apply-view-team').value = 't-proj';
+  document.getElementById('apply-view-id').value = 'apply-proj-root';
+  setupApplyFixtures(setFixture, 't-proj', 'apply-proj-root', {
+    classification200: false,
+    baseline: { ...BASELINE_FIXTURE, rootRef: 'project-root:alpha' },
+  });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const bl = document.getElementById('apply-view-baseline').innerHTML;
+  // project-root:<key> must appear as opaque text.
+  assert.ok(bl.includes('project-root:alpha'), 'project-root:<key> displayed');
+  // Must NOT be sanitized to placeholder.
+  assert.equal(bl.includes('root: —'), false, 'project-root:<key> not sanitized');
+
+  // Absolute-looking rootRef is still sanitized in the same viewer lifecycle.
+  // Switch view and test with absolute-looking rootRef.
+  window.switchSection(document.querySelector('[data-view="teams"]'));
+  await new Promise(r => setTimeout(r, 50));
+  document.getElementById('apply-view-team').value = 't-abs';
+  document.getElementById('apply-view-id').value = 'apply-abs';
+  setupApplyFixtures(setFixture, 't-abs', 'apply-abs', {
+    classification200: false,
+    baseline: { ...BASELINE_FIXTURE, rootRef: 'C:\\Windows\\System32' },
+  });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const bl2 = document.getElementById('apply-view-baseline').innerHTML;
+  assert.equal(bl2.includes('C:'), false, 'absolute rootRef sanitized');
+  assert.equal(bl2.includes('Windows'), false, 'absolute path not leaked');
+  assert.ok(bl2.includes('root: —') || bl2.includes('root:&'), 'placeholder shown');
+});

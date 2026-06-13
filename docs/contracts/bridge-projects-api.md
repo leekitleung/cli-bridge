@@ -653,7 +653,9 @@ metadata **only** — exactly seven fields:
 - `missingCount` (number)
 - `unreadableCount` (number)
 - `byteTotal` (number)
-- `rootRef` (string, always `"runtime-baseline-root"` — opaque, never an absolute host path)
+- `rootRef` (string, opaque — `"project-root:<projectKey>"` when a project-specific
+  workspace root is configured, or `"runtime-baseline-root"` for the runtime-wide
+  fallback. Never an absolute host path.)
 
 Never exposed via `ApplyManifest`: `entries` (per-file list), per-file `sha256`,
 raw baseline content, absolute host path, isolated directory path.

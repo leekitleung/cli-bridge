@@ -770,7 +770,7 @@ test('ADR-0014: project-specific root wins over runtime baselineRoot and keeps s
   assert.deepEqual(Object.keys(manifestRes.payload.apply.baselineManifest).sort(), [
     'byteTotal', 'capturedAt', 'fileCount', 'missingCount', 'readableCount', 'rootRef', 'unreadableCount',
   ]);
-  assert.equal(manifestRes.payload.apply.baselineManifest.rootRef, 'runtime-baseline-root');
+  assert.equal(manifestRes.payload.apply.baselineManifest.rootRef, 'project-root:alpha');
 
   const body = JSON.stringify({
     manifest: manifestRes.payload,
@@ -803,6 +803,11 @@ test('ADR-0014: runtime baselineRoot fallback remains backward compatible', asyn
   const classRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId + '/classification');
   assert.equal(classRes.statusCode, 200);
   assert.equal(classRes.payload.files[0].classification, 'unchanged', 'runtime baselineRoot fallback must be used');
+
+  // Verify rootRef stays "runtime-baseline-root" for fallback.
+  const manRes = await call(runtime, 'GET', TEAMS('alpha') + '/' + team.id + '/apply-requests/' + applyId);
+  assert.equal(manRes.statusCode, 200);
+  assert.equal(manRes.payload.apply.baselineManifest.rootRef, 'runtime-baseline-root');
 
   cleanBaselineRoot(runtime.applyStore.projectWorkspaceRoots.beta);
   cleanBaselineRoot(fallbackRoot);
@@ -1230,4 +1235,57 @@ test('ADR-0011: classification item shape is exactly {classification,path,size}'
     assert.deepEqual(Object.keys(item).sort(), ['classification', 'path', 'size'], 'item keys must be exactly classification/path/size');
     for (const k of banned) assert.equal(k in item, false, 'item must not carry ' + k);
   }
+});
+
+// ── v2.10 ADR-0015: Project-scoped rootRef ─────────────────────
+
+test('ADR-0015: project-specific root yields project-root:<key>, fallback yields runtime-baseline-root', async () => {
+  const projRoot = createBaselineRoot();
+  const fallbackRoot = createBaselineRoot();
+  fs.writeFileSync(path.join(projRoot, 'src', 'app.ts'), '// proj app', 'utf8');
+  fs.writeFileSync(path.join(fallbackRoot, 'src', 'app.ts'), '// fb app', 'utf8');
+  cleanTestRoot();
+
+  const runtime = createBridgeRuntime({
+    applyRoot: TEST_APPLY_ROOT,
+    baselineRoot: fallbackRoot,
+    projectWorkspaceRoots: { alpha: projRoot },
+    baselineCaptureEnabled: true,
+  });
+
+  // ── alpha uses project-specific root → project-root:alpha ──
+  const { team: t1, applyId: a1 } = await seedAppliedWithBaseline(runtime, 'alpha', {
+    applyFiles: { 'src/app.ts': '// proj app' },
+    proposedFiles: ['src/app.ts'],
+  });
+  let man = await call(runtime, 'GET', TEAMS('alpha') + '/' + t1.id + '/apply-requests/' + a1);
+  assert.equal(man.payload.apply.baselineManifest.rootRef, 'project-root:alpha');
+  // 7-field shape unchanged.
+  assert.deepEqual(Object.keys(man.payload.apply.baselineManifest).sort(), [
+    'byteTotal', 'capturedAt', 'fileCount', 'missingCount', 'readableCount', 'rootRef', 'unreadableCount',
+  ]);
+
+  // ── beta has no project root → runtime-baseline-root ──
+  runtime.projectStore.upsert({ key: 'beta', label: 'Beta', workspaceApplyEnabled: true });
+  const { team: t2, applyId: a2 } = await seedAppliedWithBaseline(runtime, 'beta', {
+    applyFiles: { 'src/app.ts': '// fb app' },
+    proposedFiles: ['src/app.ts'],
+  });
+  man = await call(runtime, 'GET', TEAMS('beta') + '/' + t2.id + '/apply-requests/' + a2);
+  assert.equal(man.payload.apply.baselineManifest.rootRef, 'runtime-baseline-root');
+
+  // Audit must carry the correct rootRef per project.
+  const events = runtime.auditLog.exportEvents();
+  const alphaAudit = events.find(e => e.type === 'workspace_apply_result' && e.result.metadata?.baseline?.rootRef === 'project-root:alpha');
+  assert.ok(alphaAudit, 'audit carries project-root:alpha');
+  const betaAudit = events.find(e => e.type === 'workspace_apply_result' && e.result.metadata?.baseline?.rootRef === 'runtime-baseline-root');
+  assert.ok(betaAudit, 'audit carries runtime-baseline-root');
+
+  // No absolute path in audit.
+  const allJson = JSON.stringify(events);
+  assert.equal(allJson.includes(projRoot), false);
+  assert.equal(allJson.includes(fallbackRoot), false);
+
+  cleanBaselineRoot(projRoot);
+  cleanBaselineRoot(fallbackRoot);
 });

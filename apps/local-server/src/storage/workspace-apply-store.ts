@@ -343,7 +343,10 @@ export class WorkspaceApplyStore {
       if (!trustedRoot) {
         return { ok: false, error: 'Baseline capture is enabled but no trusted root is configured' };
       }
-      const captureResult = this.captureBaseline(req.proposedFiles, trustedRoot);
+      // v2.10 ADR-0015: project-scoped rootRef — distinguish project root from runtime fallback.
+      const isProjectRoot = (this.projectWorkspaceRoots && req.projectKey in this.projectWorkspaceRoots);
+      const rootRef = isProjectRoot ? ('project-root:' + req.projectKey) : 'runtime-baseline-root';
+      const captureResult = this.captureBaseline(req.proposedFiles, trustedRoot, rootRef);
       if (!captureResult.ok) {
         return { ok: false, error: 'Baseline capture failed: ' + captureResult.error };
       }
@@ -403,7 +406,7 @@ export class WorkspaceApplyStore {
     return this.projectWorkspaceRoots?.[projectKey] ?? this.baselineRoot;
   }
 
-  private captureBaseline(proposedFiles: string[], root: string): { ok: true; manifest: BaselineManifest } | { ok: false; error: string } {
+  private captureBaseline(proposedFiles: string[], root: string, rootRef: string): { ok: true; manifest: BaselineManifest } | { ok: false; error: string } {
     const entries: BaselineManifestEntry[] = [];
     let readableCount = 0;
     let missingCount = 0;
@@ -478,7 +481,7 @@ export class WorkspaceApplyStore {
       ok: true,
       manifest: {
         capturedAt: Date.now(),
-        rootRef: 'runtime-baseline-root',
+        rootRef,
         fileCount,
         readableCount,
         missingCount,
