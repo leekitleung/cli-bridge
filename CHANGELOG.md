@@ -332,6 +332,18 @@ All notable changes to CLI Bridge are documented here.
   (manifest+classification+files GET, summary labels), 409 unavailable
   (manifest/files intact), preview regression (unchanged by classification).
 
+### Added — v2.8 Console Baseline Summary (EX-2.8-1, ADR-0013)
+
+- **Console baseline summary**: displays `baselineManifest` metadata from existing
+  manifest GET (capturedAt, fileCount, readableCount, missingCount, unreadableCount,
+  byteTotal, rootRef) in Apply Result viewer. rootRef is opaque text only — no path
+  or link. Absent baseline shows inert "not captured".
+- **No new endpoint**: reads from existing manifest response. No classification/
+  preview/apply behavior changed. No entries/sha256/raw content/diff/absolute path
+  displayed. No write controls.
+- **Tests**: 3 JSDOM behavior tests: summary render + no extra fetch + rootRef opaque,
+  absent-baseline unavailable with classification/files intact, preview regression.
+
 ### Added — v2.5 Workspace Apply (Approach A)
 
 - **Workspace apply store**: `apps/local-server/src/storage/workspace-apply-store.ts`.

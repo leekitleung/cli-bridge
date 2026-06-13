@@ -808,6 +808,7 @@ function renderSectionView() {
     html += '<span class="action-status" id="apply-view-status" aria-live="polite" role="status"></span>';
     html += '</div>';
     html += '<div id="apply-view-manifest" style="margin-top:10px;"></div>';
+    html += '<div id="apply-view-baseline" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-classification" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-files" style="margin-top:10px;"></div>';
     html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
@@ -876,11 +877,13 @@ async function viewApplyResult() {
   const applyId = (document.getElementById('apply-view-id') || {}).value;
   const statusEl = document.getElementById('apply-view-status');
   const manifestEl = document.getElementById('apply-view-manifest');
+  const baselineEl = document.getElementById('apply-view-baseline');
   const classEl = document.getElementById('apply-view-classification');
   const filesEl = document.getElementById('apply-view-files');
   const previewEl = document.getElementById('apply-view-preview');
   if (previewEl) { previewEl.style.display = 'none'; previewEl.textContent = ''; }
   if (manifestEl) manifestEl.innerHTML = '';
+  if (baselineEl) baselineEl.innerHTML = '';
   if (classEl) classEl.innerHTML = '';
   if (filesEl) filesEl.innerHTML = '';
   if (!teamId || !teamId.trim() || !applyId || !applyId.trim()) {
@@ -909,6 +912,54 @@ async function viewApplyResult() {
       + '<tr><td>fileCount</td><td>' + escapeHtml(String(m.fileCount ?? '—')) + '</td></tr>'
       + '<tr><td>byteTotal</td><td>' + escapeHtml(String(m.byteTotal ?? '—')) + '</td></tr>'
       + '</tbody></table>';
+  }
+
+  // ── v2.8 ADR-0013: Baseline summary from manifest ───
+  // Reads m.baselineManifest only; no extra fetch.
+  // Fail-closed: malformed summary must not throw or block classification/files.
+  if (baselineEl) {
+    const bm = m.baselineManifest;
+    if (!bm) {
+      baselineEl.innerHTML = '<span class="unavailable">Baseline not captured</span>';
+    } else {
+      try {
+        // Validate required fields; missing/invalid → unavailable.
+        if (typeof bm.fileCount !== 'number' || typeof bm.readableCount !== 'number') throw new Error('bad counts');
+        const captured = Number.isFinite(bm.capturedAt) ? escapeHtml(new Date(bm.capturedAt).toISOString()) : '—';
+
+        // rootRef: must be opaque. Reject absolute-looking values (drive letter,
+        // UNC, POSIX absolute, or backslash-containing paths).
+        var rawRoot = String(bm.rootRef || '');
+        var rootSafe = rawRoot;
+        if (rawRoot.length > 0) {
+          var ch0 = rawRoot.charAt(0);
+          // Windows drive letter (e.g. C:...), UNC (\\), POSIX absolute (/)
+          var isAbs = (ch0 === '/' || (ch0 >= 'A' && ch0 <= 'Z' && rawRoot.charAt(1) === ':')
+            || (ch0 >= 'a' && ch0 <= 'z' && rawRoot.charAt(1) === ':')
+            || rawRoot.indexOf(String.fromCharCode(92, 92)) === 0);
+          if (isAbs || rawRoot.indexOf(String.fromCharCode(92)) !== -1) {
+            rootSafe = '—';
+          }
+        }
+
+        baselineEl.innerHTML = '<div style="margin-bottom:8px;">'
+          + '<span style="font-size:12px;font-weight:500;">Baseline</span>'
+          + ' <span class="pill">' + escapeHtml(String(bm.fileCount)) + ' files</span>'
+          + ' <span class="pill">' + escapeHtml(String(bm.readableCount)) + ' readable</span>'
+          + ' <span class="pill">' + escapeHtml(String(bm.missingCount ?? 0)) + ' missing</span>'
+          + (bm.unreadableCount > 0
+            ? ' <span class="pill" style="background:#f87171;color:#fff;">' + escapeHtml(String(bm.unreadableCount)) + ' unreadable</span>'
+            : ' <span class="pill">0 unreadable</span>')
+          + '</div>'
+          + '<div style="font-size:11px;color:var(--muted);">'
+          + 'capturedAt: ' + captured + ' | '
+          + 'byteTotal: ' + escapeHtml(String(bm.byteTotal ?? '—')) + ' | '
+          + 'root: ' + escapeHtml(rootSafe)
+          + '</div>';
+      } catch {
+        baselineEl.innerHTML = '<span class="unavailable">Baseline data unavailable</span>';
+      }
+    }
   }
 
   // ── v2.7 ADR-0012: Classification fetch (non-blocking) ───

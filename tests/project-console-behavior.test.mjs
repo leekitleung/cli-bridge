@@ -493,10 +493,16 @@ async function switchToTeamsTab(window, document) {
 function setupApplyFixtures(setFixture, teamId, applyId, opts = {}) {
   const base = '/bridge/projects/cli-bridge/teams/' + teamId + '/apply-requests/' + applyId;
 
-  // Manifest fixture.
+  // Manifest fixture (with optional baselineManifest).
   setFixture(base, {
     ok: true,
-    payload: { apply: { applyId, status: 'applied', isolatedDirId: 'id1', fileCount: opts.fileCount ?? 2, byteTotal: 20 } },
+    payload: {
+      apply: {
+        applyId, status: 'applied', isolatedDirId: 'id1',
+        fileCount: opts.fileCount ?? 2, byteTotal: 20,
+        ...(opts.baseline ? { baselineManifest: opts.baseline } : {}),
+      },
+    },
   });
 
   // Classification fixture (200 or 409).
@@ -659,4 +665,193 @@ test('v2.7: classification viewer source has no write verbs, forbidden display, 
   assert.equal(/promote|apply-from-preview/i.test(viewer), false, 'no promote/write');
   assert.equal(/apply-requests[^\n]*\/confirm/.test(viewer), false, 'no confirm');
   assert.equal(/apply-requests[^\n]*\/discard/.test(viewer), false, 'no discard');
+});
+
+// ── v2.8 ADR-0013: Baseline summary behavior tests ──────────────
+
+const BASELINE_FIXTURE = {
+  capturedAt: 1718000000000,
+  rootRef: 'runtime-baseline-root',
+  fileCount: 2,
+  readableCount: 2,
+  missingCount: 0,
+  unreadableCount: 0,
+  byteTotal: 30,
+};
+
+test('v2.8: baseline summary renders all 7 fields including 0-counts, no extra fetch', async () => {
+  const { window, document, setFixture, fetchCalls } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-baseline';
+  const applyId = 'apply-bl';
+
+  await switchToTeamsTab(window, document);
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
+
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Baseline element renders.
+  const baselineEl = document.getElementById('apply-view-baseline');
+  assert.ok(baselineEl, 'baseline element exists');
+
+  // All 7 fields must be present, including 0-value counts.
+  assert.ok(baselineEl.innerHTML.includes('2 files'), 'field: fileCount');
+  assert.ok(baselineEl.innerHTML.includes('2 readable'), 'field: readableCount');
+  assert.ok(baselineEl.innerHTML.includes('0 missing'), 'field: missingCount (0)');
+  assert.ok(baselineEl.innerHTML.includes('0 unreadable'), 'field: unreadableCount (0)');
+  assert.ok(baselineEl.innerHTML.includes('byteTotal: 30'), 'field: byteTotal');
+  assert.ok(baselineEl.innerHTML.includes('capturedAt:'), 'field: capturedAt');
+  assert.ok(baselineEl.innerHTML.includes('runtime-baseline-root'), 'field: rootRef');
+
+  // No extra baseline fetch; only manifest + classification + files.
+  const fetches = fetchCalls.filter(c => c.path.includes('/apply-requests/'));
+  assert.equal(fetches.some(c => c.path.includes('/baseline')), false, 'no baseline endpoint fetch');
+
+  // No entries/sha256/raw content.
+  assert.equal(baselineEl.innerHTML.includes('entries'), false, 'no entries');
+  assert.equal(baselineEl.innerHTML.includes('sha256'), false, 'no sha256');
+  assert.equal(baselineEl.innerHTML.includes('rawContent'), false, 'no rawContent');
+});
+
+test('v2.8: malformed baseline summary shows unavailable, does not block classification/files', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-malformed';
+  const applyId = 'apply-mal';
+
+  await switchToTeamsTab(window, document);
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  // Malformed: null capturedAt and string counts.
+  setupApplyFixtures(setFixture, teamId, applyId, {
+    classification200: true,
+    baseline: {
+      capturedAt: null,          // invalid — will cause RangeError if not guarded
+      rootRef: 'runtime-baseline-root',
+      fileCount: 'bad',          // not a number
+      readableCount: 2,
+      missingCount: 0,
+      unreadableCount: 0,
+      byteTotal: 30,
+    },
+  });
+
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Malformed baseline shows unavailable (fail-closed, no throw).
+  const baselineEl = document.getElementById('apply-view-baseline');
+  assert.ok(baselineEl.innerHTML.includes('unavailable'), 'malformed baseline shows unavailable');
+
+  // Classification must still render (NOT blocked by baseline failure).
+  const classEl = document.getElementById('apply-view-classification');
+  assert.ok(classEl.innerHTML.includes('modified'), 'classification still shows after malformed baseline');
+
+  // Files must still render.
+  const filesEl = document.getElementById('apply-view-files');
+  assert.ok(filesEl.innerHTML.includes('src/a.ts'), 'files still show after malformed baseline');
+});
+
+test('v2.8: absent baselineManifest shows unavailable, classification/files still work', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-no-bl';
+  const applyId = 'apply-nobl';
+
+  await switchToTeamsTab(window, document);
+
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+
+  // baselineManifest NOT in fixture.
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
+
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Baseline unavailable.
+  const baselineEl = document.getElementById('apply-view-baseline');
+  assert.ok(baselineEl.innerHTML.includes('not captured'), 'shows not captured');
+
+  // Classification still renders.
+  const classEl = document.getElementById('apply-view-classification');
+  assert.ok(classEl.innerHTML.includes('modified'), 'classification still shows');
+
+  // Files still render.
+  const filesEl = document.getElementById('apply-view-files');
+  assert.ok(filesEl.innerHTML.includes('src/a.ts'), 'files still show');
+});
+
+test('v2.8: rootRef opaque — absolute-looking value sanitized, opaque value displayed', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+
+  // ── Opaque rootRef renders normally ───
+  await switchToTeamsTab(window, document);
+  document.getElementById('apply-view-team').value = 't-root1';
+  document.getElementById('apply-view-id').value = 'apply-r1';
+  setupApplyFixtures(setFixture, 't-root1', 'apply-r1', {
+    classification200: false,
+    baseline: { ...BASELINE_FIXTURE, rootRef: 'runtime-baseline-root' },
+  });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+  let bl = document.getElementById('apply-view-baseline');
+  assert.ok(bl.innerHTML.includes('runtime-baseline-root'), 'opaque rootRef displayed');
+
+  // ── Absolute-looking rootRef sanitized ───
+  // Switch to a new tab render (re-click teams tab).
+  window.switchSection(document.querySelector('[data-view="teams"]'));
+  await new Promise(r => setTimeout(r, 50));
+
+  document.getElementById('apply-view-team').value = 't-root2';
+  document.getElementById('apply-view-id').value = 'apply-r2';
+  setupApplyFixtures(setFixture, 't-root2', 'apply-r2', {
+    classification200: false,
+    baseline: { ...BASELINE_FIXTURE, rootRef: 'H:\\02-Areas\\project-root' },
+  });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+  bl = document.getElementById('apply-view-baseline');
+  const blHtml = bl.innerHTML;
+  assert.ok(blHtml.includes('root:'), 'root label present');
+  assert.equal(blHtml.includes('H:'), false, 'drive letter not in rendered output');
+  assert.equal(blHtml.includes('C:'), false, 'drive letter not in rendered output');
+  assert.equal(blHtml.includes('02-Areas'), false, 'absolute dir not leaked');
+  assert.equal(blHtml.includes('\\\\'), false, 'no raw backslashes leaked');
+  // rootRef is sanitized to — placeholder.
+  assert.ok(blHtml.includes('root: —') || blHtml.includes('root:&'), 'root placeholder after sanitization');
+});
+
+test('v2.8: baseline display is GET-only, preview unchanged, no write controls', async () => {
+  const { window, document, setFixture } = setupConsole({ runScripts: 'dangerously' });
+  const teamId = 't-baseline3';
+  const applyId = 'apply-bl3';
+
+  await switchToTeamsTab(window, document);
+  document.getElementById('apply-view-team').value = teamId;
+  document.getElementById('apply-view-id').value = applyId;
+  setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
+  document.getElementById('btn-apply-view').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const baselineEl = document.getElementById('apply-view-baseline');
+
+  // Verify preview still works.
+  const previewBtn = document.querySelector('.apply-preview-btn');
+  assert.ok(previewBtn);
+  previewBtn.click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const previewEl = document.getElementById('apply-view-preview');
+  assert.ok(previewEl.textContent.includes('// a content'), 'preview still shows content');
+
+  // No write controls in baseline display.
+  assert.equal(baselineEl.innerHTML.includes('/confirm'), false, 'no confirm');
+  assert.equal(baselineEl.innerHTML.includes('/discard'), false, 'no discard');
+  assert.equal(baselineEl.innerHTML.includes('button'), false, 'no button in baseline');
+  assert.equal(/promote|apply-from-preview/i.test(baselineEl.innerHTML), false, 'no promote');
 });
