@@ -5,6 +5,17 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- Drafted **ADR-0016 Project Verification Evidence Status Source** as PROPOSED
+  (v2.11 planning). Proposes a strictly read-only verification-evidence status
+  source for the project console status panel, aggregating only records the
+  bridge already exposes (`/verification`, `/memory`, `/audit`, project detail)
+  via the existing redaction-safe derived builders. Surfaces presence/counts/
+  recency and, at most, inert already-stored text. It authorizes no
+  implementation. It does NOT run tests/harness/build, spawn/exec, read `git`,
+  call CI/GitHub/provider APIs or any network, echo raw `verificationNotes`/
+  content, infer pass/fail from free text, expose `sha256`/absolute paths/diff,
+  or add any write/apply-from-preview surface. Awaits explicit accept/reject/
+  revise before any `EX-2.11-1` handoff.
 - **ADR-0015 Project-scoped Opaque `rootRef` Naming** ACCEPTED for v2.10.
   Authorizes only the `baselineManifest.rootRef` value/format change from a
   single constant to a project-scoped opaque reference
