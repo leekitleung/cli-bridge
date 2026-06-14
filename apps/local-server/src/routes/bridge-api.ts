@@ -29,6 +29,8 @@ import type { ApplyRequest } from '../storage/workspace-apply-store.ts';
 import { VerificationRunStore } from '../storage/verification-run-store.ts';
 import type { VerifyProfile } from '../../../../packages/shared/src/types.ts';
 import { runVerificationProfile } from '../verification/profile-runner.ts';
+import { readGitStatus } from '../verification/git-status-reader.ts';
+import type { GitStatusView } from '../../../../packages/shared/src/types.ts';
 import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
@@ -123,6 +125,8 @@ export interface BridgeRuntime {
   // v2.13: operator-configured verification profiles
   readonly verifyProfiles?: readonly VerifyProfile[];
   readonly verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
+  // v2.14 ADR-0019-a: injectable git spawn for tests.
+  readonly gitSpawnFn?: import('../verification/git-status-reader.js').GitSpawnFn;
   readonly projectWorkspaceRoots?: Record<string, string>;
 }
 
@@ -150,6 +154,8 @@ export interface BridgeRuntimeOptions {
   verifyProfiles?: VerifyProfile[];
   // v2.13 ADR-0018: injectable spawn for tests.
   verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
+  // v2.14 ADR-0019-a: injectable git spawn for tests.
+  gitSpawnFn?: import('../verification/git-status-reader.js').GitSpawnFn;
 }
 
 
@@ -1090,6 +1096,60 @@ async function postWorkBuddyMultiplex(
   }
 }
 
+// ── v2.14 ADR-0019-a: Read-only local git status ─────────────────
+
+async function handleGitStatusGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+): Promise<BridgeResult> {
+  const project = runtime.projectStore.get(projectKey);
+  if (!project) return error(404, 'Project not found');
+  if (project.archivedAt) return error(409, 'Cannot fetch git status for archived project');
+  if (!project.gitStatusEnabled) return error(409, 'Git status is not enabled for this project');
+
+  const workspaceRoot = runtime.projectWorkspaceRoots?.[projectKey];
+  if (!workspaceRoot) return error(409, 'No project workspace root configured');
+
+  const result = await readGitStatus({
+    projectKey,
+    workspaceRoot,
+    spawnFn: runtime.gitSpawnFn,
+  });
+
+  // Redacted audit event — no cwd/root, no remote URL, no commit hash, no raw output.
+  runtime.auditLog.createAndAppend({
+    sessionId: 'git-status-' + projectKey + '-' + Date.now(),
+    projectId: projectKey,
+    type: 'workspace_apply_result',
+    source: 'git-status',
+    target: 'project-' + projectKey,
+    result: {
+      ok: result.view.available,
+      metadata: {
+        gitStatus: {
+          isGitRepo: result.view.isGitRepo,
+          dirty: result.view.dirty,
+          aheadCount: result.view.aheadCount,
+          behindCount: result.view.behindCount,
+          available: result.view.available,
+          elapsedMs: result.elapsedMs,
+        },
+      },
+    },
+  });
+
+  return ok({
+    branch: result.view.branch,
+    dirty: result.view.dirty,
+    aheadCount: result.view.aheadCount,
+    behindCount: result.view.behindCount,
+    isGitRepo: result.view.isGitRepo,
+    fetchedAt: result.view.fetchedAt,
+    available: result.view.available,
+    elapsedMs: result.elapsedMs,
+  });
+}
+
 // ── v2.13 ADR-0018: Live verification handlers ──────────────────
 
 function handleVerificationProfilesGet(
@@ -1320,6 +1380,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     verificationRunStore,
     verifyProfiles: options.verifyProfiles,
     verificationSpawnFn: options.verificationSpawnFn,
+    // v2.14 ADR-0019-a
+    gitSpawnFn: options.gitSpawnFn,
     projectWorkspaceRoots,
   };
 }
@@ -1687,6 +1749,8 @@ export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
 // v2.13: live verification sub-routes
 export const BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX = '/verification/profiles';
 export const BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX = '/verification/confirm';
+// v2.14 ADR-0019-a: read-only local git status
+export const BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX = '/verification/git-status';
 
 // v2.2 WorkBuddy non-executing task system project-scoped path.
 export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
@@ -1702,7 +1766,8 @@ function matchProjectObservabilityPath(pathname: string): {
   const rest = pathname.slice(prefix.length);
   for (const sub of [BRIDGE_PROJECT_TIMELINE_SUFFIX, BRIDGE_PROJECT_AUDIT_SUFFIX,
     BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX,
-    BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX, BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX]) {
+    BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX, BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX,
+    BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX]) {
     if (rest.endsWith(sub)) {
       const raw = rest.slice(0, -sub.length);
       if (raw.length === 0 || raw.includes('/')) continue;
@@ -2138,6 +2203,9 @@ export async function handleBridgeRequest(
       ? parsed.body.description : undefined;
     const workspaceApplyEnabled = typeof parsed.body.workspaceApplyEnabled === 'boolean'
       ? parsed.body.workspaceApplyEnabled : undefined;
+    // v2.14 ADR-0019-a: gitStatusEnabled — boolean toggle, default off.
+    const gitStatusEnabled = typeof parsed.body.gitStatusEnabled === 'boolean'
+      ? parsed.body.gitStatusEnabled : undefined;
     // v2.13: verifyProfileId — string to set, null to remove, undefined to leave unchanged.
     // Reject non-string/non-null values explicitly.
     if (parsed.body.verifyProfileId !== undefined && parsed.body.verifyProfileId !== null
@@ -2148,7 +2216,7 @@ export async function handleBridgeRequest(
       : (typeof parsed.body.verifyProfileId === 'string' ? parsed.body.verifyProfileId as string | null : undefined);
 
     // Reject disallowed command-like fields (root-like fields silently ignored per ADR-0014).
-    const blocked = ['key', 'createdAt', 'archivedAt', 'verifyCommand', 'command', 'argv', 'env', 'shell', 'stdout', 'stderr', 'output'];
+    const blocked = ['key', 'createdAt', 'archivedAt', 'verifyCommand', 'command', 'argv', 'env', 'shell', 'stdout', 'stderr', 'output', 'remote', 'token', 'network', 'provider', 'credentials', 'gitCmd', 'gitCommand', 'repoUrl'];
     for (const field of blocked) {
       if (field in parsed.body) return error(400, `Field '${field}' is not allowed in project PATCH`);
     }
@@ -2166,6 +2234,7 @@ export async function handleBridgeRequest(
       description,
       workspaceApplyEnabled,
       verifyProfileId: parsed.body.verifyProfileId !== undefined ? verifyProfileId : undefined,
+      gitStatusEnabled,
     });
     runtime.persist();
     return ok({ project: updated });
@@ -2252,6 +2321,10 @@ export async function handleBridgeRequest(
     // v2.13 ADR-0018: live verification profiles list (GET)
     if (obsPath.sub === BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX) {
       return handleVerificationProfilesGet(runtime, obsPath.key!);
+    }
+    // v2.14 ADR-0019-a: read-only local git status (GET)
+    if (obsPath.sub === BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX) {
+      return handleGitStatusGet(runtime, obsPath.key!);
     }
     // v2.13 confirm handled outside GET-only block below.
     return error(404, 'Not found');

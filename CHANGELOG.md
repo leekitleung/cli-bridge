@@ -4,6 +4,37 @@ All notable changes to CLI Bridge are documented here.
 
 ## [Unreleased] — v2.x
 
+### Implemented
+- **EX-2.14-1 ADR-0019-a: Read-only local git status provider** — added an opt-in
+  (`gitStatusEnabled`, default `false`), human-triggered (GET-only), read-only,
+  offline local `git` status context provider. Key components:
+  - **types**: `GitStatusView` (sanitized: `branch`/`dirty`/`aheadCount`/
+    `behindCount`/`isGitRepo`/`fetchedAt`/`available`; never exposes commit hash,
+    remote URL, absolute path, raw output, diff, or token) + `Project.gitStatusEnabled`
+    opt-in toggle.
+  - **schema**: `gitStatusEnabled` boolean validation in project schema.
+  - **reader**: `git-status-reader.ts` — `shell:false` structured argv, read-only
+    git commands (`rev-parse --is-inside-work-tree`, `branch --show-current`,
+    `status --porcelain`, `rev-list --left-right --count`), defense-in-depth
+    (`-c core.fsmonitor=` / `-c core.hooksPath=`, minimal env with
+    `GIT_TERMINAL_PROMPT=0`), timeout/kill, output cap + discard, `gitSpawnFn`
+    injection for tests.
+  - **route**: `GET /bridge/projects/:key/verification/git-status` — opt-in gated
+    (409 if disabled), project-root-required (409/no spawn if absent), archived
+    project 409, fail-closed on error, redacted audit event per fetch.
+  - **console**: lazy git status display in verification view — read-only text
+    (branch + dirty/clean + ahead/behind), inert "unavailable" on failure, GET-only.
+  - **tests**: `tests/git-status-reader.test.mjs` (17 tests — argv assertion,
+    sanitized output, fail-closed, cwd containment, branch sanitization, no
+    network/credentials, no raw output exposure).
+  - **contract**: `docs/contracts/bridge-projects-api.md` updated with full endpoint
+    specification and non-goals.
+  - No ADR-0019-b code (remote CI/GitHub + credentials) introduced.
+  - All existing tests pass (674/674), typecheck clean, lint clean, diff-check clean.
+  - Changes: types.ts, schemas.ts, git-status-reader.ts (new), bridge-api.ts,
+    project-console.ts, project-store.ts, bridge-projects-api.md, CHANGELOG.md,
+    git-status-reader.test.mjs (new).
+
 ### Planning / ADR
 - **ADR-0019-a Read-only Local Git Status Provider ACCEPTED** (`REVIEW-ADR-0019-a`,
   2026-06-13, ADR-0007 §2; no credential review needed) after RP-2.14-a hardened

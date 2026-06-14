@@ -841,3 +841,95 @@ per ADR-0014.
 - cwd only from `projectWorkspaceRoots[projectKey]`; no baselineRoot fallback.
 - Profiles are runtime-only; never in project records or snapshots.
 - console: GET-only gate with Confirm button; no command/cwd/env input, no auto-trigger.
+
+### Read-only Local Git Status (v2.14, ADR-0019-a)
+
+Opt-in (`gitStatusEnabled`, default `false`), human-triggered, read-only, offline local
+`git` status context. **No network, no remote, no credentials, no git writes, no
+fetch/pull. Git status is context only — never mapped to pass/fail.**
+
+#### GET .../verification/git-status
+
+Read-only, human-triggered GET. Fails closed on all errors.
+
+**Opt-in gate**: `Project.gitStatusEnabled` must be `true` (default `false`).
+Set via `PATCH /bridge/projects/:key { "gitStatusEnabled": true }`.
+
+**Root resolution**: cwd derives solely from `projectWorkspaceRoots[projectKey]`;
+no `baselineRoot` fallback. Absent project root → `409` and no spawn.
+
+**Git commands** (all `shell:false`, structured argv, read-only):
+- `git rev-parse --is-inside-work-tree`
+- `git branch --show-current`
+- `git status --porcelain`
+- `git rev-list --left-right --count @{u}...HEAD`
+
+Defense-in-depth: `-c core.fsmonitor=` / `-c core.hooksPath=`, minimal env
+(`GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, `GIT_CONFIG_NOSYSTEM=1`).
+
+**Response 200** (sanitized — no absolute path, remote URL, commit hash, raw output, diff, token):
+```json
+{
+  "branch": "feat/git-status",
+  "dirty": false,
+  "aheadCount": 3,
+  "behindCount": 0,
+  "isGitRepo": true,
+  "fetchedAt": 1718000000000,
+  "available": true,
+  "elapsedMs": 142
+}
+```
+
+**Not a git repo** (200):
+```json
+{
+  "branch": null,
+  "dirty": false,
+  "aheadCount": null,
+  "behindCount": null,
+  "isGitRepo": false,
+  "fetchedAt": 1718000000000,
+  "available": true,
+  "elapsedMs": 25
+}
+```
+
+**Unavailable** (200, fail-closed):
+```json
+{
+  "branch": null,
+  "dirty": false,
+  "aheadCount": null,
+  "behindCount": null,
+  "isGitRepo": false,
+  "fetchedAt": 1718000000000,
+  "available": false,
+  "elapsedMs": 12
+}
+```
+
+**Error cases**:
+
+| Status | Condition |
+|--------|-----------|
+| 404 | Project not found |
+| 409 | Project archived |
+| 409 | `gitStatusEnabled` is not `true` |
+| 409 | No `projectWorkspaceRoots[projectKey]` configured |
+| 405 | Non-GET method |
+
+**Sanitized fields only**: `branch`, `dirty`, `aheadCount`, `behindCount`, `isGitRepo`,
+`fetchedAt`, `available`, `elapsedMs`. **Never**: absolute cwd/root, remote URL, commit
+hash/SHA, raw git stdout/stderr, diff, token.
+
+**Audit**: each fetch writes one redacted audit event with `gitStatus` metadata
+(`isGitRepo`, `dirty`, `aheadCount`, `behindCount`, `available`, `elapsedMs`). No
+branch name, path, URL, hash, raw output, or token.
+
+**Console**: lazily fetched and displayed in the verification view as read-only
+text (`branch`, `dirty`/`clean`, `ahead`, `behind`). No write/execute controls,
+no scheduler/model trigger.
+
+**Non-goals**: remote CI/GitHub/provider clients, credentials, git writes,
+fetch/pull/commit/push, pass/fail mapping, ADR-0019-b.

@@ -32,6 +32,8 @@ export interface CreateProjectInput {
   workspaceApplyEnabled?: boolean;
   // v2.13: optional verifyProfileId; null removes opt-in.
   verifyProfileId?: string | null;
+  // v2.14 ADR-0019-a: opt-in git status.
+  gitStatusEnabled?: boolean;
 }
 
 export interface BuildSummaryInput {
@@ -136,6 +138,9 @@ export class InMemoryProjectStore {
       verifyProfileId: 'verifyProfileId' in input
         ? (input.verifyProfileId ?? undefined)
         : existing?.verifyProfileId,
+      gitStatusEnabled: 'gitStatusEnabled' in input
+        ? input.gitStatusEnabled
+        : existing?.gitStatusEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));
@@ -153,6 +158,7 @@ export class InMemoryProjectStore {
       description: input.description,
       createdAt: input.now ?? Date.now(),
       workspaceApplyEnabled: input.workspaceApplyEnabled ?? false,
+      gitStatusEnabled: input.gitStatusEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));

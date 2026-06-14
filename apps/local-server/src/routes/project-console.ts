@@ -771,6 +771,18 @@ function renderSectionView() {
     html += '</div>';
     html += '<div id="live-verify-result" style="margin-top:6px;font-size:11px;"></div>';
     html += '</div>';
+
+    // ── v2.14 ADR-0019-a: read-only local git status ───
+    html += '<div id="git-status-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
+    html += '<div style="font-size:12px;font-weight:500;">Git Status (read-only)</div>';
+    html += '<div id="git-status-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">';
+    html += '<span class="unavailable">not yet loaded</span>';
+    html += '</div>';
+    html += '<div style="margin-top:6px;">';
+    html += '<button id="btn-git-status-refresh" class="secondary" style="font-size:11px;padding:4px 8px;">Refresh</button>';
+    html += '</div>';
+    html += '</div>';
+
     const verView = store.cache.verification;
     html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {
@@ -900,6 +912,7 @@ function renderSectionView() {
   // v2.13: Bind live verification gate if in verification view.
   if (store.view === 'verification') {
     initLiveVerificationGate();
+    initGitStatusGate();
   }
 }
 
@@ -981,6 +994,52 @@ async function refreshVerificationCache() {
     if (veR.ok) store.cache.verification = veR.data;
   } catch { /* ignore */ }
 }
+
+// ─── v2.14 ADR-0019-a: Git Status Gate ───
+
+async function initGitStatusGate() {
+  const metaEl = document.getElementById('git-status-meta');
+  const refreshBtn = document.getElementById('btn-git-status-refresh');
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification/git-status';
+
+  async function fetchGitStatus() {
+    if (metaEl) metaEl.innerHTML = '<span class="unavailable">loading...</span>';
+    try {
+      const res = await api(base);
+      if (res.ok && res.data) {
+        const d = res.data;
+        let html = '';
+        if (!d.available) {
+          html = '<span class="unavailable">unavailable</span>';
+        } else if (!d.isGitRepo) {
+          html = '<span class="unavailable">not a git repository</span>';
+        } else {
+          // Sanitized display — no commit hash, remote URL, absolute path, raw output.
+          const parts = [];
+          if (d.branch) parts.push('<span class="pill">' + escapeHtml(d.branch) + '</span>');
+          parts.push(d.dirty ? '<span style="color:#f59e0b;">dirty</span>' : '<span style="color:#22c55e;">clean</span>');
+          if (d.aheadCount !== null && d.aheadCount !== undefined) parts.push('ahead ' + escapeHtml(String(d.aheadCount)));
+          if (d.behindCount !== null && d.behindCount !== undefined) parts.push('behind ' + escapeHtml(String(d.behindCount)));
+          html = parts.join(' · ');
+        }
+        if (metaEl) metaEl.innerHTML = html;
+      } else {
+        if (metaEl) metaEl.innerHTML = '<span class="unavailable">' + escapeHtml(res.data?.message || 'unavailable') + '</span>';
+      }
+    } catch {
+      if (metaEl) metaEl.innerHTML = '<span class="unavailable">fetch failed</span>';
+    }
+  }
+
+  // Initial fetch
+  fetchGitStatus();
+
+  // Refresh button
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', fetchGitStatus);
+  }
+}
+
 // Uses ONLY GET endpoints: manifest, file list, and size-capped redacted
 // preview. Issues no write requests of any kind.
 async function viewApplyResult() {

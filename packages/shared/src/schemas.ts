@@ -919,6 +919,11 @@ export function validateProject(value: unknown): SchemaValidationResult {
       errors.push('verifyProfileId must be a string or absent');
     }
   }
+  // v2.14 ADR-0019-a: gitStatusEnabled must be boolean if present.
+  if ('gitStatusEnabled' in value && value.gitStatusEnabled !== undefined
+      && typeof value.gitStatusEnabled !== 'boolean') {
+    errors.push('gitStatusEnabled must be a boolean or absent');
+  }
   return { ok: errors.length === 0, errors };
 }
 

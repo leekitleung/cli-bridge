@@ -624,6 +624,20 @@ export interface VerifyProfileMeta {
   selected: boolean;  // project.verifyProfileId matches
 }
 
+// v2.14 ADR-0019-a: sanitized local git status view.
+// Read-only, offline, no network, no credentials, no git writes.
+// Never contains: absolute cwd/root, remote URL, commit hash/SHA, raw output, diff, token.
+
+export interface GitStatusView {
+  branch: string | null;
+  dirty: boolean;
+  aheadCount: number | null;
+  behindCount: number | null;
+  isGitRepo: boolean;
+  fetchedAt: number;
+  available: boolean;
+}
+
 /** Sanitized live verification run record preserved between runs. No raw output/argv/cwd/env/root. */
 export interface VerificationRunRecord {
   projectKey: string;
@@ -668,6 +682,8 @@ export interface Project {
   workspaceApplyEnabled?: boolean;
   /** v2.13: operator-configured verification profile id. Default off. */
   verifyProfileId?: string;
+  /** v2.14 ADR-0019-a: opt-in local read-only git status. Default off. */
+  gitStatusEnabled?: boolean;
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */

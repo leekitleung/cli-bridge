@@ -723,6 +723,185 @@ test('v2.13: verification view has no command/cwd/env free-form input', async ()
   }
 });
 
+// ── v2.14 ADR-0019-a: Git status console display tests ────────────
+
+test('v2.14: verification view fetches git-status and displays branch/dirty/ahead-behind', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  // git-status fixture — healthy repo
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', {
+    ok: true,
+    payload: {
+      branch: 'feat/my-branch',
+      dirty: false,
+      aheadCount: 5,
+      behindCount: 2,
+      isGitRepo: true,
+      fetchedAt: Date.now(),
+      available: true,
+      elapsedMs: 42,
+    },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const gitCalls = fetchCalls.filter(c => c.path.endsWith('/verification/git-status'));
+  assert.ok(gitCalls.length >= 1, 'must fetch git-status');
+
+  const metaEl = document.getElementById('git-status-meta');
+  assert.ok(metaEl, 'git-status-meta element must exist');
+  const html = metaEl.innerHTML;
+  assert.ok(html.includes('feat/my-branch'), 'branch name displayed');
+  assert.ok(html.includes('clean'), 'clean status displayed');
+  assert.ok(html.includes('ahead 5'), 'ahead count displayed');
+  assert.ok(html.includes('behind 2'), 'behind count displayed');
+  assert.equal(html.includes('commit'), false, 'no commit hash');
+  assert.equal(html.includes('https://'), false, 'no URL');
+  assert.equal(html.includes('sha256'), false, 'no hash');
+  assert.equal(html.includes('stdout'), false, 'no raw output');
+});
+
+test('v2.14: git-status unavailable shows inert unavailable text', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', {
+    ok: true,
+    payload: { branch: null, dirty: false, aheadCount: null, behindCount: null, isGitRepo: false, fetchedAt: Date.now(), available: false, elapsedMs: 5 },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const metaEl = document.getElementById('git-status-meta');
+  assert.ok(metaEl, 'git-status-meta element must exist');
+  assert.ok(metaEl.innerHTML.includes('unavailable'), 'unavailable text displayed');
+});
+
+test('v2.14: git-status fetch failure shows inert unavailable, no throw', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  // git-status fetch fails.
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', {
+    ok: false, status: 409, payload: { status: 'error', message: 'Git status is not enabled for this project' },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const metaEl = document.getElementById('git-status-meta');
+  assert.ok(metaEl, 'git-status-meta element must exist');
+  assert.ok(metaEl.innerHTML.includes('unavailable') || metaEl.innerHTML.includes('not enabled'),
+    'should show unavailable or error message on fetch failure');
+  // Verify no throw by checking the element still exists (nothing crashed).
+  assert.ok(document.getElementById('workspace'), 'workspace still present after git-status fetch failure');
+});
+
+test('v2.14: git-status display has no write/execute controls, GET-only', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', {
+    ok: true,
+    payload: { branch: 'main', dirty: true, aheadCount: 1, behindCount: 0, isGitRepo: true, fetchedAt: Date.now(), available: true, elapsedMs: 10 },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const gitCalls = fetchCalls.filter(c => c.path.endsWith('/verification/git-status'));
+  assert.ok(gitCalls.length >= 1, 'must have git-status calls');
+  for (const c of gitCalls) {
+    assert.equal(c.method, 'GET', 'git-status calls must be GET');
+  }
+
+  const section = document.getElementById('git-status-section');
+  assert.ok(section, 'git-status-section must exist');
+  const sectionHtml = section.innerHTML.toLowerCase();
+  // No write/execute controls.
+  for (const banned of ['run', 'execute', 'commit', 'apply', 'discard', 'promote', 'confirm']) {
+    assert.equal(sectionHtml.includes(banned), false, `no ${banned} in git-status section`);
+  }
+  // No command-like inputs in git-status section.
+  const inputs = section.querySelectorAll('input, textarea');
+  for (const inp of inputs) {
+    const combined = (inp.id || '') + (inp.name || '') + (inp.type || '');
+    for (const banned of ['command', 'argv', 'cwd', 'env', 'shell', 'root', 'output']) {
+      assert.equal(combined.toLowerCase().includes(banned), false, `no ${banned} input in git-status section`);
+    }
+  }
+  // Only a Refresh button (Read-only).
+  const buttons = section.querySelectorAll('button');
+  assert.ok(buttons.length <= 1, 'at most one button in git-status section');
+  if (buttons.length > 0) {
+    assert.ok(buttons[0].id === 'btn-git-status-refresh', 'only expected button is refresh');
+  }
+});
+
+test('v2.14: git-status branch name is HTML-escaped', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', {
+    ok: true,
+    payload: { branch: '<script>alert(1)</script>', dirty: false, aheadCount: 0, behindCount: 0, isGitRepo: true, fetchedAt: Date.now(), available: true, elapsedMs: 10 },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const metaEl = document.getElementById('git-status-meta');
+  assert.ok(metaEl, 'git-status-meta must exist');
+  const html = metaEl.innerHTML;
+  // The raw HTML tag must not appear as literal HTML — must be escaped.
+  assert.equal(html.includes('<script>'), false, 'script tag must be escaped');
+  // The escaped entity must be present.
+  assert.ok(html.includes('&lt;script&gt;'), 'branch name must be HTML-escaped (contains &lt;script&gt;)');
+});
+
 // ── Helpers for v2.7 ADR-0012 Apply Viewer JSDOM tests ──────────
 
 /** Switch to teams tab and return the JSDOM state. */
@@ -1185,4 +1364,63 @@ test('v2.10: project-root:<key> rendered as opaque text, not sanitized', async (
   assert.equal(bl2.includes('C:'), false, 'absolute rootRef sanitized');
   assert.equal(bl2.includes('Windows'), false, 'absolute path not leaked');
   assert.ok(bl2.includes('root: —') || bl2.includes('root:&'), 'placeholder shown');
+});
+
+// ── v2.14 ADR-0019-a: read-only git status console rendering ──────
+
+function setupGitStatusFixtures(setFixture, gitStatusPayload) {
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/profiles', { ok: true, payload: { profiles: [], selectedProfileId: null, workspaceRootAvailable: true } });
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', { ok: true, payload: gitStatusPayload });
+}
+
+test('v2.14: verification view renders read-only git status, escaped, GET-only, no write controls', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setupGitStatusFixtures(setFixture, {
+    branch: 'feat/<script>', dirty: true, aheadCount: 2, behindCount: 1,
+    isGitRepo: true, fetchedAt: 123, available: true,
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const meta = document.getElementById('git-status-meta');
+  assert.ok(meta, 'git-status-meta exists');
+  const html = meta.innerHTML;
+  assert.ok(html.includes('dirty'), 'shows dirty');
+  assert.ok(html.includes('ahead 2'), 'shows ahead count');
+  assert.ok(html.includes('behind 1'), 'shows behind count');
+  assert.equal(html.includes('<script>'), false, 'branch name must be HTML-escaped');
+
+  const section = document.getElementById('git-status-section');
+  assert.equal(section.querySelectorAll('input, textarea').length, 0, 'no free-form input');
+  const btnText = [...section.querySelectorAll('button')].map(b => b.textContent || '').join(' ');
+  assert.equal(/run|execute|commit|apply|promote|discard/i.test(btnText), false, 'no write/execute control labels');
+
+  const gsCalls = fetchCalls.filter(c => c.path.endsWith('/verification/git-status'));
+  assert.ok(gsCalls.length >= 1, 'git status fetched');
+  assert.ok(gsCalls.every(c => c.method === 'GET'), 'git status calls are GET-only');
+});
+
+test('v2.14: git status renders inert unavailable without throwing', async () => {
+  const { document, setFixture } = setupConsole();
+  setupGitStatusFixtures(setFixture, { available: false, isGitRepo: false, branch: null, dirty: false, aheadCount: null, behindCount: null, fetchedAt: 1 });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const meta = document.getElementById('git-status-meta');
+  assert.ok(meta.innerHTML.includes('unavailable'), 'renders inert unavailable');
 });

@@ -905,9 +905,313 @@ test('v2.13: POST /verification/confirm no-spawn when no project workspace root'
 });
 
 test('v2.13: POST /verification/confirm no-spawn with baselineRoot when no project workspace root (no fallback)', async () => {
-  const rt = makeVerifyRuntime({ root: {}, baselineRoot: '/tmp/baseline' }); // baselineRoot exists but not projectWorkspaceRoots
+  const rt = makeVerifyRuntime({ root: {}, baselineRoot: '/tmp/baseline' });
   await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
   const res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: true });
-  assert.equal(res.statusCode, 409); // no baselineRoot fallback
+  assert.equal(res.statusCode, 409);
   assert.equal(rt.__spawnCalls.length, 0, 'no spawn and no baselineRoot fallback');
+});
+
+// ── v2.14 ADR-0019-a: /verification/git-status route tests ──────
+
+function makeGitStatusRuntime(opts) {
+  const spawnCalls = [];
+  const gitSpawnFn = opts.spawnFn ?? (async (file, args, o) => {
+    spawnCalls.push({ file, args, cwd: o.cwd, env: o.env });
+    return {
+      ok: true, exitCode: 0, signal: null,
+      stdoutChunks: [Buffer.from('true\n')],
+      stderrChunks: [],
+    };
+  });
+  const runtime = createBridgeRuntime({
+    projectWorkspaceRoots: 'root' in opts ? opts.root : { 'cli-bridge': '/tmp/test-root' },
+    baselineRoot: opts.baselineRoot ?? '/tmp/baseline',
+    gitSpawnFn,
+  });
+  runtime.__gitSpawnCalls = spawnCalls;
+  return runtime;
+}
+
+test('v2.14: git-status disabled → 409 and no spawn', async () => {
+  const rt = makeGitStatusRuntime({});
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`);
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message?.includes('not enabled') || res.payload.message?.includes('Git status'));
+  assert.equal(rt.__gitSpawnCalls.length, 0, 'no spawn when disabled');
+});
+
+test('v2.14: git-status enabled → 200 with sanitized view, spawn invoked', async () => {
+  const rt = makeGitStatusRuntime({
+    spawnFn: async (file, args, o) => {
+      rt.__gitSpawnCalls.push({ file, args, cwd: o.cwd, env: o.env });
+      if (args.includes('--is-inside-work-tree')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('true\n')], stderrChunks: [] };
+      }
+      if (args.includes('--show-current')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('main\n')], stderrChunks: [] };
+      }
+      if (args.includes('--porcelain')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('M file.ts\n')], stderrChunks: [] };
+      }
+      return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('3\t1\n')], stderrChunks: [] };
+    },
+  });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.isGitRepo, true);
+  assert.equal(res.payload.available, true);
+  assert.equal(res.payload.branch, 'main');
+  assert.equal(res.payload.dirty, true);
+  assert.equal(res.payload.aheadCount, 3);
+  assert.equal(res.payload.behindCount, 1);
+  assert.equal(typeof res.payload.fetchedAt, 'number');
+  assert.equal(typeof res.payload.elapsedMs, 'number');
+  for (const banned of ['stdout', 'stderr', 'cwd', 'root', 'remote', 'hash', 'commit', 'diff', 'token', 'argv']) {
+    assert.equal(banned in res.payload, false, `response must not contain ${banned}`);
+  }
+  const payloadJson = JSON.stringify(res.payload);
+  assert.equal(payloadJson.includes('test-root'), false, 'response must not leak absolute cwd/root');
+  assert.equal(payloadJson.includes('https://'), false, 'response must not contain URL');
+  assert.equal(payloadJson.includes('sha256'), false, 'response must not contain hash');
+});
+
+test('v2.14: archived project → 409 and no spawn', async () => {
+  const rt = makeGitStatusRuntime({ root: { 'alpha': '/tmp/alpha-root' } });
+  await call(rt, 'POST', BRIDGE_PROJECTS_PATH, { key: 'alpha', label: 'Alpha' });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, { gitStatusEnabled: true });
+  await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/alpha/archive`);
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha/verification/git-status`);
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message?.includes('archived') || res.payload.message?.includes('archive'));
+  assert.equal(rt.__gitSpawnCalls.length, 0, 'no spawn for archived project');
+});
+
+test('v2.14: no project workspace root → 409 and no spawn (no baselineRoot fallback)', async () => {
+  const rt = makeGitStatusRuntime({ root: {} });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`);
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message?.includes('root') || res.payload.message?.includes('workspace'));
+  assert.equal(rt.__gitSpawnCalls.length, 0, 'no spawn without project root');
+});
+
+test('v2.14: no project root with baselineRoot → 409 still, no fallback', async () => {
+  const rt = makeGitStatusRuntime({ root: {}, baselineRoot: '/tmp/baseline' });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`);
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__gitSpawnCalls.length, 0, 'no spawn and no baselineRoot fallback');
+});
+
+test('v2.14: cross-project isolation — cwd = own project root', async () => {
+  const spawnCallsA = [];
+  const spawnCallsB = [];
+  const rt = createBridgeRuntime({
+    projectWorkspaceRoots: { alpha: '/tmp/alpha-root', beta: '/tmp/beta-root' },
+    gitSpawnFn: async (file, args, o) => {
+      if (o.cwd.includes('alpha-root')) {
+        spawnCallsA.push({ cwd: o.cwd, args: [...args] });
+      } else {
+        spawnCallsB.push({ cwd: o.cwd, args: [...args] });
+      }
+      return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('true\n')], stderrChunks: [] };
+    },
+  });
+  await call(rt, 'POST', BRIDGE_PROJECTS_PATH, { key: 'alpha', label: 'Alpha' });
+  await call(rt, 'POST', BRIDGE_PROJECTS_PATH, { key: 'beta', label: 'Beta' });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/alpha`, { gitStatusEnabled: true });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/beta`, { gitStatusEnabled: true });
+  const resA = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/alpha/verification/git-status`);
+  assert.equal(resA.statusCode, 200);
+  const resB = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/beta/verification/git-status`);
+  assert.equal(resB.statusCode, 200);
+  for (const c of spawnCallsA) {
+    assert.ok(c.cwd.includes('alpha-root'), 'alpha spawn must use alpha root');
+    assert.equal(c.cwd.includes('beta-root'), false, 'alpha spawn must not use beta root');
+  }
+  for (const c of spawnCallsB) {
+    assert.ok(c.cwd.includes('beta-root'), 'beta spawn must use beta root');
+    assert.equal(c.cwd.includes('alpha-root'), false, 'beta spawn must not use alpha root');
+  }
+  assert.ok(spawnCallsA.length > 0, 'alpha spawns recorded');
+  assert.ok(spawnCallsB.length > 0, 'beta spawns recorded');
+});
+
+test('v2.14: audit is redacted — no branch name, absolute root, remote, hash, raw output', async () => {
+  const rt = makeGitStatusRuntime({
+    spawnFn: async (file, args, o) => {
+      rt.__gitSpawnCalls.push({ file, args, cwd: o.cwd, env: o.env });
+      if (args.includes('--is-inside-work-tree')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('true\n')], stderrChunks: [] };
+      }
+      if (args.includes('--show-current')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('feat/sensitive\n')], stderrChunks: [] };
+      }
+      if (args.includes('--porcelain')) {
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('M secret.ts\n')], stderrChunks: [] };
+      }
+      return { ok: true, exitCode: 0, signal: null, stdoutChunks: [Buffer.from('2\t0\n')], stderrChunks: [] };
+    },
+  });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`);
+  const auditRes = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/audit`);
+  assert.equal(auditRes.statusCode, 200);
+  const auditJson = JSON.stringify(auditRes.payload);
+  assert.equal(auditJson.includes('feat/sensitive'), false, 'audit must not contain branch name');
+  assert.equal(auditJson.includes('secret.ts'), false, 'audit must not contain raw file');
+  assert.equal(auditJson.includes('test-root'), false, 'audit must not leak absolute root');
+  assert.equal(auditJson.includes('https://'), false, 'audit must not contain URL');
+  assert.equal(auditJson.includes('sha256'), false, 'audit must not contain hash');
+  assert.equal(auditJson.includes('commit'), false, 'audit must not contain commit');
+  assert.equal(auditJson.includes('remote'), false, 'audit must not contain remote');
+  const auditEvents = auditRes.payload.entries || [];
+  const gitStatusEvent = auditEvents.find(e => e.source === 'git-status');
+  assert.ok(gitStatusEvent, 'git-status audit event must exist');
+  // ProjectAuditEntry has limited fields; just verify its presence.
+  assert.equal(typeof gitStatusEvent.id, 'string');
+  assert.equal(typeof gitStatusEvent.timestamp, 'number');
+  assert.equal(gitStatusEvent.ok, true);
+});
+
+test('v2.14: git-status endpoint is GET-only (405 for POST/PUT/DELETE)', async () => {
+  const rt = makeGitStatusRuntime({});
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  for (const method of ['POST', 'PUT', 'DELETE']) {
+    const res = await call(rt, method, `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`, {});
+    assert.ok(res.statusCode === 405 || res.statusCode === 404 || res.statusCode === 409,
+      `${method} git-status should be rejected, got ${res.statusCode}`);
+  }
+  assert.equal(rt.__gitSpawnCalls.length, 0, 'no spawn for non-GET');
+});
+
+// ── v2.14 ADR-0019-a: read-only local git status route tests ──────
+
+// Injects a counting fake gitSpawnFn so route tests never run real git.
+// Records each invocation's file/args/cwd/env for assertions.
+function makeGitRuntime(opts = {}) {
+  const gitCalls = [];
+  const gitSpawnFn = opts.gitSpawnFn ?? (async (file, args, o) => {
+    gitCalls.push({ file, args: [...args], cwd: o.cwd, env: o.env });
+    let out = '';
+    if (args.includes('--is-inside-work-tree')) out = 'true\n';
+    else if (args.includes('--show-current')) out = (opts.branch ?? 'main') + '\n';
+    else if (args.includes('--porcelain')) out = opts.dirty ? 'M f.ts\n' : '';
+    else if (args.includes('rev-list')) out = '2\t1\n';
+    return { ok: true, exitCode: 0, signal: null, stdoutChunks: out ? [Buffer.from(out, 'utf8')] : [], stderrChunks: [] };
+  });
+  const runtime = createBridgeRuntime({
+    projectWorkspaceRoots: 'root' in opts ? opts.root : { 'cli-bridge': '/tmp/git-root' },
+    gitSpawnFn,
+  });
+  runtime.__gitCalls = gitCalls;
+  return runtime;
+}
+
+const GIT_STATUS_PATH = `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/git-status`;
+
+test('v2.14: git-status 409 when gitStatusEnabled is off (no spawn)', async () => {
+  const rt = makeGitRuntime({});
+  const res = await call(rt, 'GET', GIT_STATUS_PATH);
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__gitCalls.length, 0, 'must not spawn git when disabled');
+});
+
+test('v2.14: git-status 409 when no project workspace root (no spawn, no baselineRoot fallback)', async () => {
+  const gitCalls = [];
+  const rt = createBridgeRuntime({
+    projectWorkspaceRoots: {},
+    baselineRoot: '/tmp/baseline',
+    gitSpawnFn: async (f, a, o) => { gitCalls.push({ f, a, cwd: o.cwd }); return { ok: true, exitCode: 0, signal: null, stdoutChunks: [], stderrChunks: [] }; },
+  });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'GET', GIT_STATUS_PATH);
+  assert.equal(res.statusCode, 409);
+  assert.equal(gitCalls.length, 0, 'must not spawn git and must not fall back to baselineRoot');
+});
+
+test('v2.14: git-status 409 for archived project (no spawn)', async () => {
+  const rt = makeGitRuntime({ root: { gp: '/tmp/gp' } });
+  rt.projectStore.upsert({ key: 'gp', label: 'gp' });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/gp`, { gitStatusEnabled: true });
+  rt.projectStore.archive('gp');
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/gp/verification/git-status`);
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__gitCalls.length, 0, 'must not spawn git for archived project');
+});
+
+test('v2.14: git-status success returns sanitized view; cwd from projectWorkspaceRoots; no leak', async () => {
+  const rt = makeGitRuntime({ root: { 'cli-bridge': '/tmp/git-secret-root' }, branch: 'feat/zzz', dirty: true });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'GET', GIT_STATUS_PATH);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.isGitRepo, true);
+  assert.equal(res.payload.available, true);
+  assert.equal(res.payload.dirty, true);
+  // sanitized response shape only
+  for (const banned of ['stdout', 'stderr', 'output', 'cwd', 'root', 'remote', 'sha', 'commit']) {
+    assert.equal(banned in res.payload, false, `response must not contain ${banned}`);
+  }
+  const payloadJson = JSON.stringify(res.payload);
+  assert.equal(payloadJson.includes('git-secret-root'), false, 'response must not leak absolute root');
+  // spawn invoked; cwd is the project-specific root (normalized), never another project's root
+  assert.ok(rt.__gitCalls.length >= 1, 'git spawned');
+  assert.equal(rt.__gitCalls[0].cwd, path.resolve('/tmp/git-secret-root'));
+});
+
+test('v2.14: git-status cross-project isolation (uses own root only)', async () => {
+  const rt = makeGitRuntime({ root: { 'cli-bridge': '/tmp/cb-root', 'alpha': '/tmp/alpha-root' } });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  await call(rt, 'GET', GIT_STATUS_PATH);
+  assert.ok(rt.__gitCalls.length >= 1);
+  for (const c of rt.__gitCalls) {
+    assert.equal(c.cwd, path.resolve('/tmp/cb-root'), 'must run only in its own project root');
+    assert.notEqual(c.cwd, path.resolve('/tmp/alpha-root'));
+  }
+});
+
+test('v2.14: git-status spawn uses read-only hardened argv + minimal env (no host inheritance)', async () => {
+  process.env.__CB_GIT_HOSTONLY__ = 'should-not-pass';
+  const rt = makeGitRuntime({ root: { 'cli-bridge': '/tmp/cb-root' } });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  await call(rt, 'GET', GIT_STATUS_PATH);
+  delete process.env.__CB_GIT_HOSTONLY__;
+  assert.ok(rt.__gitCalls.length >= 1);
+  for (const c of rt.__gitCalls) {
+    // config-driven execution disabled
+    assert.ok(c.args.includes('-c') && c.args.includes('core.fsmonitor='), 'fsmonitor disabled');
+    assert.ok(c.args.includes('core.hooksPath='), 'hooks disabled');
+    // no write/network subcommands
+    for (const bad of ['commit', 'push', 'pull', 'fetch', 'merge', 'checkout', 'remote', 'clone']) {
+      assert.equal(c.args.includes(bad), false, `no ${bad}`);
+    }
+    // hardened + minimal env
+    assert.equal(c.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(c.env.GIT_OPTIONAL_LOCKS, '0');
+    assert.equal('__CB_GIT_HOSTONLY__' in c.env, false, 'must not inherit full host env');
+  }
+});
+
+test('v2.14: git-status fetch audit metadata is whitelisted (no branch/root/raw)', async () => {
+  const rt = makeGitRuntime({ root: { 'cli-bridge': '/tmp/git-secret-root' }, branch: 'feat/zzz' });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  await call(rt, 'GET', GIT_STATUS_PATH);
+  const ev = rt.auditLog.listEvents().find(e => e.source === 'git-status');
+  assert.ok(ev, 'git-status audit event exists');
+  const gs = ev.result.metadata.gitStatus;
+  const allowed = new Set(['isGitRepo', 'dirty', 'aheadCount', 'behindCount', 'available', 'elapsedMs']);
+  for (const k of Object.keys(gs)) assert.ok(allowed.has(k), `audit gitStatus must not contain ${k}`);
+  const evJson = JSON.stringify(ev);
+  assert.equal(evJson.includes('feat/zzz'), false, 'audit must not contain branch name');
+  assert.equal(evJson.includes('git-secret-root'), false, 'audit must not contain absolute root');
+});
+
+test('v2.14: git-status path is GET-only (POST does not run git)', async () => {
+  const rt = makeGitRuntime({ root: { 'cli-bridge': '/tmp/cb-root' } });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { gitStatusEnabled: true });
+  const res = await call(rt, 'POST', GIT_STATUS_PATH, { confirm: true });
+  assert.notEqual(res.statusCode, 200, 'POST must not succeed on git-status');
+  assert.equal(rt.__gitCalls.length, 0, 'POST must not spawn git');
 });
