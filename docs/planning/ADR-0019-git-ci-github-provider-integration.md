@@ -1,10 +1,10 @@
 # ADR-0019: Git/CI/GitHub Verification Provider Integration (v2.14 planning)
 
 Status: SPLIT (RP-2.14). **ADR-0019-a** (read-only LOCAL git status, offline) —
-        **ACCEPTED** by `REVIEW-ADR-0019-a` (2026-06-13, ADR-0007 §2; no
-        credential review needed) after RP-2.14-a hardened git-spawn
-        containment. **ADR-0019-b** (remote CI/GitHub + memory-only credentials)
-        — PROPOSED — DEFERRED.
+        **ACCEPTED** & CLOSED (`REVIEW-ADR-0019-a` / `EX-2.14-1`, 2026-06-13).
+        **ADR-0019-b** (remote GitHub check status + memory-only credentials) —
+        pre-acceptance design FIXED (RP-2.14-b), awaiting `REVIEW-ADR-0019-b`
+        (ADR-0007 §2 + credential review).
 
 Date: 2026-06-13 (revised 2026-06-13: RP-2.14 a/b split)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
@@ -135,6 +135,133 @@ lighter ADR-0007 §2 gate alone.
 The execution handoff is `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`.
 ADR-0019-a is **ACCEPTED** (`REVIEW-ADR-0019-a`, 2026-06-13); `EX-2.14-1` is
 authorized and dispatchable on a human trigger, returning to `REVIEW-2.14-1`.
+
+---
+
+## RP-2.14-b — ADR-0019-b fixed pre-acceptance design (no execution-agent decisions)
+
+**Decision (RP-2.14-b).** ADR-0019-b is the remote-status slice: a strictly
+**read-only** GitHub check-status provider that maps external CI conclusions to a
+typed `VerificationResult` (ADR-0017). It crosses the **outbound network +
+credential** boundary, so it carries the full ADR-0007 §2 prerequisite load plus
+a credential-handling review. RP-2.14-b fixes every previously-open blocker
+(provider scope, exact endpoint, identity mapping, credential supply, egress
+bounding, rate-limit/errors, mapping, redaction proof) so nothing is delegated to
+the execution agent. **It does not accept the ADR**; acceptance requires
+`REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) + explicit sign-off.
+
+**Reuses established patterns** (lowers novelty/risk): memory-only credentials
+mirror `InMemoryApiKeyStore` (never persisted/audited/echoed); outbound HTTPS +
+bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
+`OpenAiAdapter`; token redaction reuses `redaction.ts` (`github-token`,
+`bearer-token` rules already exist).
+
+### Fixed decisions
+
+- **Provider scope — FIXED**: a single provider family — **GitHub-compatible
+  check-runs** (github.com or operator-configured GitHub Enterprise base URL).
+  No other providers, no generic CI in this slice.
+- **Exact read endpoint — FIXED**: one read-only call,
+  `GET {apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs`
+  (Accept: `application/vnd.github+json`). Read-only; no other endpoint, no
+  write/PR/merge/status-write call.
+- **Identity mapping — FIXED (no HTTP-supplied identity)**: an operator-configured
+  per-project registry `projectVerifyProviders[projectKey] = { kind: 'github',
+  apiBaseUrl, owner, repo }` — **never set via HTTP** (mirrors ADR-0014
+  `projectWorkspaceRoots`). `ref` is derived from the project's **current local
+  branch** via the ADR-0019-a read-only reader (`git branch --show-current`) and
+  sanitized; detached/unknown branch → fail-closed `unknown`, no network call.
+  No request body/query may supply owner/repo/ref/url/host.
+- **Credential supply — FIXED (memory-only, never HTTP)**: a dedicated in-memory
+  token store mirroring `InMemoryApiKeyStore` (`projectKey → token`), set by the
+  **operator/runtime only** (injected at server construction, like
+  `baselineRoot`/`projectWorkspaceRoots`), **never via HTTP body/query/header**,
+  never persisted to snapshot/audit/log/response/console, never exported. Used
+  only as the `Authorization` header to the configured host. Absent token →
+  fail-closed `unknown` (409), no network call.
+- **Egress bounding — FIXED**: outbound request only to the operator-configured
+  `apiBaseUrl` host; **HTTPS only** (reject non-HTTPS config); cross-host
+  redirects are NOT followed (a 3xx to a different host → error); bounded
+  `AbortController` timeout (≤10s); response body size cap; URL is built solely
+  from operator config + sanitized `owner/repo/ref` (no arbitrary URL); a
+  single in-flight fetch per project (lock); an injectable `fetchFn` for tests
+  (never hits the real network in tests).
+- **Rate-limit / errors — FIXED**: at most **one** retry on transient 5xx/network
+  error (no exponential storm); 401/403/404/422 → non-retryable; 429 → no retry;
+  any of timeout / 4xx / 5xx-after-retry / rate-limit / parse error → typed
+  `errored` (or `unknown` for "no result yet"), never a false `passed`.
+- **Status mapping — FIXED**: aggregate the latest `check_runs[].conclusion`:
+  any `failure`/`timed_out`/`cancelled`/`action_required`/`stale` → `failed`;
+  else any `queued`/`in_progress`/missing conclusion → `unknown` (still running);
+  else all `success`/`neutral`/`skipped` with ≥1 `success` → `passed`; all
+  `skipped`/`neutral` (no success) → `skipped`; zero check-runs → `unknown`.
+- **Opt-in + human-triggered + gate — FIXED**: per-project opt-in
+  `githubChecksEnabled` (default off) AND requires the operator provider config
+  AND a configured token; the fetch is **human-triggered** behind an explicit
+  confirm that discloses the target host + "read-only network call using a
+  stored credential" (mirrors the ADR-0018 gate). No poller/webhook/scheduler/
+  model trigger.
+- **Stored evidence — FIXED**: ADR-0017 typed `VerificationEvidence` /
+  `VerificationRunRecord` — `result`, `commandLabel` = `"github-checks"`,
+  `recordedAt`, timing, flags only. No raw payload, no token, no URL, no
+  branch/owner/repo/ref, no `sha`.
+- **No VCS write — FIXED**: read-only GET only; ADR-0007 line held.
+
+### ADR-0007 §2 + credential prerequisites (positions)
+
+| Prerequisite | ADR-0019-b position |
+|---|---|
+| Reversibility | Read-only remote read; no remote/local mutation. |
+| Containment | One read endpoint, operator-config host only, HTTPS-only, no cross-host redirect, timeout + body cap, single-run lock, injectable fetch. |
+| Human authority | Human-triggered confirm with host + credential disclosure; no auto trigger. |
+| No autonomy | No poller/webhook/scheduler/model trigger. |
+| Audit completeness | Redacted fetch audit (provider kind, typed result, timing); no token/URL/payload/identity. |
+| Fail-closed | Missing config/token, detached ref, timeout, 4xx/5xx, rate-limit, parse error → `errored`/`unknown`/409; never false pass. |
+| Opt-in & revocable | `githubChecksEnabled` default off; removing config/token/flag restores prior flow. |
+| Credential handling | Memory-only, operator-set, never HTTP/persisted/audited/echoed; redaction asserts no token leak anywhere. |
+
+### ADR-0019-b acceptance conditions (`REVIEW-ADR-0019-b` + `REVIEW-2.14-2`)
+
+1. Single read-only endpoint (`commits/{ref}/check-runs`); no write/PR/merge call.
+2. Operator-config identity only; no HTTP-supplied owner/repo/ref/url/host
+   (rejected); `ref` from sanitized local branch; detached → 409/no call.
+3. Credential memory-only, operator-set, never via HTTP; absent → 409/no call;
+   token never in snapshot/audit/log/response/console (tests assert).
+4. Egress: HTTPS-only to configured host; no cross-host redirect; timeout +
+   body cap; URL built from config + sanitized identity; injectable fetch in
+   tests (no real network).
+5. Rate-limit/errors: ≤1 retry; 429/4xx no false pass; all error paths →
+   `errored`/`unknown`.
+6. Status mapping exactly as fixed above; no free-text inference.
+7. Human-triggered confirm with host + credential-use disclosure; no autonomy.
+8. Stored as ADR-0017 typed evidence with sanitized label/timing/flags only; no
+   raw payload/token/URL/identity/sha.
+9. Redacted audit; no token/URL/payload/identity.
+10. Opt-in default off; revocable; backward compatible (existing suites pass).
+11. Tests cover: no-config 409/no-call, no-token 409/no-call, detached-ref
+    409/no-call, each mapping case via injected fetch, HTTPS-only + no-cross-host
+    redirect, ≤1-retry, token-never-leaks (snapshot/audit/response/console),
+    confirm-gate + GET/console no-write, no real network.
+12. No VCS write; ADR-0007 line held.
+
+### ADR-0019-b allowed file families (for `EX-2.14-2`, finalized at acceptance)
+
+- `packages/shared/src/types.ts` — `GithubChecksView`/result DTO (reusing
+  ADR-0017 evidence), `Project.githubChecksEnabled?`, provider-config types.
+- `packages/shared/src/schemas.ts` — `githubChecksEnabled` boolean; reject
+  owner/repo/ref/url/host/token in any HTTP body.
+- A new provider client module under `apps/local-server/src/verification/`
+  (e.g. `github-checks-provider.ts`) — injectable `fetchFn`, HTTPS-only,
+  timeout/cap, no-cross-host redirect, single-run lock, mapping.
+- A memory-only token store (mirror `InMemoryApiKeyStore`); operator/runtime
+  injection wiring in `createBridgeRuntime`.
+- `apps/local-server/src/routes/bridge-api.ts` / `project-console.ts` — confirm
+  gate + typed-result surfacing only.
+- Audit wiring (redacted); `docs/contracts/bridge-projects-api.md`,
+  `CHANGELOG.md`, relevant `tests/*.mjs`.
+
+The execution handoff is `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md`
+(authored, **NOT dispatchable** until `REVIEW-ADR-0019-b` accepts).
 
 ---
 
@@ -361,11 +488,11 @@ outside it requires STOP-and-report.
 
 ## Status / Next
 
-SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) is **ACCEPTED**
-(`REVIEW-ADR-0019-a`, 2026-06-13, ADR-0007 §2) after RP-2.14-a hardened
-git-spawn containment; dispatch `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`
-for `EX-2.14-1` on a human trigger, then return to `REVIEW-2.14-1`. **ADR-0019-b**
-(remote CI/GitHub + memory-only credentials) remains PROPOSED — DEFERRED and
-keeps the full ADR-0007 §2 + credential-handling prerequisite; it must not start
-before its own explicit acceptance and must never be merged into the ADR-0019-a
-batch.
+SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) is **ACCEPTED** and
+CLOSED (`REVIEW-ADR-0019-a` / `EX-2.14-1` / `REVIEW-2.14-1`, 2026-06-13).
+**ADR-0019-b** (remote GitHub check status + memory-only credentials) has a
+**fixed pre-acceptance design** (RP-2.14-b, see section above) and awaits
+`REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) + explicit acceptance;
+only then is `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md` dispatchable
+as `EX-2.14-2`, returning to `REVIEW-2.14-2`. It must never be merged into the
+closed ADR-0019-a batch.

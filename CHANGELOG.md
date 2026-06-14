@@ -36,6 +36,26 @@ All notable changes to CLI Bridge are documented here.
     git-status-reader.test.mjs (new).
 
 ### Planning / ADR
+- **RP-2.14-b: fixed the ADR-0019-b pre-acceptance design** (remote GitHub check
+  status provider) after ADR-0019-a closed. Resolved every previously-deferred
+  blocker into fixed decisions so nothing is delegated to execution: single
+  provider family (GitHub-compatible check-runs), one read-only endpoint
+  (`GET {apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs`),
+  operator-configured per-project identity (`projectVerifyProviders`, never via
+  HTTP; `ref` from the sanitized local branch, detached → 409/no call),
+  **memory-only operator-set token** (mirrors `InMemoryApiKeyStore`; never via
+  HTTP/persisted/audited/echoed; absent → 409/no call), HTTPS-only single-host
+  egress with bounded timeout + body cap + no cross-host redirect + single-run
+  lock + ≤1 retry, a fixed conclusion→`VerificationResult` mapping, a
+  human-triggered confirm gate disclosing host + credential use, ADR-0017 typed
+  evidence (sanitized label/timing/flags only), and a redaction proof
+  requirement. Reuses the v2.4a memory-credential + outbound-fetch + token-
+  redaction pattern. Authored `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md`
+  (gated) and updated the bundle roadmap (0019-a CLOSED; 0019-b design FIXED).
+  No ADR is accepted and no implementation is authorized by this planning batch;
+  ADR-0019-b stays NOT ACCEPTED pending `REVIEW-ADR-0019-b` (ADR-0007 §2 +
+  credential review), and `EX-2.14-2` is gated behind that acceptance. No code,
+  no network/credentials introduced.
 - **ADR-0019-a Read-only Local Git Status Provider ACCEPTED** (`REVIEW-ADR-0019-a`,
   2026-06-13, ADR-0007 §2; no credential review needed) after RP-2.14-a hardened
   git-spawn containment. Authorizes only an opt-in (`gitStatusEnabled`, default

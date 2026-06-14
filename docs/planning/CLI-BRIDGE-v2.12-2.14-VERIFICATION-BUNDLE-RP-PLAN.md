@@ -76,7 +76,7 @@ closed.
 | 4 | `REVIEW-2.13-1` | reviewing | Verify ADR-0018 acceptance conditions + ADR-0007 §2; authorize closeout | `RP`/next |
 | 5 | `EX-2.14-1` | execution | **ADR-0019-a** read-only LOCAL git status context (offline; no network/credentials), opt-in `gitStatusEnabled`, sanitized `GitStatusView`, GET endpoint, inert console, redacted audit | `REVIEW-2.14-1` |
 | 6 | `REVIEW-2.14-1` | reviewing | Verify ADR-0019-a acceptance conditions + ADR-0007 §2; authorize closeout | `RP`/next |
-| 7 | `EX-2.14-2` (future) | execution | **ADR-0019-b** remote CI/GitHub check status + memory-only credentials → typed pass/fail — DEFERRED, needs own acceptance + ADR-0007 §2 + credential review | `REVIEW-2.14-2` |
+| 7 | `EX-2.14-2` | execution | **ADR-0019-b** remote GitHub check-runs → typed pass/fail; operator identity + memory-only token; design FIXED (RP-2.14-b), gated behind `REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) | `REVIEW-2.14-2` |
 
 Each `EX-*` produces **one dedicated commit** carrying only that slice's allowed
 files. No EX batch commits/pushes until its REVIEW authorizes. No EX batch
@@ -107,8 +107,8 @@ review decision (per the workflow contract).
 |---|---|---|---|---|---|
 | 0017 | Typed verification result model (data + display) | low | ACCEPTED | 2026-06-13 | Senior review |
 | 0018 | Local live verification execution | high (execution) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0018-b |
-| 0019-a | Read-only LOCAL git status context (offline) | medium (git spawn, read-only) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0019-a |
-| 0019-b | Remote CI/GitHub status + memory-only credentials | high (network + creds) | PROPOSED — DEFERRED | — | — |
+| 0019-a | Read-only LOCAL git status context (offline) | medium (git spawn, read-only) | ACCEPTED & CLOSED | 2026-06-13 | REVIEW-ADR-0019-a / REVIEW-2.14-1 |
+| 0019-b | Remote GitHub check status + memory-only credentials | high (network + creds) | PROPOSED — design FIXED (RP-2.14-b), awaiting `REVIEW-ADR-0019-b` | — | — |
 
 **Group-acceptance semantics (hard rule).** "Accepting the bundle" is bounded
 and does NOT promote every ADR to ACCEPTED:
@@ -146,11 +146,13 @@ and does NOT promote every ADR to ACCEPTED:
 
 ## 7. Next action
 
-ADR-0018 closed (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`). **RP-2.14** split
-ADR-0019 and fixed the ADR-0019-a design; **RP-2.14-a** hardened the git-spawn
-containment; **ADR-0019-a is now ACCEPTED** (`REVIEW-ADR-0019-a`, 2026-06-13,
-ADR-0007 §2). Next: dispatch `EX-2.14-1` via
-`CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md` on a human trigger, returning
-to `REVIEW-2.14-1` before closeout. **ADR-0019-b** (remote CI/GitHub +
-credentials) stays DEFERRED and must not start before its own acceptance +
-ADR-0007 §2 + credential review; never merge it into the ADR-0019-a batch.
+ADR-0018 closed (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`). ADR-0019-a closed
+(`EX-2.14-1` / `REVIEW-2.14-1`, `c9afe51`). **RP-2.14-b** fixed the ADR-0019-b
+pre-acceptance design (GitHub check-runs read-only; operator identity; memory-
+only operator-set token; HTTPS-only single-endpoint egress; fixed mapping;
+redaction proof) and authored
+`CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md` (gated). Next: take
+**ADR-0019-b** through `REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) for
+explicit acceptance; only then dispatch `EX-2.14-2`, returning to
+`REVIEW-2.14-2`. ADR-0019-b must never be merged into the closed ADR-0019-a
+batch.
