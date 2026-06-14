@@ -1627,3 +1627,161 @@ test('v2.15: no extra fetch beyond existing calls', async () => {
   const unexpected = urls.filter(u => !u.endsWith('/verification') && !u.endsWith('/verification/profiles') && !u.endsWith('/verification/git-status'));
   assert.equal(unexpected.length, 0, 'no unexpected fetch: ' + unexpected.join(','));
 });
+
+// ── v2.16 ADR-0021: Per-step verification result indicator tests ─
+
+function goalWithSteps(key, steps) {
+  return {
+    ok: true,
+    payload: {
+      project: { key, label: 'Test', createdAt: 1 },
+      summary: { project: { key, label: 'Test' }, goalCount: 1, activeGoalCount: 1, reviewCount: 0, promptCount: 0, status: 'active' },
+      goals: [{
+        goal: { id: 'g', description: 'Test Goal', status: 'executing', sessionId: 's', createdAt: 1, updatedAt: 1 },
+        plan: { id: 'gp', status: 'executing', goalId: 'g', steps: steps || [
+          { index: 1, id: 's1', intent: 'Step 1', kind: 'code', tier: 'core', status: 'done', isStateMutating: false },
+        ] },
+      }],
+      reviews: [], pendingPrompts: [], auditEvents: [],
+      status: { progress: null, activeGoal: { id: 'g', description: 'Test Goal', status: 'executing' }, goalsSummary: [], blockedGate: null, latestAudit: null, memory: [] },
+    },
+  };
+}
+
+function verificationFixtureWithRecords(records) {
+  return {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      records: records || [],
+      liveRunRecords: [],
+    },
+  };
+}
+
+test('v2.16: step with matching enum record renders typed pill', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([
+    { stepId: 's1', result: 'passed', createdAt: 1000 },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const goalEl = document.getElementById('goal-content');
+  assert.ok(goalEl.innerHTML.includes('passed'), 'passed pill rendered');
+  assert.ok(goalEl.innerHTML.includes('Step 1'), 'step intent rendered');
+});
+
+test('v2.16: step with no matching record renders dash', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const goalEl = document.getElementById('goal-content');
+  assert.ok(goalEl.innerHTML.includes('\u2014'), 'dash rendered for no match');
+});
+
+test('v2.16: non-enum result renders dash, not displayed', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([
+    { stepId: 's1', result: 'weird', createdAt: 1000 },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const goalEl = document.getElementById('goal-content');
+  assert.equal(goalEl.innerHTML.includes('weird'), false, 'non-enum result not rendered');
+  assert.ok(goalEl.innerHTML.includes('\u2014'), 'dash rendered');
+});
+
+test('v2.16: multiple records pick greatest createdAt', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([
+    { stepId: 's1', result: 'unknown', createdAt: 100 },
+    { stepId: 's1', result: 'passed', createdAt: 200 },
+    { stepId: 's1', result: 'failed', createdAt: 300 },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const goalEl = document.getElementById('goal-content');
+  assert.ok(goalEl.innerHTML.includes('failed'), 'newest record (failed) selected');
+  assert.equal(goalEl.innerHTML.includes('passed'), false, 'older passed not selected');
+});
+
+test('v2.16: tied createdAt picks earlier array order', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([
+    { stepId: 's1', result: 'passed', createdAt: 100 },
+    { stepId: 's1', result: 'failed', createdAt: 100 },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const goalEl = document.getElementById('goal-content');
+  assert.ok(goalEl.innerHTML.includes('passed'), 'first in array (passed) selected on tie');
+  assert.equal(goalEl.innerHTML.includes('failed'), false, 'second record not selected');
+});
+
+test('v2.16: no raw notes/output/token/identity in step row', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([{
+    stepId: 's1', result: 'passed', createdAt: 100,
+    notes: 'secret notes', rawOutput: 'x', token: 't', branch: 'b', owner: 'o', repo: 'r',
+  }]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const stepHtml = document.getElementById('goal-content').innerHTML;
+  assert.ok(stepHtml.includes('passed'), 'result rendered');
+  for (const banned of ['secret', 'rawOutput', 'token', 'branch', 'owner', 'repo']) {
+    assert.equal(stepHtml.includes(banned), false, 'must not contain ' + banned);
+  }
+});
+
+test('v2.16: verify column has no write controls, no extra fetch', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', goalWithSteps('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRecords([
+    { stepId: 's1', result: 'passed', createdAt: 100 },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const before = fetchCalls.length;
+  // Re-render by switching project view
+  const wsTab = document.querySelector('[data-view="workspace"]');
+  if (wsTab) wsTab.click();
+  await new Promise(r => setTimeout(r, 200));
+  const urls = fetchCalls.slice(before);
+  // Only expected: detail fetch for project switch. No extra verification/profiles/git-status fetch.
+  assert.ok(urls.length <= 2, 'at most existing fetches');
+  // Verify column has no buttons/links/inputs
+  const goalEl = document.getElementById('goal-content');
+  const cells = goalEl.querySelectorAll('td');
+  var ok = true;
+  cells.forEach(function(td) { if (td.querySelector('button,a,input,textarea')) ok = false; });
+  assert.ok(ok, 'verify column has no controls');
+});

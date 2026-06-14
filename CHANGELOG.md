@@ -76,6 +76,17 @@ All notable changes to CLI Bridge are documented here.
   - Changes: project-console.ts, bridge-projects-api.md, CHANGELOG.md,
     tests/project-console-behavior.test.mjs.
 
+- **EX-2.16-1 ADR-0021: Per-step verification result indicator** — added inert
+  verification result pills in the goal plan-step table (`renderGoalCard`).
+  Joins from cached `/verification.records[]` by `stepId` using deterministic
+  selection (max `createdAt`, then earliest array order). Enum fail-closed:
+  non-enum/missing → `—`. No backend/fetch/store changes.
+  - **tests**: 7 console behavior tests covering enum pill, dash on no-match,
+    non-enum dash, createdAt precedence, array-order tiebreak, no raw/notes/token
+    leak, no write controls / no extra fetch.
+  - Changes: project-console.ts, bridge-projects-api.md, CHANGELOG.md,
+    tests/project-console-behavior.test.mjs.
+
 ### Planning / ADR
 - **ADR-0021 Goal Plan-Step Verification-Result Presentation ACCEPTED**
   (`REVIEW-ADR-0021`, 2026-06-14) after RP-2.16-a fixed the deterministic

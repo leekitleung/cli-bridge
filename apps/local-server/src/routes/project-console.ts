@@ -615,15 +615,32 @@ function renderGoalCard() {
   // v2.4a: Model API status (read-only).
   html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">Model API: <span class="unavailable">unavailable — use review-cli plan generation</span>; CriticModel: <span class="unavailable">advisory-only</span></div>';
   if (activeGoal.plan) {
-    html += '<div style="margin-top:12px;"><table><thead><tr><th>#</th><th>intent</th><th>kind</th><th>tier</th><th>status</th><th></th></tr></thead><tbody>';
-    (activeGoal.plan.steps || []).forEach(s => {
+    // v2.16 ADR-0021: per-step verification result indicator.
+    var verRecords = (store.cache.verification && Array.isArray(store.cache.verification.records))
+      ? store.cache.verification.records : [];
+    var VALID_RESULTS = { passed: 1, failed: 1, skipped: 1, errored: 1, unknown: 1 };
+    html += '<div style="margin-top:12px;"><table><thead><tr><th>#</th><th>intent</th><th>kind</th><th>tier</th><th>status</th><th>verify</th><th></th></tr></thead><tbody>';
+    (activeGoal.plan.steps || []).forEach(function(s) {
+      // Select best verification record for this step.
+      var bestR = null; var bestCreated = -Infinity;
+      (function(){var i; for (i=0; i<verRecords.length; i++) { var r = verRecords[i];
+        if (r.stepId !== s.id) continue;
+        if (!VALID_RESULTS.hasOwnProperty(r.result)) continue;
+        var ca = (r.createdAt != null) ? r.createdAt : -1;
+        if (ca > bestCreated) { bestR = r; bestCreated = ca; }
+      }})();
+      var verPill = '\u2014';
+      if (bestR) {
+        var rc = bestR.result;
+        verPill = '<span class="pill" style="margin-left:0;">' + escapeHtml(rc) + '</span>';
+      }
       const mut = s.isStateMutating ? ' <span class="pill mut">mutating</span>' : '';
       let statusPill = '<span class="pill">' + escapeHtml(s.status) + '</span>';
       if (s.status === 'done') statusPill = '<span class="pill done">done</span>';
       if (s.status === 'failed') statusPill = '<span class="pill failed">failed</span>';
       if (s.status === 'blocked-needs-gate') statusPill = '<span class="pill gate">blocked-needs-gate</span>';
       const gateBtn = s.status === 'blocked-needs-gate' ? '<button class="gate-btn" data-gate="' + escapeHtml(s.id) + '" data-goal="' + escapeHtml(g.id) + '">Approve gate</button>' : '';
-      html += '<tr><td>' + escapeHtml(s.index) + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + escapeHtml(s.kind) + '</td><td>' + escapeHtml(s.tier) + '</td><td>' + statusPill + '</td><td>' + gateBtn + '</td></tr>';
+      html += '<tr><td>' + escapeHtml(s.index) + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + escapeHtml(s.kind) + '</td><td>' + escapeHtml(s.tier) + '</td><td>' + statusPill + '</td><td>' + verPill + '</td><td>' + gateBtn + '</td></tr>';
     });
     html += '</tbody></table></div>';
     html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">';

@@ -1073,3 +1073,32 @@ recorded". Extra record fields are silently ignored.
 **Non-goals**: no backend changes, no new endpoint, no extra fetch, no execution,
 no write/execute/re-run controls, no pass/fail inference, no raw output/URL/
 token/path/hash/branch/owner/repo/ref/identity display.
+
+### Goal Plan-Step Verification Result Indicator (v2.16, ADR-0021)
+
+Read-only, console-only per-step typed verification `result` indicator in the goal
+plan-step table (`renderGoalCard`). Joins from the already-cached
+`/verification.records[]` by `stepId`.
+
+#### Behaviour
+
+- **Candidate set**: `records` where `record.stepId === step.id` AND `record.result`
+  is in the closed enum `passed | failed | skipped | errored | unknown`.
+- **Selection (deterministic)**: greatest `record.createdAt`; on missing or tied
+  `createdAt`, the earliest in the `/verification.records[]` array order.
+- **Render**: selected `result` as an inert, HTML-escaped `<span class="pill">`
+  in a new per-step "verify" column.
+- **Fail-closed**: no candidate / no `result` / non-enum `result` → inert `—`
+  (dash). A non-enum `result` is never rendered.
+
+#### Fields consumed
+
+- `records[].stepId` — join key with plan-step `id`.
+- `records[].result` — must be in `VerificationResult` enum.
+- `records[].createdAt` — used for deterministic selection tiebreaking.
+
+#### Non-goals
+
+No backend/endpoint/store change, no new fetch, no execution, no write controls,
+no raw output/notes/token/URL/path/hash/branch/owner/repo/diff in the step row,
+no `liveRunRecords` step-binding.
