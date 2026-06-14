@@ -88,6 +88,18 @@ All notable changes to CLI Bridge are documented here.
     tests/project-console-behavior.test.mjs.
 
 ### Planning / ADR
+- **ADR-0022 GitHub Combined Commit-Status Augmentation ACCEPTED**
+  (`REVIEW-ADR-0022`, 2026-06-15) after RP-2.17-a fixed the source-signal merge
+  semantics, combined-status `total_count` no-status distinction, and read-only
+  token-scope contract. Authorizes only a bounded increment to the existing
+  ADR-0019-b GitHub provider: one additional read-only
+  `/commits/{ref}/status` call on the same configured host, merged with
+  check-runs by the fixed ladder `failed > errored > pending(→unknown) > passed
+  > skipped > (both none →unknown)`. It reuses ADR-0019-b containment and the
+  same memory-only operator token; no new provider, credential mechanism,
+  identity/HTTP surface, scheduler, or write path is authorized. Authored
+  `CLI-BRIDGE-v2.17-COMBINED-STATUS-HANDOFF.md` (dispatchable on explicit human
+  trigger) for `EX-2.17-1`, returning to `REVIEW-2.17-1` before closeout.
 - **RP-2.17-a: fixed ADR-0022 merge semantics + token scope** after
   `REVIEW-ADR-0022` returned CHANGES REQUIRED (F1/F2/F3). F1: the merge now
   normalizes BOTH sources to a signal `{failed,errored,pending,passed,skipped,
@@ -100,8 +112,8 @@ All notable changes to CLI Bridge are documented here.
   `state` is `pending` in both cases; `statuses[]` is still never parsed/surfaced.
   F3: minimal read-only token scope updated to **Checks: read + Commit statuses:
   read** (same memory-only operator-set token; contract change only). Updated
-  Decision §1, acceptance #4-#11, and the handoff sketch. Still PROPOSED pending
-  re-review.
+  Decision §1, acceptance #4-#11, and the handoff sketch. `REVIEW-ADR-0022`
+  re-review passed.
 - **RP-2.17: drafted ADR-0022 GitHub Combined Commit-Status Augmentation** as
   PROPOSED. A bounded increment to the closed ADR-0019-b remote provider: add a
   second read-only call to `/commits/{ref}/status` (legacy combined commit

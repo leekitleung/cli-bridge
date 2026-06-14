@@ -1,20 +1,23 @@
 # ADR-0022: GitHub Combined Commit-Status Augmentation (v2.17 planning)
 
-Status: PROPOSED — awaiting explicit acceptance
+Status: ACCEPTED
 
 Date: 2026-06-14
 Depends on: ADR-0019-b (remote GitHub checks provider) — ACCEPTED & CLOSED
-Acceptance: NOT YET ACCEPTED. A bounded increment to the ACCEPTED ADR-0019-b
-            remote provider: add the legacy **combined commit status** read
-            (`/commits/{ref}/status`) alongside the existing check-runs read and
-            merge both into one typed `VerificationResult` by a fixed precedence
-            rule. It reuses ALL ADR-0019-b containment unchanged (HTTPS-only +
-            standard TLS, owner/repo charset + `encodeURIComponent(ref)`, no
-            cross-host redirect, bounded read, timeout, single-run lock,
-            memory-only operator-set token, redaction). It introduces **no new
-            credential mechanism, no new provider, no new identity/HTTP surface**.
+Acceptance: ACCEPTED (2026-06-15) by `REVIEW-ADR-0022` after RP-2.17-a fixed the
+            source-signal merge semantics, status `total_count` no-status
+            distinction, and expanded read-only token-scope contract. A bounded
+            increment to the ACCEPTED ADR-0019-b remote provider: add the legacy
+            **combined commit status** read (`/commits/{ref}/status`) alongside
+            the existing check-runs read and merge both into one typed
+            `VerificationResult` by a fixed signal ladder. It reuses ALL
+            ADR-0019-b containment unchanged (HTTPS-only + standard TLS,
+            owner/repo charset + `encodeURIComponent(ref)`, no cross-host
+            redirect, bounded read, timeout, single-run lock, memory-only
+            operator-set token, redaction). It introduces **no new credential
+            mechanism, no new provider, no new identity/HTTP surface**.
             Because it crosses no *new* boundary (same outbound+credential class
-            already accepted under ADR-0019-b), acceptance needs an ADR-0007 §2
+            already accepted under ADR-0019-b), acceptance required ADR-0007 §2
             review but **no fresh credential-handling review**.
 
 ## Scope decision (RP-2.17)
@@ -44,7 +47,9 @@ typed result — closing that blind spot using the exact same containment.
 
 ### 0. Decision status
 
-**PROPOSED.** No code until explicit acceptance + an `EX-2.17-1` handoff.
+**ACCEPTED** (2026-06-15, `REVIEW-ADR-0022`). No code until an `EX-2.17-1`
+handoff is authored; implementation proceeds in `EX-2.17-1` and returns to
+`REVIEW-2.17-1`.
 
 ### 1. What is permitted
 
@@ -54,7 +59,8 @@ ADR-0019-b provider:
 - **Second endpoint (read-only)**: `GET {apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/status`
   (Accept `application/vnd.github+json`). Same URL containment, HTTPS-only +
   standard TLS, no cross-host redirect, bounded read, timeout, token, redaction
-  as the check-runs call. Read-only; only the combined `state` field is used.
+  as the check-runs call. Read-only; only top-level `state` and `total_count`
+  are used.
 - **Both reads per confirm**: on a single human-triggered confirm, the provider
   performs the check-runs read and the combined-status read (sequentially, under
   the existing per-project single-run lock), then merges. Each call is
@@ -171,8 +177,9 @@ Larger; needs provider abstraction and a richer (riskier) surface. Deferred.
   Mitigation: fixed deterministic precedence (failure-wins); tests pin every
   case.
 - **Payload growth (`statuses[]`)**: combined status returns per-context
-  entries. Mitigation: only the top-level `state` is read; `statuses[]` is never
-  parsed-for-display or surfaced; bounded read still applies.
+  entries. Mitigation: only top-level `state` and `total_count` are read;
+  `statuses[]` is never parsed-for-display or surfaced; bounded read still
+  applies.
 
 ## Consequences
 
@@ -258,6 +265,8 @@ Otherwise STOP and report.
 
 ## Status / Next
 
-PROPOSED. On acceptance, author `CLI-BRIDGE-v2.17-COMBINED-STATUS-HANDOFF.md`
-for `EX-2.17-1`, then return to `REVIEW-2.17-1`. Multi-provider and per-context
-status detail remain deferred to separate ADRs.
+ACCEPTED (2026-06-15). Handoff
+`CLI-BRIDGE-v2.17-COMBINED-STATUS-HANDOFF.md` authored and dispatchable on a
+human trigger for `EX-2.17-1`; implementation returns to `REVIEW-2.17-1` before
+closeout. Multi-provider and per-context status detail remain deferred to
+separate ADRs.
