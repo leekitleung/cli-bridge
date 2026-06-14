@@ -59,26 +59,45 @@ ADR-0019-b provider:
   performs the check-runs read and the combined-status read (sequentially, under
   the existing per-project single-run lock), then merges. Each call is
   independently bounded and fail-closed.
-- **Combined `state` mapping**: `success → success-signal`, `failure →
-  failed-signal`, `pending → pending-signal`; HTTP 404 / no statuses / 422 →
-  **no status signal** (not a failure); auth/timeout/network/5xx-after-retry →
-  status source **errored** (no signal).
-- **Fixed merge precedence** (check-runs result `cr` ∈ enum; status signal `st`
-  ∈ {success, failed, pending, none, errored}) → one typed `VerificationResult`:
-  1. **errored** iff BOTH sources are errored/unavailable (neither yielded a
-     usable signal due to error).
-  2. else **failed** if `cr === 'failed'` OR `st === 'failed'`.
-  3. else **unknown** if `cr === 'unknown'` OR `st === 'pending'` OR there is no
-     usable signal from either source (e.g. zero check-runs and no statuses).
-  4. else **passed** if `cr === 'passed'` OR `st === 'success'`.
-  5. else **skipped** if `cr === 'skipped'`.
-  6. else **unknown**.
-  (Precedence is failure-wins, then in-progress/unknown, then success, then
-  skipped — conservative "is it green" semantics; deterministic, no inference.)
+- **Both sources normalized to a signal** (RP-2.17-a). Each source maps to a
+  signal in `{ failed, errored, pending, passed, skipped, none }`:
+  - **check-runs source `cr`**: any failing conclusion
+    (`failure/timed_out/cancelled/action_required/stale`) → `failed`; else any
+    `queued/in_progress`/missing conclusion → `pending`; else ≥1 `success` →
+    `passed`; else all `skipped/neutral` → `skipped`; **zero check-runs →
+    `none`** (absence, NOT blocking); call auth/timeout/5xx-after-retry →
+    `errored`.
+  - **combined-status source `st`**: read top-level `state` **and** `total_count`
+    (only these; never parse/surface `statuses[]`). `state==='failure'` →
+    `failed`; `state==='success'` → `passed`; **`state==='pending' &&
+    total_count>0` → `pending`**; **`state==='pending' && total_count===0` →
+    `none`** (no statuses, NOT pending — F2); HTTP 404/422 → `none`;
+    auth/timeout/5xx-after-retry → `errored`.
+- **Fixed merge ladder** (RP-2.17-a, highest wins; `none` is absence, never
+  blocks): take the highest-ranked signal present across `{cr, st}`:
+  1. **failed** — if either source is `failed`.
+  2. **errored** — else if either source is `errored`.
+  3. **unknown** — else if either source is `pending`.
+  4. **passed** — else if either source is `passed`.
+  5. **skipped** — else if either source is `skipped`.
+  6. **unknown** — else (both `none`: no check-runs and no statuses).
+
+  Worked cases (F1 regression guards): `cr:none + st:passed → passed` (the
+  classic-status-only blind spot is now resolved); `cr:pending + st:passed →
+  unknown`; `cr:passed + st:none → passed`; `cr:failed + st:passed → failed`;
+  `cr:errored + st:passed → errored`; `cr:none + st:none → unknown`. Deterministic,
+  no inference.
 - **Stored evidence** (ADR-0017): `result`, `commandLabel = "github-checks"`
   (unchanged label or `"github-status"` — implementer keeps the existing label
   to avoid a schema/UI change), `recordedAt`, timing, flags only. No raw
   payloads, no `statuses[]` contents, no token, no URL, no identity.
+- **Token scope (RP-2.17-a, F3)**: the combined-status read requires an
+  additional read-only permission. The minimal operator token scope is now
+  **"Checks: read" + "Commit statuses: read"** (GitHub fine-grained token
+  permission names; classic equivalent: a read-only `repo`-scoped token on
+  private repos). This is **not** a new credential mechanism (same memory-only
+  operator-set token store), but the operator token *contract* expands by one
+  read permission; ADR/handoff/contract must state it.
 
 ### 2. What remains forbidden (unchanged from ADR-0019-b)
 
@@ -175,18 +194,31 @@ An `EX-2.17-1` handoff and `REVIEW-2.17-1` closeout MUST verify:
 3. **No new credential / identity surface**: reuses the memory-only operator-set
    token; no HTTP-supplied owner/repo/ref/url/host/token; absent token/config →
    409/no call (unchanged).
-4. **Fixed `state` mapping + merge precedence** exactly as §1; deterministic; no
-   inference. Status 404/no-statuses/422 → no-signal (not failure).
-5. **both-errored → errored**; never a false `passed` on error/rate-limit.
-6. **No raw surface**: no `statuses[]`/payload/token/URL/identity/`sha` stored or
+4. **Fixed source-signal mapping + merge ladder** exactly as §1 (RP-2.17-a):
+   both sources normalized to `{failed,errored,pending,passed,skipped,none}`
+   with zero-check-runs → `none` and `state==='pending' && total_count===0` →
+   `none`; merge ladder `failed > errored > pending(→unknown) > passed >
+   skipped > (both none →unknown)`. Deterministic; no inference. Regression
+   guard: `cr:none + st:passed → passed`.
+5. **`total_count` read (F2)**: the status source distinguishes real-pending
+   (`total_count>0`) from no-statuses (`total_count===0 → none`); only top-level
+   `state` + `total_count` are read; `statuses[]` is never parsed/surfaced.
+6. **errored vs false pass**: a source `errored` ranks above `passed` (never a
+   false `passed` when a source errored); only `failed` outranks `errored`.
+7. **No raw surface**: no `statuses[]`/payload/token/URL/identity/`sha` stored or
    shown; error/timeout strings redacted.
-7. **Stored as ADR-0017 evidence**: sanitized label/timing/flags only.
-8. **No autonomy / human-triggered**: reuses the existing confirm gate; no
-   poller/webhook.
-9. **Tests**: status-only repo → typed result; each merge precedence case;
-   status no-signal fallback to check-runs; both-errored → errored; status-path
-   URL containment; token-never-leaks (incl. error/timeout); no real network.
-10. **Backward compatible**: existing 0019-b/provider/console tests pass; the
+8. **Token scope (F3)**: ADR/handoff/contract document the minimal read-only
+   scope as **Checks: read + Commit statuses: read**; no new credential
+   mechanism (same memory-only operator-set token); absent token/config →
+   409/no call (unchanged).
+9. **Stored as ADR-0017 evidence**: sanitized label/timing/flags only.
+10. **No autonomy / human-triggered**: reuses the existing confirm gate.
+11. **Tests**: status-only repo (`cr:none + st:passed`) → `passed`;
+    `cr:pending + st:passed` → `unknown`; `state:pending,total_count:0` → `none`
+    fallback; `cr:failed + st:passed` → `failed`; one-source-errored → `errored`;
+    both-none → `unknown`; status-path URL containment; token-never-leaks (incl.
+    error/timeout); injected fetch (no real network).
+12. **Backward compatible**: existing 0019-b/provider/console tests pass; the
     change is additive within the existing provider.
 
 ## Allowed files (proposed for EX-2.17-1)
@@ -207,17 +239,22 @@ Otherwise STOP and report.
 ## Handoff prompt sketch (EX-2.17-1)
 
 > Implement only ADR-0022. In `github-checks-provider.ts`, add a second
-> read-only GET to `/commits/{ref}/status` reusing the existing
-> containment (HTTPS/TLS/redirect/timeout/bounded-read/token/redaction/URL
-> safety), map combined `state` (success/pending/failure; 404/none/422 →
-> no-signal; auth/timeout/5xx → errored), and merge with the check-runs result by
-> the fixed precedence (errored-if-both-errored → failed → unknown → passed →
-> skipped → unknown). Store the merged typed result as ADR-0017 evidence
-> (sanitized). Add no third endpoint, no provider, no new credential/identity
-> surface, no raw `statuses[]`/payload/token. Add the §9 tests (injected fetch,
-> no real network). Run typecheck, lint, provider + touched suites, npm test,
-> git diff --check. One dedicated `EX-2.17-1` diff; do not commit/push until
-> `REVIEW-2.17-1` authorizes.
+> read-only GET to `/commits/{ref}/status` reusing the existing containment
+> (HTTPS/TLS/redirect/timeout/bounded-read/token/redaction/URL safety). Normalize
+> BOTH sources to a signal in `{failed,errored,pending,passed,skipped,none}`:
+> check-runs → `none` when zero check-runs; combined status → read top-level
+> `state` AND `total_count` (never `statuses[]`), `state:pending,total_count:0` →
+> `none`, `state:pending,total_count>0` → `pending`, 404/422 → `none`,
+> auth/timeout/5xx → `errored`. Merge by the fixed ladder
+> `failed > errored > pending(→unknown) > passed > skipped > (both none →
+> unknown)` (regression guard: `cr:none + st:passed → passed`). Store the merged
+> typed result as ADR-0017 evidence (sanitized). Update the contract/handoff/
+> operator docs: minimal read-only token scope is now **Checks: read + Commit
+> statuses: read**. Add no third endpoint, no provider, no new credential
+> mechanism/identity surface, no raw `statuses[]`/payload/token. Add the §11
+> tests (injected fetch, no real network). Run typecheck, lint, provider +
+> touched suites, npm test, git diff --check. One dedicated `EX-2.17-1` diff; do
+> not commit/push until `REVIEW-2.17-1` authorizes.
 
 ## Status / Next
 

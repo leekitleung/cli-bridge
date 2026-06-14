@@ -88,6 +88,20 @@ All notable changes to CLI Bridge are documented here.
     tests/project-console-behavior.test.mjs.
 
 ### Planning / ADR
+- **RP-2.17-a: fixed ADR-0022 merge semantics + token scope** after
+  `REVIEW-ADR-0022` returned CHANGES REQUIRED (F1/F2/F3). F1: the merge now
+  normalizes BOTH sources to a signal `{failed,errored,pending,passed,skipped,
+  none}` with zero-check-runs → `none` (absence, not blocking) and ladder
+  `failed > errored > pending(→unknown) > passed > skipped > (both none →
+  unknown)`, so the classic-status-only blind spot `cr:none + st:passed` now
+  resolves to `passed` (previously wrongly `unknown`). F2: the status source
+  reads top-level `state` AND `total_count` to distinguish real-pending
+  (`total_count>0`) from no-statuses (`total_count===0 → none`), since combined
+  `state` is `pending` in both cases; `statuses[]` is still never parsed/surfaced.
+  F3: minimal read-only token scope updated to **Checks: read + Commit statuses:
+  read** (same memory-only operator-set token; contract change only). Updated
+  Decision §1, acceptance #4-#11, and the handoff sketch. Still PROPOSED pending
+  re-review.
 - **RP-2.17: drafted ADR-0022 GitHub Combined Commit-Status Augmentation** as
   PROPOSED. A bounded increment to the closed ADR-0019-b remote provider: add a
   second read-only call to `/commits/{ref}/status` (legacy combined commit
