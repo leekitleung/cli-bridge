@@ -1,9 +1,10 @@
 # ADR-0019: Git/CI/GitHub Verification Provider Integration (v2.14 planning)
 
 Status: SPLIT (RP-2.14). **ADR-0019-a** (read-only LOCAL git status, offline) —
-        pre-acceptance design FIXED, awaiting `REVIEW-ADR-0019-a` (ADR-0007 §2;
-        no credential review needed). **ADR-0019-b** (remote CI/GitHub + memory-
-        only credentials) — PROPOSED — DEFERRED.
+        **ACCEPTED** by `REVIEW-ADR-0019-a` (2026-06-13, ADR-0007 §2; no
+        credential review needed) after RP-2.14-a hardened git-spawn
+        containment. **ADR-0019-b** (remote CI/GitHub + memory-only credentials)
+        — PROPOSED — DEFERRED.
 
 Date: 2026-06-13 (revised 2026-06-13: RP-2.14 a/b split)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
@@ -132,7 +133,8 @@ lighter ADR-0007 §2 gate alone.
   (last only if opt-in persistence requires it).
 
 The execution handoff is `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`.
-ADR-0019-a stays NOT ACCEPTED until `REVIEW-ADR-0019-a` (ADR-0007 §2) passes.
+ADR-0019-a is **ACCEPTED** (`REVIEW-ADR-0019-a`, 2026-06-13); `EX-2.14-1` is
+authorized and dispatchable on a human trigger, returning to `REVIEW-2.14-1`.
 
 ---
 
@@ -359,10 +361,11 @@ outside it requires STOP-and-report.
 
 ## Status / Next
 
-SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) has a fixed
-pre-acceptance design above and awaits `REVIEW-ADR-0019-a` (ADR-0007 §2 only);
-on acceptance, dispatch `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md` for
-`EX-2.14-1`, then return to `REVIEW-2.14-1`. **ADR-0019-b** (remote CI/GitHub +
-memory-only credentials) remains PROPOSED — DEFERRED and keeps the full
-ADR-0007 §2 + credential-handling prerequisite; it must not start before its own
-explicit acceptance and must never be merged into the ADR-0019-a batch.
+SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) is **ACCEPTED**
+(`REVIEW-ADR-0019-a`, 2026-06-13, ADR-0007 §2) after RP-2.14-a hardened
+git-spawn containment; dispatch `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`
+for `EX-2.14-1` on a human trigger, then return to `REVIEW-2.14-1`. **ADR-0019-b**
+(remote CI/GitHub + memory-only credentials) remains PROPOSED — DEFERRED and
+keeps the full ADR-0007 §2 + credential-handling prerequisite; it must not start
+before its own explicit acceptance and must never be merged into the ADR-0019-a
+batch.

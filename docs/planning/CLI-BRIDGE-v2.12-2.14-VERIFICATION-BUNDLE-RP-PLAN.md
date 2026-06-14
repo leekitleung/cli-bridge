@@ -107,7 +107,7 @@ review decision (per the workflow contract).
 |---|---|---|---|---|---|
 | 0017 | Typed verification result model (data + display) | low | ACCEPTED | 2026-06-13 | Senior review |
 | 0018 | Local live verification execution | high (execution) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0018-b |
-| 0019-a | Read-only LOCAL git status context (offline) | medium (git spawn, read-only) | PROPOSED — design FIXED, awaiting `REVIEW-ADR-0019-a` | — | — |
+| 0019-a | Read-only LOCAL git status context (offline) | medium (git spawn, read-only) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0019-a |
 | 0019-b | Remote CI/GitHub status + memory-only credentials | high (network + creds) | PROPOSED — DEFERRED | — | — |
 
 **Group-acceptance semantics (hard rule).** "Accepting the bundle" is bounded
@@ -147,10 +147,10 @@ and does NOT promote every ADR to ACCEPTED:
 ## 7. Next action
 
 ADR-0018 closed (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`). **RP-2.14** split
-ADR-0019 and fixed the ADR-0019-a design + authored
-`CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`. Next: take **ADR-0019-a**
-through `REVIEW-ADR-0019-a` (ADR-0007 §2) for explicit acceptance; only then
-dispatch `EX-2.14-1`, returning to `REVIEW-2.14-1` before closeout. **ADR-0019-b**
-(remote CI/GitHub + credentials) stays DEFERRED and must not start before its
-own acceptance + ADR-0007 §2 + credential review; never merge it into the
-ADR-0019-a batch.
+ADR-0019 and fixed the ADR-0019-a design; **RP-2.14-a** hardened the git-spawn
+containment; **ADR-0019-a is now ACCEPTED** (`REVIEW-ADR-0019-a`, 2026-06-13,
+ADR-0007 §2). Next: dispatch `EX-2.14-1` via
+`CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md` on a human trigger, returning
+to `REVIEW-2.14-1` before closeout. **ADR-0019-b** (remote CI/GitHub +
+credentials) stays DEFERRED and must not start before its own acceptance +
+ADR-0007 §2 + credential review; never merge it into the ADR-0019-a batch.

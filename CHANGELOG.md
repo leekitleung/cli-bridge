@@ -5,6 +5,21 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **ADR-0019-a Read-only Local Git Status Provider ACCEPTED** (`REVIEW-ADR-0019-a`,
+  2026-06-13, ADR-0007 §2; no credential review needed) after RP-2.14-a hardened
+  git-spawn containment. Authorizes only an opt-in (`gitStatusEnabled`, default
+  off), human-triggered, read-only, offline local `git` status context: fixed
+  `shell:false` read-only commands, cwd solely from `projectWorkspaceRoots[key]`
+  (no `baselineRoot` fallback; absent → 409/no spawn), minimal env allowlist +
+  `GIT_TERMINAL_PROMPT=0`/`GIT_OPTIONAL_LOCKS=0` + disabled repo-config command
+  execution, sanitized `GitStatusView` (no commit hash/remote URL/absolute path/
+  raw output/diff; git status is context only, never pass/fail), redacted audit
+  with a field whitelist, and fail-closed behavior. Does NOT authorize remote
+  CI/GitHub/network/provider clients, credentials, git writes, or ADR-0019-b.
+  `EX-2.14-1` is now dispatchable via
+  `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`, returning to `REVIEW-2.14-1`
+  before closeout. **ADR-0019-b** (remote CI/GitHub + memory-only credentials)
+  remains PROPOSED — DEFERRED.
 - **RP-2.14-a: hardened ADR-0019-a git-spawn containment** after
   `REVIEW-ADR-0019-a` returned CHANGES REQUIRED on one ADR-0007 §2 Containment
   gap (the git child's execution environment was undecided). Fixed in the

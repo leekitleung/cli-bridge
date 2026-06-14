@@ -1,8 +1,8 @@
 # CLI Bridge v2.14 — Read-only Local Git Status Provider — Implementation Handoff (ADR-0019-a)
 
-**Status**: HANDOFF AUTHORED — **NOT YET DISPATCHABLE**. `EX-2.14-1` may run
-only after `REVIEW-ADR-0019-a` accepts ADR-0019-a (ADR-0007 §2). Until then this
-is a pre-written, gated handoff.
+**Status**: HANDOFF AUTHORIZED — **DISPATCHABLE**. ADR-0019-a is ACCEPTED
+(`REVIEW-ADR-0019-a`, 2026-06-13, ADR-0007 §2). `EX-2.14-1` may run on a human
+dispatch trigger and returns to `REVIEW-2.14-1` before closeout.
 **Date**: 2026-06-13
 **Batch**: `EX-2.14-1` (execution) → returns to `REVIEW-2.14-1`
 **Based on**:
