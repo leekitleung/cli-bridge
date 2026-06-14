@@ -48,13 +48,21 @@ a console-only read-only change consuming existing cached fields.
 ### 1. What is permitted
 
 PERMIT adding an inert per-step **verification result** indicator to the goal
-plan-step table:
+plan-step table, using a single fixed selection rule (RP-2.16-a):
 
-- For each plan step, look up the most relevant `store.cache.verification.records`
-  entry by `stepId`; if found and it has a discrete `result`, render an inert
-  typed pill (`passed/failed/skipped/errored/unknown`).
-- If no matching record or no `result`, render an inert placeholder (e.g. `—`).
-- HTML-escape any rendered string; render only the discrete `result` enum.
+- **Candidate set**: records where `record.stepId === step.id` AND
+  `record.result` is in the closed enum `passed | failed | skipped | errored |
+  unknown`. Records with no `result`, or a `result` outside the enum, are
+  **not** candidates.
+- **Selection (deterministic)**: among candidates, pick the one with the
+  greatest `createdAt`; if `createdAt` is missing or tied, pick the one that
+  appears **earlier** in the `/verification.records[]` array order.
+- **Render**: the selected record's discrete `result` as an inert HTML-escaped
+  typed pill.
+- **Fail-closed**: no candidate (no match / no typed `result` / non-enum
+  `result`) → inert placeholder `—`. A non-enum/invalid `result` is treated as
+  fail-closed `—`, never shown (not merely HTML-escaped), so only discrete enum
+  values ever render and no pass/fail is inferred.
 
 ### 2. What is forbidden
 
@@ -134,8 +142,12 @@ ADR.
   Mitigation: render only the discrete `result` via an allow-list + escaping;
   tests assert no raw/notes/token/identity appears in the step row.
 - **Ambiguous multi-record per step**: more than one record may match a
-  `stepId`. Mitigation: deterministic selection (e.g. most recent / first typed
-  result) fixed in the handoff; no inference.
+  `stepId`. Mitigation: the deterministic selection rule is fixed at the ADR
+  level (RP-2.16-a) — greatest `createdAt`, then earliest array position — so the
+  execution agent makes no selection judgment.
+- **Non-enum / invalid result**: a record could carry an unexpected `result`
+  value. Mitigation: only the closed enum renders; anything else is fail-closed
+  `—`, never displayed.
 
 ## Consequences
 
@@ -154,17 +166,23 @@ An `EX-2.16-1` handoff and `REVIEW-2.16-1` closeout MUST verify:
 2. **No new fetch / execution / network / credential**: none added.
 3. **Join by existing `stepId`**: per-step result comes from
    `records[].stepId === step.id`; no new identity mapping introduced.
-4. **Allow-list render + escaping**: only the discrete `result` enum is shown
-   (HTML-escaped); no raw output/notes/token/URL/path/hash/branch/owner/repo/diff.
-5. **Fail-closed**: no matching record / no typed `result` → inert `—`.
+4. **Allow-list render + escaping + enum fail-closed**: only a `result` value in
+   the closed enum is shown (HTML-escaped); a non-enum/invalid `result` is
+   fail-closed `—`, never rendered; no raw output/notes/token/URL/path/hash/
+   branch/owner/repo/diff.
+5. **Fail-closed**: no matching record / no typed `result` / non-enum `result` →
+   inert `—`.
 6. **No affordance**: the per-step indicator has no button/link/input/control.
 7. **No pass/fail inference**: steps with only legacy free-text `notes` (no typed
    `result`) show `—`, never an inferred outcome.
-8. **Deterministic selection**: a fixed rule when multiple records match a
-   `stepId`.
-9. **Tests**: per-step render on match, `—` on no-match/no-result, escaping,
-   no-control, no-extra-fetch, no raw/notes/token/identity in the step row even
-   when a record carries unexpected fields.
+8. **Deterministic selection (fixed)**: among records with
+   `stepId === step.id` and an enum `result`, select greatest `createdAt`; on
+   missing/tied `createdAt`, the earliest in `/verification.records[]` order.
+9. **Tests**: per-step render on match; `—` on no-match / no-`result` /
+   non-enum `result`; deterministic pick across multiple matches (greatest
+   `createdAt`, then array order); escaping; no-control; no-extra-fetch; no
+   raw/notes/token/identity in the step row even when a record carries
+   unexpected fields.
 10. **Backward compatible**: existing observability/console/persistence tests
     pass; the change is additive goal-view rendering only.
 
@@ -183,13 +201,17 @@ Otherwise STOP and report.
 
 > Implement only ADR-0021. In `renderGoalCard`'s plan-step table, add an inert
 > per-step verification-result indicator joined from
-> `store.cache.verification.records` by `stepId === step.id`, rendering only the
-> discrete typed `result` as an HTML-escaped pill (fixed selection rule when
-> multiple match); no match / no `result` → inert `—`. Add no endpoint, no
-> fetch, no execution/network/credential, and no write/execute control. Render
-> no raw output/notes/token/identity. Add the §9 tests. Run typecheck, lint, the
-> touched node --test suites, npm test, git diff --check. One dedicated
-> `EX-2.16-1` diff; do not commit/push until `REVIEW-2.16-1` authorizes.
+> `store.cache.verification.records` by `stepId === step.id`. Selection is fixed:
+> candidates are records whose `result` is in the closed enum
+> `passed|failed|skipped|errored|unknown`; among candidates pick the greatest
+> `createdAt`, and on missing/tied `createdAt` the earliest in the
+> `/verification.records[]` array; render that discrete `result` as an
+> HTML-escaped pill. No candidate (no match / no `result` / non-enum `result`) →
+> inert `—` (non-enum is fail-closed, never shown). Add no endpoint, no fetch, no
+> execution/network/credential, and no write/execute control. Render no raw
+> output/notes/token/identity. Add the §9 tests. Run typecheck, lint, the touched
+> node --test suites, npm test, git diff --check. One dedicated `EX-2.16-1` diff;
+> do not commit/push until `REVIEW-2.16-1` authorizes.
 
 ## Status / Next
 

@@ -77,6 +77,14 @@ All notable changes to CLI Bridge are documented here.
     tests/project-console-behavior.test.mjs.
 
 ### Planning / ADR
+- **RP-2.16-a: hardened ADR-0021 multi-record selection** after `REVIEW-ADR-0021`
+  returned CHANGES REQUIRED on the undefined selection rule. Fixed a single
+  deterministic rule into the Decision / acceptance #8-#9 / handoff: candidates
+  are records with `stepId === step.id` and a closed-enum `result`
+  (`passed|failed|skipped|errored|unknown`); select greatest `createdAt`, then
+  earliest `/verification.records[]` order on missing/tie; non-enum/invalid
+  `result` is fail-closed `—` (never rendered). Still PROPOSED pending re-review
+  and acceptance.
 - **RP-2.16: drafted ADR-0021 Goal Plan-Step Verification-Result Presentation**
   as PROPOSED. Read-only, console-only increment that shows the per-step typed
   verification `result` in the goal view's plan-step table by joining the
