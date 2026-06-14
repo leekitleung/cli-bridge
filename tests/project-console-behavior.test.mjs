@@ -630,11 +630,97 @@ test('v2.12: verification tab renders typed result inertly and adds no execution
   assert.equal(workspace.innerHTML.includes('raw verification note'), false, 'raw notes not rendered');
   assert.equal(/stdout|stderr|sha256|diff|raw output/i.test(workspace.innerHTML), false, 'no raw surface rendered');
   assert.equal(/run|execute|apply-from-preview|promote|commit|discard/i.test(workspace.innerHTML), false, 'no execution/write affordance text');
-  assert.equal(workspace.querySelector('button'), null, 'verification view has no action button');
+  // v2.13: live verification adds allowed Confirm/Refresh buttons. Assert no run/execute/commit/discard/apply buttons.
+  const buttons = [...workspace.querySelectorAll('button')].map(b => b.textContent || '').join(' ');
+  assert.equal(/run|execute|commit|discard|apply|promote/i.test(buttons), false, 'no execution/write button labels');
   assert.equal(workspace.querySelector('[href]'), null, 'verification view has no links');
 
   const verificationCalls = fetchCalls.filter(c => c.path.endsWith('/verification'));
   assert.equal(verificationCalls.every(c => c.method === 'GET'), true, 'verification calls are GET-only');
+});
+
+// ── v2.13-h: live verification gate behavior ──────────────────────
+
+test('v2.13: verification view fetches /profiles without auto-triggering confirm', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/profiles', { ok: true, payload: { profiles: [{ id: 'ut', label: 'Unit', networkRisk: 'low', mutationRisk: 'read-only', available: true, selected: false }], selectedProfileId: null, workspaceRootAvailable: true } });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const profilesCalls = fetchCalls.filter(c => c.path.endsWith('/verification/profiles'));
+  assert.ok(profilesCalls.length >= 1, 'must fetch profiles');
+  const confirmCalls = fetchCalls.filter(c => c.path.endsWith('/verification/confirm'));
+  assert.equal(confirmCalls.length, 0, 'must not auto-trigger confirm');
+});
+
+test('v2.13: verification gate displays profile label + networkRisk + mutationRisk', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/profiles', { ok: true, payload: { profiles: [{ id: 'ut', label: 'Unit Tests', networkRisk: 'unknown', mutationRisk: 'read-only', available: true, selected: true }], selectedProfileId: 'ut', workspaceRootAvailable: true } });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const html = document.getElementById('workspace').innerHTML;
+  assert.ok(html.includes('Unit Tests'), 'must show profile label');
+  assert.ok(html.includes('unknown'), 'must show networkRisk');
+  assert.ok(html.includes('read-only'), 'must show mutationRisk');
+});
+
+test('v2.13: verification view has no command/cwd/env free-form input', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/profiles', { ok: true, payload: { profiles: [{ id: 'ut', label: 'Unit', networkRisk: 'unknown', mutationRisk: 'read-only', available: true, selected: true }], selectedProfileId: 'ut', workspaceRootAvailable: true } });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  const workspace = document.getElementById('workspace');
+  const inputs = workspace.querySelectorAll('input, textarea');
+  // Only confirm/refresh buttons, no free-form input
+  for (const inp of inputs) {
+    const id = (inp.id || '').toLowerCase();
+    const name = (inp.name || '').toLowerCase();
+    const label = (inp.labels?.[0]?.textContent || '').toLowerCase();
+    const combined = id + name + label;
+    for (const banned of ['command', 'argv', 'cwd', 'env', 'shell', 'root', 'output', 'stdout', 'stderr']) {
+      assert.equal(combined.includes(banned), false, `no ${banned} input`);
+    }
+  }
+  // No apply/commit/discard/promote controls
+  const html = workspace.innerHTML.toLowerCase();
+  for (const banned of ['apply', 'commit', 'discard', 'promote']) {
+    assert.equal(html.includes(banned), false, `no ${banned} control`);
+  }
 });
 
 // ── Helpers for v2.7 ADR-0012 Apply Viewer JSDOM tests ──────────

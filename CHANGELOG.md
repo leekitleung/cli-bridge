@@ -545,6 +545,25 @@ All notable changes to CLI Bridge are documented here.
 
 ### Added — v2.12 Typed Verification Result Model (EX-2.12-1, ADR-0017)
 
+### Added — v2.13 Local Live Verification Execution (EX-2.13-1, ADR-0018)
+
+- **Operator-configured verify profiles**: `createBridgeRuntime({ verifyProfiles })` accepts
+  profiles with id/label/argv/env/timeout/caps. Profiles are runtime-only, never in
+  project records, snapshots, or editable via API.
+- **Project opt-in**: `PATCH /bridge/projects/:key` supports `verifyProfileId` (string to
+  set, null to remove). Default off. Command-like fields rejected.
+- **Contained runner**: `child_process.spawn` with `shell:false`, cwd only from
+  `projectWorkspaceRoots[projectKey]` (no baselineRoot fallback), env allowlist,
+  timeout/kill/cap, output transient-capped-and-discarded, single-run lock.
+- **Human-gated trigger**: `POST /verification/confirm` with `{ confirm: true }`,
+  no command/profile override. Exit → ADR-0017 typed evidence (passed/failed/errored).
+- **Profiles list**: `GET /verification/profiles` returns sanitized metadata only
+  (id/label/networkRisk/mutationRisk), no argv/cwd/env/caps.
+- **No raw output, no git/CI/GitHub/provider, no main-tree write.**
+- **Tests**: 9 runner tests covering exit mapping, truncation, output discard, lock.
+
+### Added — v2.5 Workspace Apply (Approach A)
+
 - **Typed verification evidence**: existing artifact recording accepts optional
   `verificationEvidence` with a closed `result` (`passed`, `failed`, `skipped`,
   `errored`, `unknown`), optional sanitized `commandLabel`, and optional

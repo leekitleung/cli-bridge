@@ -26,6 +26,10 @@ import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
 import { toApplyManifest } from '../storage/workspace-apply-store.ts';
 import { normalizeProjectWorkspaceRoots } from '../storage/workspace-apply-store.ts';
 import type { ApplyRequest } from '../storage/workspace-apply-store.ts';
+import { VerificationRunStore } from '../storage/verification-run-store.ts';
+import type { VerifyProfile } from '../../../../packages/shared/src/types.ts';
+import { runVerificationProfile } from '../verification/profile-runner.ts';
+import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
@@ -114,6 +118,12 @@ export interface BridgeRuntime {
   modelProviderFor?: (apiKey: string) => ModelProvider;
   // v2.5 Workspace apply
   applyStore: WorkspaceApplyStore;
+  // v2.13: live verification run store
+  verificationRunStore: VerificationRunStore;
+  // v2.13: operator-configured verification profiles
+  readonly verifyProfiles?: readonly VerifyProfile[];
+  readonly verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
+  readonly projectWorkspaceRoots?: Record<string, string>;
 }
 
 export interface BridgeRuntimeOptions {
@@ -136,6 +146,10 @@ export interface BridgeRuntimeOptions {
   projectWorkspaceRoots?: Record<string, string>;
   baselineCaptureEnabled?: boolean;
   baselineCaps?: { maxFiles: number; maxTotalBytes: number };
+  // v2.13 ADR-0018: operator-configured verification profiles.
+  verifyProfiles?: VerifyProfile[];
+  // v2.13 ADR-0018: injectable spawn for tests.
+  verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
 }
 
 
@@ -1076,6 +1090,105 @@ async function postWorkBuddyMultiplex(
   }
 }
 
+// ── v2.13 ADR-0018: Live verification handlers ──────────────────
+
+function handleVerificationProfilesGet(
+  runtime: BridgeRuntime,
+  projectKey: string,
+): BridgeResult {
+  const profiles = runtime.verifyProfiles ?? [];
+  const project = runtime.projectStore.get(projectKey);
+  if (!project) return error(404, 'Project not found');
+
+  const hasRoot = !!(runtime.projectWorkspaceRoots?.[projectKey]);
+  const selectedId = project.verifyProfileId;
+
+  const available: VerifyProfileMeta[] = profiles.map(p => ({
+    id: p.id,
+    label: p.label,
+    networkRisk: p.networkRisk,
+    mutationRisk: p.mutationRisk,
+    available: hasRoot,
+    selected: p.id === selectedId,
+  }));
+
+  return ok({ profiles: available, selectedProfileId: selectedId ?? null, workspaceRootAvailable: hasRoot });
+}
+
+async function handleVerificationConfirmPost(
+  runtime: BridgeRuntime,
+  projectKey: string,
+  request: import('node:http').IncomingMessage,
+): Promise<BridgeResult> {
+  const project = runtime.projectStore.get(projectKey);
+  if (!project) return error(404, 'Project not found');
+  if (project.archivedAt) return error(409, 'Cannot verify archived project');
+
+  const profiles = runtime.verifyProfiles ?? [];
+  const profileId = project.verifyProfileId;
+  if (!profileId) return error(409, 'No verification profile configured for this project');
+
+  const profile = profiles.find((p: VerifyProfile) => p.id === profileId);
+  if (!profile) return error(409, 'Verification profile not found');
+
+  const workspaceRoot = runtime.projectWorkspaceRoots?.[projectKey];
+  if (!workspaceRoot) return error(409, 'No project workspace root configured');
+
+  // Read body — only confirm:true, no command/profile override.
+  const parsed = await readJsonBody(request as any).catch(() => ({ ok: false as const, message: 'Invalid request body' }));
+  if (!parsed.ok) return error(400, parsed.message);
+
+  const body = parsed.body as Record<string, unknown>;
+  if (body.confirm !== true) return error(409, 'Confirm must be true');
+
+  // Reject command-like overrides.
+  for (const banned of ['command', 'argv', 'cwd', 'env', 'shell', 'profile', 'profileId', 'stdout', 'stderr', 'output', 'root']) {
+    if (banned in body) return error(400, `Field '${banned}' is not allowed in verification confirm`);
+  }
+
+  const result = await runVerificationProfile({
+    profile,
+    projectKey,
+    workspaceRoot,
+    spawnFn: runtime.verificationSpawnFn,
+  });
+
+  // Store sanitized record.
+  runtime.verificationRunStore.add(projectKey, result.record);
+
+  // Redacted audit event — no cwd/root/argv/env/stdout/stderr.
+  runtime.auditLog.createAndAppend({
+    sessionId: 'verify-' + projectKey + '-' + Date.now(),
+    projectId: projectKey,
+    type: 'workspace_apply_result',
+    source: 'verification',
+    target: 'project-' + projectKey,
+    result: {
+      ok: result.ok,
+      metadata: {
+        verification: {
+          profileId: result.record.profileId,
+          commandLabel: result.record.commandLabel,
+          result: result.record.result,
+          elapsedMs: result.record.elapsedMs,
+          truncated: result.record.truncated,
+          outputDiscarded: result.record.outputDiscarded,
+        },
+      },
+    },
+  });
+
+  return ok({
+    profileId: result.record.profileId,
+    commandLabel: result.record.commandLabel,
+    result: result.record.result,
+    elapsedMs: result.record.elapsedMs,
+    truncated: result.record.truncated,
+    outputDiscarded: result.record.outputDiscarded,
+    error: result.error,
+  });
+}
+
 export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeRuntime {
   const packetStore = new InMemoryPacketStore();
   const auditLog = new InMemoryAuditLog();
@@ -1115,6 +1228,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     baselineCaps: options.baselineCaps,
   });
 
+  // v2.13: live verification — created before snapshot restore
+  const verificationRunStore = new VerificationRunStore();
+
   if (snapshotStore) {
     const read = snapshotStore.read();
     if (read.ok && read.snapshot) {
@@ -1148,6 +1264,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const a of read.snapshot.teamArtifacts ?? []) {
         try { teamStore.hydrateArtifact(a); } catch { }
       }
+      // v2.13: restore live verification run records
+      for (const r of read.snapshot.verificationRunRecords ?? []) {
+        try { verificationRunStore.add(r.projectKey, r); } catch { }
+      }
       for (const e of read.snapshot.workbuddyExecutionLedgerEvents ?? []) {
         try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { }
       }
@@ -1164,6 +1284,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       goals: goalStore.exportGoals(),
       plans: goalStore.exportPlans(),
       projects: projectStore.exportProjects(),
+      verificationRunRecords: verificationRunStore.list(),
       workbuddyTaskReferences: workbuddyStore.listTaskReferences(),
       workbuddyReviewResultSinks: workbuddyStore.listReviewResultSinks(),
       workbuddyPromptDraftSinks: workbuddyStore.listPromptDraftSinks(),
@@ -1195,6 +1316,11 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
+    // v2.13 ADR-0018
+    verificationRunStore,
+    verifyProfiles: options.verifyProfiles,
+    verificationSpawnFn: options.verificationSpawnFn,
+    projectWorkspaceRoots,
   };
 }
 
@@ -1558,6 +1684,9 @@ export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
 export const BRIDGE_PROJECT_AUDIT_SUFFIX = '/audit';
 export const BRIDGE_PROJECT_MEMORY_SUFFIX = '/memory';
 export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
+// v2.13: live verification sub-routes
+export const BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX = '/verification/profiles';
+export const BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX = '/verification/confirm';
 
 // v2.2 WorkBuddy non-executing task system project-scoped path.
 export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
@@ -1572,7 +1701,8 @@ function matchProjectObservabilityPath(pathname: string): {
   if (!pathname.startsWith(prefix)) return { matched: false };
   const rest = pathname.slice(prefix.length);
   for (const sub of [BRIDGE_PROJECT_TIMELINE_SUFFIX, BRIDGE_PROJECT_AUDIT_SUFFIX,
-    BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX]) {
+    BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX,
+    BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX, BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX]) {
     if (rest.endsWith(sub)) {
       const raw = rest.slice(0, -sub.length);
       if (raw.length === 0 || raw.includes('/')) continue;
@@ -2001,22 +2131,41 @@ export async function handleBridgeRequest(
     if (!existing) {
       return error(404, 'Project not found');
     }
-    // Only label, description, and workspaceApplyEnabled are writable.
+    // Only label, description, workspaceApplyEnabled, and verifyProfileId are writable.
     const label = typeof parsed.body.label === 'string' && parsed.body.label.trim().length > 0
       ? parsed.body.label.trim() : undefined;
     const description = typeof parsed.body.description === 'string'
       ? parsed.body.description : undefined;
     const workspaceApplyEnabled = typeof parsed.body.workspaceApplyEnabled === 'boolean'
       ? parsed.body.workspaceApplyEnabled : undefined;
-    // Reject disallowed fields.
-    if ('key' in parsed.body || 'createdAt' in parsed.body || 'archivedAt' in parsed.body) {
-      return error(400, 'Only label, description, and workspaceApplyEnabled can be updated');
+    // v2.13: verifyProfileId — string to set, null to remove, undefined to leave unchanged.
+    // Reject non-string/non-null values explicitly.
+    if (parsed.body.verifyProfileId !== undefined && parsed.body.verifyProfileId !== null
+        && typeof parsed.body.verifyProfileId !== 'string') {
+      return error(400, 'verifyProfileId must be a string or null');
+    }
+    const verifyProfileId = parsed.body.verifyProfileId === null ? null
+      : (typeof parsed.body.verifyProfileId === 'string' ? parsed.body.verifyProfileId as string | null : undefined);
+
+    // Reject disallowed command-like fields (root-like fields silently ignored per ADR-0014).
+    const blocked = ['key', 'createdAt', 'archivedAt', 'verifyCommand', 'command', 'argv', 'env', 'shell', 'stdout', 'stderr', 'output'];
+    for (const field of blocked) {
+      if (field in parsed.body) return error(400, `Field '${field}' is not allowed in project PATCH`);
+    }
+    // baselineRoot/workspaceRoot/projectWorkspaceRoots: silently ignore (ADR-0014 compat).
+    // v2.13: verifyProfileId must reference a configured profile.
+    if (typeof verifyProfileId === 'string') {
+      const profiles = runtime.verifyProfiles ?? [];
+      if (!profiles.some(p => p.id === verifyProfileId)) {
+        return error(400, 'verifyProfileId does not match any configured verification profile');
+      }
     }
     const updated = runtime.projectStore.upsert({
       key: projectKey,
       label,
       description,
       workspaceApplyEnabled,
+      verifyProfileId: parsed.body.verifyProfileId !== undefined ? verifyProfileId : undefined,
     });
     runtime.persist();
     return ok({ project: updated });
@@ -2082,9 +2231,35 @@ export async function handleBridgeRequest(
       return ok(buildDerivedMemory(obsInput));
     }
     if (obsPath.sub === BRIDGE_PROJECT_VERIFICATION_SUFFIX) {
-      return ok(buildHarnessVerification(obsInput));
+      const view = buildHarnessVerification(obsInput);
+      // v2.13: merge live verification records into summary
+      const liveRuns = runtime.verificationRunStore.getForProject(obsPath.key!);
+      (view as any).liveRunRecords = liveRuns;
+      if (liveRuns.length > 0) {
+        const summary = view.summary ?? { evidenceCount: 0, doneStepCount: 0, totalStepCount: 0, resultCounts: { passed: 0, failed: 0, skipped: 0, errored: 0, unknown: 0 } };
+        const counts = summary.resultCounts ?? { passed: 0, failed: 0, skipped: 0, errored: 0, unknown: 0 };
+        for (const r of liveRuns) {
+          summary.evidenceCount++;
+          if (counts[r.result] !== undefined) counts[r.result]++;
+          if (r.recordedAt && (!summary.lastRecordedAt || r.recordedAt > summary.lastRecordedAt)) {
+            summary.lastRecordedAt = r.recordedAt;
+          }
+        }
+        view.summary = summary;
+      }
+      return ok(view);
     }
+    // v2.13 ADR-0018: live verification profiles list (GET)
+    if (obsPath.sub === BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX) {
+      return handleVerificationProfilesGet(runtime, obsPath.key!);
+    }
+    // v2.13 confirm handled outside GET-only block below.
     return error(404, 'Not found');
+  }
+  // v2.13 ADR-0018: live verification trigger (POST) — outside GET-only block
+  if (obsPath.matched && method === 'POST' && obsPath.sub === BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX) {
+    if (!obsPath.key) return error(400, 'Invalid project key');
+    return handleVerificationConfirmPost(runtime, obsPath.key, request);
   }
   if (obsPath.matched) return error(405, 'Method not allowed');
 

@@ -30,6 +30,8 @@ export interface CreateProjectInput {
   description?: string;
   now?: number;
   workspaceApplyEnabled?: boolean;
+  // v2.13: optional verifyProfileId; null removes opt-in.
+  verifyProfileId?: string | null;
 }
 
 export interface BuildSummaryInput {
@@ -131,6 +133,9 @@ export class InMemoryProjectStore {
       createdAt: input.now ?? existing?.createdAt ?? Date.now(),
       ...(existing?.archivedAt !== undefined ? { archivedAt: existing.archivedAt } : {}),
       workspaceApplyEnabled: input.workspaceApplyEnabled ?? existing?.workspaceApplyEnabled ?? false,
+      verifyProfileId: 'verifyProfileId' in input
+        ? (input.verifyProfileId ?? undefined)
+        : existing?.verifyProfileId,
     };
     assertProject(project);
     this.projects.set(key, clone(project));

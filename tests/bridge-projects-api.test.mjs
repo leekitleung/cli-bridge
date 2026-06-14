@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as path from 'node:path';
 
 import {
   BRIDGE_PENDING_PROMPTS_PATH,
@@ -743,4 +744,170 @@ test('POST /bridge/projects rejects disallowed fields', async () => {
   const res = await call(runtime, 'POST', BRIDGE_PROJECTS_PATH, { key: 'bad', createdAt: 1 });
   assert.equal(res.statusCode, 400);
   assert.ok(res.payload.message.includes('createdAt'));
+});
+
+// v2.13: verifyProfileId allowlist validation
+test('v2.13: verifyProfileId must reference a configured verification profile', async () => {
+  // Runtime with profiles
+  const runtime = createBridgeRuntime({
+    verifyProfiles: [{ id: 'unit-tests', label: 'Unit', argv: ['npm', 'test'], env: [], timeoutMs: 1000, outputCapBytes: 1024, networkRisk: 'unknown', mutationRisk: 'read-only' }],
+  });
+
+  // Configured profile id → 200 and stored
+  let res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'unit-tests' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.verifyProfileId, 'unit-tests');
+  assert.equal(runtime.projectStore.get('cli-bridge').verifyProfileId, 'unit-tests');
+
+  // Null removes → 200, not persisted
+  res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: null });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.project.verifyProfileId, undefined);
+  assert.equal(runtime.projectStore.get('cli-bridge').verifyProfileId, undefined);
+
+  // Unknown profile id → 400, not stored
+  res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'nope' });
+  assert.equal(res.statusCode, 400);
+  assert.equal(runtime.projectStore.get('cli-bridge').verifyProfileId, undefined);
+
+  // Non-string (number/object) → 400
+  res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 123 });
+  assert.equal(res.statusCode, 400);
+  res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: {} });
+  assert.equal(res.statusCode, 400);
+});
+
+test('v2.13: verifyProfileId rejected when no runtime profiles are configured', async () => {
+  const runtime = createBridgeRuntime();
+  const res = await call(runtime, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'any' });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.payload.message.includes('verifyProfileId'));
+  assert.equal(runtime.projectStore.get('cli-bridge').verifyProfileId, undefined);
+});
+
+// ── v2.13-h: /verification/profiles and /verification/confirm route tests ──
+
+function makeVerifyRuntime(opts) {
+  // Inject a counting fake spawn so route tests never run a real external
+  // command. Records each invocation's file/args/cwd/env for assertions.
+  const spawnCalls = [];
+  const verificationSpawnFn = opts.spawnFn ?? (async (file, args, o) => {
+    spawnCalls.push({ file, args, cwd: o.cwd, env: o.env });
+    return { ok: true, exitCode: 0, signal: null, stdoutChunks: [], stderrChunks: [] };
+  });
+  const runtime = createBridgeRuntime({
+    verifyProfiles: opts.profiles ?? [{ id: 'ut', label: 'UT', argv: ['npm', 'test'], env: [], timeoutMs: 5000, outputCapBytes: 65536, networkRisk: 'unknown', mutationRisk: 'read-only' }],
+    projectWorkspaceRoots: 'root' in opts ? opts.root : { 'cli-bridge': '/tmp/test-root' },
+    baselineRoot: opts.baselineRoot ?? '/tmp/baseline',
+    verificationSpawnFn,
+  });
+  runtime.__spawnCalls = spawnCalls;
+  return runtime;
+}
+
+test('v2.13: GET /verification/profiles returns sanitized metadata only', async () => {
+  const rt = makeVerifyRuntime({});
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/profiles`);
+  assert.equal(res.statusCode, 200);
+  const p = res.payload.profiles[0];
+  assert.equal(p.id, 'ut');
+  assert.equal(p.label, 'UT');
+  assert.equal(p.networkRisk, 'unknown');
+  assert.equal(p.mutationRisk, 'read-only');
+  assert.equal(p.selected, false);
+  // Redaction: no argv/cwd/env/root/caps
+  for (const banned of ['argv', 'cwd', 'env', 'root', 'workspaceRoot', 'timeoutMs', 'outputCapBytes']) {
+    assert.equal(banned in p, false, `profile must not expose ${banned}`);
+  }
+  assert.equal(res.payload.selectedProfileId, null);
+  assert.equal(res.payload.workspaceRootAvailable, true);
+});
+
+test('v2.13: GET /verification/profiles shows selected when project opt-in is set', async () => {
+  const rt = makeVerifyRuntime({});
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  const res = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/profiles`);
+  assert.equal(res.payload.selectedProfileId, 'ut');
+  assert.equal(res.payload.profiles[0].selected, true);
+});
+
+test('v2.13: POST /verification/confirm fail-closed without confirm:true', async () => {
+  const rt = makeVerifyRuntime({});
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  let res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, {});
+  assert.equal(res.statusCode, 409);
+  res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: false });
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__spawnCalls.length, 0, 'no spawn without confirm:true');
+});
+
+test('v2.13: POST /verification/confirm runs configured profile and returns typed result', async () => {
+  const rt = makeVerifyRuntime({ profiles: [{ id: 'ut', label: 'UT', argv: ['npm', 'test', '--silent'], env: [], timeoutMs: 5000, outputCapBytes: 65536, networkRisk: 'unknown', mutationRisk: 'read-only' }] });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  const res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: true });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.profileId, 'ut');
+  assert.equal(res.payload.commandLabel, 'UT');
+  // Fake spawn returns exit 0 → deterministic passed (no real external command).
+  assert.equal(res.payload.result, 'passed');
+  assert.equal(typeof res.payload.elapsedMs, 'number');
+  assert.equal(typeof res.payload.truncated, 'boolean');
+  assert.equal(res.payload.outputDiscarded, true);
+
+  // Fake spawn invoked exactly once, with the selected profile's structured
+  // argv and the project-specific workspace root (normalized) as cwd.
+  assert.equal(rt.__spawnCalls.length, 1, 'spawn invoked exactly once');
+  assert.equal(rt.__spawnCalls[0].file, 'npm');
+  assert.deepEqual(rt.__spawnCalls[0].args, ['test', '--silent']);
+  assert.equal(rt.__spawnCalls[0].cwd, path.resolve('/tmp/test-root'));
+
+  // No raw output / argv / cwd / env / root in the response.
+  for (const banned of ['stdout', 'stderr', 'output', 'argv', 'cwd', 'env', 'root']) {
+    assert.equal(banned in res.payload, false, `response must not contain ${banned}`);
+  }
+  const payloadJson = JSON.stringify(res.payload);
+  assert.equal(payloadJson.includes('test-root'), false, 'response must not leak the absolute cwd/root');
+
+  // Stored run record is sanitized too (no raw output/argv/cwd/env/root).
+  const stored = rt.verificationRunStore.getForProject('cli-bridge');
+  assert.equal(stored.length, 1);
+  for (const banned of ['stdout', 'stderr', 'output', 'argv', 'cwd', 'env', 'root']) {
+    assert.equal(banned in stored[0], false, `stored record must not contain ${banned}`);
+  }
+
+  // Audit event is redacted: no absolute cwd/root or raw output streams.
+  const auditRes = await call(rt, 'GET', `${BRIDGE_PROJECTS_PATH}/cli-bridge/audit`);
+  assert.equal(auditRes.statusCode, 200);
+  const auditJson = JSON.stringify(auditRes.payload);
+  assert.equal(auditJson.includes('test-root'), false, 'audit must not leak the absolute cwd/root');
+  for (const banned of ['stdout', 'stderr', 'argv']) {
+    assert.equal(auditJson.includes(banned), false, `audit must not contain ${banned}`);
+  }
+});
+
+test('v2.13: POST /verification/confirm rejects command/argv/cwd/env override', async () => {
+  const rt = makeVerifyRuntime({});
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  for (const field of ['command', 'argv', 'cwd', 'env', 'shell', 'stdout', 'stderr', 'output', 'root', 'profile', 'profileId']) {
+    const res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: true, [field]: 'hack' });
+    assert.equal(res.statusCode, 400, `should reject ${field} override`);
+    assert.ok(res.payload.message.includes(field), `message should mention ${field}`);
+  }
+});
+
+test('v2.13: POST /verification/confirm no-spawn when no project workspace root', async () => {
+  const rt = makeVerifyRuntime({ root: {} }); // no root for cli-bridge
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  const res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: true });
+  assert.equal(res.statusCode, 409);
+  assert.ok(res.payload.message?.includes('workspace root') || res.payload.message?.includes('root') || res.payload.message?.includes('workspace'));
+  assert.equal(rt.__spawnCalls.length, 0, 'no spawn when no project workspace root');
+});
+
+test('v2.13: POST /verification/confirm no-spawn with baselineRoot when no project workspace root (no fallback)', async () => {
+  const rt = makeVerifyRuntime({ root: {}, baselineRoot: '/tmp/baseline' }); // baselineRoot exists but not projectWorkspaceRoots
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { verifyProfileId: 'ut' });
+  const res = await call(rt, 'POST', `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/confirm`, { confirm: true });
+  assert.equal(res.statusCode, 409); // no baselineRoot fallback
+  assert.equal(rt.__spawnCalls.length, 0, 'no spawn and no baselineRoot fallback');
 });

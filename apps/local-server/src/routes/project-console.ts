@@ -759,6 +759,18 @@ function renderSectionView() {
     html += '</div>';
   } else if (store.view === 'verification') {
     html = '<div class="card"><h3>Harness Verification (v2.1 placeholder baseline)</h3>';
+    html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
+
+    // ── v2.13 ADR-0018: live verification gate ───
+    html += '<div id="live-verify-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
+    html += '<div style="font-size:12px;font-weight:500;">Live Verification</div>';
+    html += '<div id="live-verify-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">—</div>';
+    html += '<div style="margin-top:6px;">';
+    html += '<button id="btn-live-verify-confirm" class="secondary" disabled>Confirm</button>';
+    html += '<button id="btn-live-verify-refresh" class="secondary" style="margin-left:6px;">Refresh</button>';
+    html += '</div>';
+    html += '<div id="live-verify-result" style="margin-top:6px;font-size:11px;"></div>';
+    html += '</div>';
     const verView = store.cache.verification;
     html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {
@@ -885,9 +897,90 @@ function renderSectionView() {
     const btn = document.getElementById('btn-apply-view');
     if (btn) btn.addEventListener('click', viewApplyResult);
   }
+  // v2.13: Bind live verification gate if in verification view.
+  if (store.view === 'verification') {
+    initLiveVerificationGate();
+  }
 }
 
-// ─── v2.5 Read-only apply-result viewer (ADR-0009) ───
+// ─── v2.13 ADR-0018 Live Verification Gate ───
+
+async function initLiveVerificationGate() {
+  const metaEl = document.getElementById('live-verify-meta');
+  const confirmBtn = document.getElementById('btn-live-verify-confirm');
+  const refreshBtn = document.getElementById('btn-live-verify-refresh');
+  const resultEl = document.getElementById('live-verify-result');
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification';
+
+  // Fetch profiles
+  let profilesData = null;
+  try {
+    const res = await api(base + '/profiles');
+    if (res.ok && res.data) {
+      profilesData = res.data;
+      const sel = res.data.selectedProfileId;
+      const avail = res.data.workspaceRootAvailable;
+      if (sel && avail) {
+        const p = res.data.profiles.find(function(x) { return x.id === sel; });
+        if (p && metaEl) {
+          metaEl.innerHTML = '<span class="pill">' + escapeHtml(p.label) + '</span>'
+            + ' <span style="color:var(--muted);">risk:</span> ' + escapeHtml(p.networkRisk)
+            + ' mutation: ' + escapeHtml(p.mutationRisk);
+        }
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.style.display = ''; }
+      } else if (metaEl) {
+        metaEl.innerHTML = '<span class="unavailable">'
+          + (avail ? 'No profile selected' : 'No workspace root configured')
+          + '</span>';
+      }
+    } else if (metaEl) {
+      metaEl.textContent = 'Verification profiles unavailable';
+    }
+  } catch {
+    if (metaEl) metaEl.textContent = 'Error loading profiles';
+  }
+
+  // Confirm button
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', async () => {
+      if (resultEl) resultEl.textContent = 'Running...';
+      if (confirmBtn) confirmBtn.disabled = true;
+      try {
+        const r = await api(base + '/confirm', 'POST', { confirm: true });
+        if (resultEl) {
+          if (r.ok) {
+            resultEl.innerHTML = '<span class="pill">' + escapeHtml(r.data.result) + '</span>'
+              + ' ' + escapeHtml(String(r.data.elapsedMs)) + 'ms'
+              + ' label: ' + escapeHtml(r.data.commandLabel);
+          } else {
+            resultEl.innerHTML = '<span class="unavailable">' + escapeHtml(r.data?.error || r.error || 'Failed') + '</span>';
+          }
+        }
+      } catch {
+        if (resultEl) resultEl.textContent = 'Request failed';
+      }
+      if (confirmBtn) confirmBtn.disabled = false;
+      // Refresh verification cache
+      refreshVerificationCache();
+    });
+  }
+
+  // Refresh button — re-fetch verification summary
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      refreshVerificationCache();
+      initLiveVerificationGate(); // re-init to get latest profile state
+    });
+  }
+}
+
+async function refreshVerificationCache() {
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey);
+  try {
+    const veR = await api(base + '/verification');
+    if (veR.ok) store.cache.verification = veR.data;
+  } catch { /* ignore */ }
+}
 // Uses ONLY GET endpoints: manifest, file list, and size-capped redacted
 // preview. Issues no write requests of any kind.
 async function viewApplyResult() {

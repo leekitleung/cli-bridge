@@ -795,3 +795,49 @@ no-baseline shows "unavailable" without blocking files/preview.
 **Hard boundary**: all calls are GET-only. No POST/PUT/DELETE/PATCH. No
 apply/promote/commit/discard/write controls. No sha256/entries/raw content/diff/
 line detail/absolute host path in rendered output.
+
+### Project Live Verification Execution (v2.13, ADR-0018)
+
+Operator-configured, human-gated local verification that runs a preconfigured
+profile and maps its exit status to ADR-0017 typed evidence.
+
+#### GET .../verification/profiles
+
+Returns sanitized profile metadata only — never argv, cwd, env, root, timeout,
+or output cap:
+
+```json
+{
+  "profiles": [{ "id": "unit-tests", "label": "Unit tests", "networkRisk": "unknown", "mutationRisk": "read-only", "available": true, "selected": true }],
+  "selectedProfileId": "unit-tests",
+  "workspaceRootAvailable": true
+}
+```
+
+#### POST .../verification/confirm
+
+Human-gated trigger. Body must be `{ "confirm": true }` — no command/profile/argv/cwd/env override.
+
+- Uses `Project.verifyProfileId` as the selected profile.
+- Requires `projectWorkspaceRoots[projectKey]`; no baselineRoot fallback.
+- Missing profile/root/lock → 4xx, no spawn.
+- Result mapped to ADR-0017 typed evidence: exit 0→passed, non-zero→failed, signal/error/timeout→errored.
+- Response: `{ profileId, commandLabel, result, elapsedMs, truncated, outputDiscarded }`.
+- Sanitized run record stored for project, merged into `/verification` summary.
+- Redacted audit event: profile/label/result/timing/flags only; no cwd/root/argv/env/stdout/stderr.
+
+#### Project opt-in
+
+`PATCH /bridge/projects/:key` accepts `verifyProfileId` (string to set, null to remove).
+Command-like fields (verifyCommand, command, argv, env, shell, stdout, stderr, output)
+are rejected. Root-like fields (workspaceRoot, baselineRoot, cwd) are silently ignored
+per ADR-0014.
+
+#### Hard boundaries
+
+- No generic /exec/shell/run/command endpoint.
+- No git/CI/GitHub/provider/credential/network client.
+- No raw output persisted or returned.
+- cwd only from `projectWorkspaceRoots[projectKey]`; no baselineRoot fallback.
+- Profiles are runtime-only; never in project records or snapshots.
+- console: GET-only gate with Confirm button; no command/cwd/env input, no auto-trigger.

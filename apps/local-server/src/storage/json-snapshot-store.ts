@@ -40,6 +40,7 @@ export interface BridgeSnapshot {
   workbuddyExecutionLedgerEvents: WorkBuddyExecutionLedgerEvent[];
   teams: TeamSpec[];
   teamArtifacts: SlotArtifact[];
+  verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
 export interface SnapshotWriteResult {
@@ -111,6 +112,7 @@ export class JsonSnapshotStore {
         workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
         teams: Array.isArray(parsed.teams) ? parsed.teams : [],
         teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
+        verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
       };
       return { ok: true, snapshot };
     } catch {
@@ -133,6 +135,7 @@ export interface BuildSnapshotInput {
   workbuddyExecutionLedgerEvents?: WorkBuddyExecutionLedgerEvent[];
   teams?: TeamSpec[];
   teamArtifacts?: SlotArtifact[];
+  verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
 export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
@@ -151,5 +154,6 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     workbuddyExecutionLedgerEvents: input.workbuddyExecutionLedgerEvents ?? [],
     teams: input.teams ?? [],
     teamArtifacts: input.teamArtifacts ?? [],
+    verificationRunRecords: input.verificationRunRecords ?? [],
   };
 }

@@ -9,7 +9,7 @@ import {
   createBridgeRuntime,
 } from '../apps/local-server/src/routes/bridge-api.ts';
 import { createMetricsSummary } from '../apps/local-server/src/storage/metrics-summary.ts';
-import { SNAPSHOT_FILENAME } from '../apps/local-server/src/storage/json-snapshot-store.ts';
+import { SNAPSHOT_FILENAME, JsonSnapshotStore, buildSnapshot } from '../apps/local-server/src/storage/json-snapshot-store.ts';
 
 function tempDir() {
   return mkdtempSync(resolve(tmpdir(), 'cli-bridge-test-'));
@@ -239,5 +239,31 @@ test('legacy audit event without projectId hydrates and appears via endpoint pac
   assert.equal(detail.statusCode, 200);
   assert.ok(detail.payload.auditEvents.some(e => e.id === 'legacy-1'),
     'legacy audit event without projectId must appear via packetId fallback');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// v2.13: verificationRunRecords survive write/read cycle
+test('v2.13: verificationRunRecords round-trip through snapshot', () => {
+  const dir = tempDir();
+  const store = new JsonSnapshotStore(dir);
+  const run = {
+    projectKey: 'alpha', profileId: 'unit-tests', commandLabel: 'Unit tests',
+    result: 'passed', recordedAt: 1, elapsedMs: 42, truncated: false, outputDiscarded: true,
+  };
+  const input = {
+    packets: [], auditEvents: [], pendingPrompts: [], outboundPrompts: [],
+    goals: [], plans: [], projects: [{ key: 'alpha', label: 'Alpha', createdAt: 1 }],
+    workbuddyTaskReferences: [], workbuddyReviewResultSinks: [],
+    workbuddyPromptDraftSinks: [], workbuddyExecutionLedgerEvents: [],
+    teams: [], teamArtifacts: [],
+    verificationRunRecords: [run],
+  };
+  assert.ok(store.write(buildSnapshot(input)).ok, 'write ok');
+  const snap = store.read().snapshot;
+  assert.ok(snap, 'snapshot exists');
+  assert.equal(Array.isArray(snap.verificationRunRecords), true);
+  assert.equal(snap.verificationRunRecords.length, 1);
+  assert.equal(snap.verificationRunRecords[0].profileId, 'unit-tests');
+  assert.equal(snap.verificationRunRecords[0].result, 'passed');
   rmSync(dir, { recursive: true, force: true });
 });

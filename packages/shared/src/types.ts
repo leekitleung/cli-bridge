@@ -591,6 +591,49 @@ export interface VerificationEvidence {
   /** Sanitized label only, never a raw command line or output. */
   commandLabel?: string;
   recordedAt?: number;
+  // v2.13 ADR-0018: live verification metadata (no raw output).
+  elapsedMs?: number;
+  truncated?: boolean;
+  outputDiscarded?: boolean;
+}
+
+// v2.13 ADR-0018: operator-configured verification profile (runtime-only, not persisted in project/snapshot).
+
+export type NetworkRisk = 'unknown' | 'declared-offline' | 'may-network';
+export type MutationRisk = 'read-only' | 'may-mutate';
+
+export interface VerifyProfile {
+  id: string;
+  label: string;
+  argv: string[];
+  cwdPolicy?: { kind: 'project-root'; subPath?: string };
+  env: string[];
+  timeoutMs: number;
+  outputCapBytes: number;
+  networkRisk: NetworkRisk;
+  mutationRisk: MutationRisk;
+}
+
+/** Sanitized profile metadata exposed to API/console — no argv/cwd/env/timeout/output cap internals. */
+export interface VerifyProfileMeta {
+  id: string;
+  label: string;
+  networkRisk: NetworkRisk;
+  mutationRisk: MutationRisk;
+  available: boolean; // project has a workspace root
+  selected: boolean;  // project.verifyProfileId matches
+}
+
+/** Sanitized live verification run record preserved between runs. No raw output/argv/cwd/env/root. */
+export interface VerificationRunRecord {
+  projectKey: string;
+  profileId: string;
+  commandLabel: string;
+  result: VerificationResult;
+  recordedAt: number;
+  elapsedMs: number;
+  truncated: boolean;
+  outputDiscarded: boolean;
 }
 
 export interface VerificationStatusSummary {
@@ -623,6 +666,8 @@ export interface Project {
   archivedAt?: number;
   /** v2.5: opt-in workspace apply. Default false. */
   workspaceApplyEnabled?: boolean;
+  /** v2.13: operator-configured verification profile id. Default off. */
+  verifyProfileId?: string;
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */

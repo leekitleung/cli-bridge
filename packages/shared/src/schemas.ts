@@ -715,7 +715,7 @@ function validateVerificationEvidence(value: unknown, errors: string[]): void {
     return;
   }
 
-  const allowed = new Set(['result', 'commandLabel', 'recordedAt']);
+  const allowed = new Set(['result', 'commandLabel', 'recordedAt', 'elapsedMs', 'truncated', 'outputDiscarded']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       errors.push(`verificationEvidence.${key} must not be present`);
@@ -737,6 +737,17 @@ function validateVerificationEvidence(value: unknown, errors: string[]): void {
     (typeof value.recordedAt !== 'number' || !Number.isFinite(value.recordedAt))
   ) {
     errors.push('verificationEvidence.recordedAt must be a finite number');
+  }
+
+  // v2.13: validate new ADR-0018 fields
+  if (value.elapsedMs !== undefined && typeof value.elapsedMs !== 'number') {
+    errors.push('verificationEvidence.elapsedMs must be a number');
+  }
+  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') {
+    errors.push('verificationEvidence.truncated must be a boolean');
+  }
+  if (value.outputDiscarded !== undefined && typeof value.outputDiscarded !== 'boolean') {
+    errors.push('verificationEvidence.outputDiscarded must be a boolean');
   }
 }
 
@@ -900,6 +911,13 @@ export function validateProject(value: unknown): SchemaValidationResult {
   if ('archivedAt' in value && value.archivedAt !== undefined
     && (typeof value.archivedAt !== 'number' || !Number.isFinite(value.archivedAt))) {
     errors.push('archivedAt must be a finite number');
+  }
+  // v2.13: verifyProfileId — string or absent only; null/invalid are not valid persisted values.
+  // PATCH null is a removal signal handled by the route layer, not a persisted value.
+  if ('verifyProfileId' in value && value.verifyProfileId !== undefined) {
+    if (typeof value.verifyProfileId !== 'string') {
+      errors.push('verifyProfileId must be a string or absent');
+    }
   }
   return { ok: errors.length === 0, errors };
 }
