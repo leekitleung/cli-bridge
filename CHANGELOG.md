@@ -63,6 +63,18 @@ All notable changes to CLI Bridge are documented here.
     project-store.ts, bridge-projects-api.md, CHANGELOG.md, tests/github-checks-provider.test.mjs.
 
 ### Planning / ADR
+- **RP-2.15: drafted ADR-0020 Console Verification Run-History Presentation** as
+  PROPOSED. The 0017→0019 verification bundle is CLOSED and
+  `GET /bridge/projects/:key/verification` already returns the sanitized
+  `liveRunRecords` history (result/commandLabel/recordedAt/elapsedMs/flags — no
+  raw output/token/URL/path/identity) and merges it into the summary, but the
+  console never renders that history. ADR-0020 proposes a strictly read-only,
+  console-only inert run-history list bound to the existing response field — no
+  new endpoint, no execution, no network, no credential, no write surface, no
+  pass/fail inference, allow-listed + HTML-escaped fields, fail-closed on
+  missing/malformed. It crosses no capability boundary (light acceptance; no
+  ADR-0007 §2 execution/credential review needed) and authorizes no
+  implementation until explicit acceptance + an `EX-2.15-1` handoff.
 - **ADR-0019-b Remote GitHub Checks Provider ACCEPTED** (`REVIEW-ADR-0019-b`,
   2026-06-14, ADR-0007 §2 + credential review) after RP-2.14-b-1 fixed the final
   URL containment blocker and follow-up credential/TLS/redaction requirements.
