@@ -88,6 +88,21 @@ All notable changes to CLI Bridge are documented here.
     tests/project-console-behavior.test.mjs.
 
 ### Planning / ADR
+- **RP-2.17: drafted ADR-0022 GitHub Combined Commit-Status Augmentation** as
+  PROPOSED. A bounded increment to the closed ADR-0019-b remote provider: add a
+  second read-only call to `/commits/{ref}/status` (legacy combined commit
+  status) alongside check-runs and merge both into one typed `VerificationResult`
+  by a fixed failure-wins precedence (errored-if-both-errored → failed → unknown
+  → passed → skipped → unknown), closing the blind spot where classic-status-only
+  repos (external CI, no check-runs) always read `unknown`. Reuses ALL ADR-0019-b
+  containment unchanged (HTTPS+standard TLS, owner/repo charset +
+  `encodeURIComponent(ref)`, no cross-host redirect, bounded read, timeout,
+  single-run lock, memory-only operator-set token, redaction); introduces no new
+  credential mechanism, no new provider, and no new identity/HTTP surface →
+  ADR-0007 §2 review only, no fresh credential review. RP-2.17 scoping: GitHub
+  Enterprise is already supported via the operator-configured `apiBaseUrl`
+  (doc/validation only, no code); multi-provider is deferred to a separate ADR.
+  No implementation until explicit acceptance + an `EX-2.17-1` handoff.
 - **ADR-0021 Goal Plan-Step Verification-Result Presentation ACCEPTED**
   (`REVIEW-ADR-0021`, 2026-06-14) after RP-2.16-a fixed the deterministic
   selection + enum fail-closed rule. Authorizes only a read-only, console-only
