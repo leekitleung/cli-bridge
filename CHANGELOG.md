@@ -77,6 +77,17 @@ All notable changes to CLI Bridge are documented here.
     tests/project-console-behavior.test.mjs.
 
 ### Planning / ADR
+- **RP-2.16: drafted ADR-0021 Goal Plan-Step Verification-Result Presentation**
+  as PROPOSED. Read-only, console-only increment that shows the per-step typed
+  verification `result` in the goal view's plan-step table by joining the
+  already-cached `/verification.records[].stepId` onto plan steps — no new
+  endpoint, no new fetch, no execution/network/credential, no write surface, and
+  **no new run↔step identity mapping** (the join key `stepId` already exists on
+  the records; project-scoped `liveRunRecords` step-binding stays deferred). Only
+  the discrete typed `result` is rendered (HTML-escaped, allow-listed),
+  fail-closed `—` on no match/no result, no pass/fail inference. Crosses no
+  capability boundary (light acceptance; no ADR-0007 §2 review) and authorizes no
+  implementation until explicit acceptance + an `EX-2.16-1` handoff.
 - **ADR-0020 Console Verification Run-History Presentation ACCEPTED** for
   `EX-2.15-1` (2026-06-14). This authorizes only a read-only console rendering
   of the existing sanitized `/verification.liveRunRecords` history: allow-listed
