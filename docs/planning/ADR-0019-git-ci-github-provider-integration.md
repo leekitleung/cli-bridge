@@ -1,21 +1,117 @@
 # ADR-0019: Git/CI/GitHub Verification Provider Integration (v2.14 planning)
 
-Status: PROPOSED — DEFERRED until ADR-0017 and ADR-0018 are accepted and closed
+Status: SPLIT (RP-2.14). **ADR-0019-a** (read-only LOCAL git status, offline) —
+        pre-acceptance design FIXED, awaiting `REVIEW-ADR-0019-a` (ADR-0007 §2;
+        no credential review needed). **ADR-0019-b** (remote CI/GitHub + memory-
+        only credentials) — PROPOSED — DEFERRED.
 
-Date: 2026-06-13
+Date: 2026-06-13 (revised 2026-06-13: RP-2.14 a/b split)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
-Depends on: ADR-0017 (typed verification result model) and ADR-0018 (local live
-            verification execution) — both accepted AND implemented
+Depends on: ADR-0017 and ADR-0018 — both ACCEPTED and CLOSED
+            (`EX-2.12-1` `cfce284`, `EX-2.13-1` `b87b622`)
 Blocks: none (last member of the bundle)
-Acceptance: NOT YET ACCEPTED. This ADR crosses the long-standing **no network /
-            no `git` / no CI / no provider API** boundary. It proposes a
-            strictly **read-only** integration that reads local `git` metadata
-            and/or CI/GitHub check status and maps it to the typed
-            `VerificationResult` from ADR-0017. It does NOT authorize any VCS
-            write (commit/push/merge/PR creation), workspace-write, autonomy, or
-            credential persistence. Provider scope, credential supply, and
-            redaction proof are pre-acceptance blockers, not execution-batch
-            design choices.
+Acceptance: NOT YET ACCEPTED. RP-2.14 split this ADR so the network/credential
+            boundary is isolated. **ADR-0019-a** reads ONLY local `git`
+            read-only state (no network, no credentials, no VCS write) and
+            surfaces it as sanitized context; its design is fixed in
+            "RP-2.14 split decision" below and it needs only an ADR-0007 §2
+            review (no credential review). **ADR-0019-b** (remote CI/GitHub
+            check status + memory-only credentials → typed pass/fail) remains
+            DEFERRED and keeps the full credential-handling prerequisite. The
+            §1-§5 umbrella text below describes the combined original intent and
+            now governs ADR-0019-b.
+
+## RP-2.14 split decision (a/b) and ADR-0019-a fixed design
+
+**Decision (RP-2.14).** ADR-0019 is split into two independently-gated slices so
+the heaviest boundary (outbound network + credentials) is isolated:
+
+- **ADR-0019-a — read-only LOCAL git status context** (this slice, `EX-2.14-1`).
+  Offline; no network; no credentials; no VCS write. Surfaces sanitized git
+  status as *context only* (not a pass/fail result). Needs only an ADR-0007 §2
+  review (no credential review). Design is fixed below; nothing is left to the
+  execution agent.
+- **ADR-0019-b — remote CI/GitHub check status + memory-only credentials** →
+  typed pass/fail. Remains **PROPOSED — DEFERRED**; keeps the full
+  credential-handling prerequisite and the §1-§5 umbrella scope below. Must not
+  start before its own explicit acceptance + ADR-0007 §2 + credential review.
+
+Rationale: ADR-0019-b is what crosses the network/credential line; ADR-0019-a
+delivers a complete read-only chain (read → sanitized view → GET endpoint →
+inert console → redacted audit) without crossing it, and can be accepted on the
+lighter ADR-0007 §2 gate alone.
+
+### ADR-0019-a — fixed pre-acceptance design (no execution-agent decisions)
+
+- **Capability**: opt-in per project `gitStatusEnabled` (additive, default off);
+  human-triggered `GET /bridge/projects/:key/verification/git-status`; reads the
+  local git state of the project's workspace root. git status is **context
+  only** and is **NOT** mapped to `VerificationResult` pass/fail.
+- **Root resolution (reuse ADR-0018 rule)**: cwd comes ONLY from
+  `projectWorkspaceRoots[projectKey]`; **no `baselineRoot` fallback**; absent
+  project root → `409` / **no spawn**.
+- **Exact read-only commands** (`shell: false`, structured argv, bounded
+  timeout, output cap, output discarded, injectable spawn for tests):
+  - `git rev-parse --is-inside-work-tree`
+  - `git branch --show-current`
+  - `git status --porcelain`
+  - `git rev-list --left-right --count @{u}...HEAD` (ahead/behind; `null` when no
+    upstream — local refs only, never `git fetch`/`pull`/network).
+  No `git` write of any kind (no commit/push/merge/rebase/tag/checkout/branch
+  mutation/fetch/pull).
+- **Sanitized `GitStatusView`**: `{ branch: string|null, dirty: boolean,
+  aheadCount: number|null, behindCount: number|null, isGitRepo: boolean,
+  fetchedAt: number, available: boolean }`. **Never** exposes commit hash/SHA,
+  remote URL, absolute path, raw git stdout/stderr, or diff.
+- **Fail-closed**: non-repo → `isGitRepo:false`; spawn/timeout/parse error →
+  inert "unavailable"; `gitStatusEnabled` off or no project root → `409`.
+- **Audit**: one redacted fetch event (project, isGitRepo, dirty, ahead/behind,
+  timing); no path/URL/hash/token/raw output.
+- **No** network, **no** credentials, **no** autonomy/poller/webhook, **no** VCS
+  write, **no** write/apply/promote/run affordance.
+
+### ADR-0019-a acceptance conditions (`REVIEW-2.14-1`)
+
+1. Read-only git only: exactly the four read commands above; `shell:false`
+   structured argv; no git write, no `fetch`/`pull`.
+2. No network / no credentials anywhere in the new code (source + tests prove it).
+3. Root only from `projectWorkspaceRoots[key]`; no `baselineRoot` fallback;
+   absent root → `409` and **no spawn** (injected spawn call count = 0).
+4. Opt-in `gitStatusEnabled` default off; off → `409`; removal restores prior
+   behavior; fully backward compatible.
+5. Sanitized view only: no commit hash/SHA, remote URL, absolute path, raw
+   output, or diff in response / store / audit / console.
+6. git status is context only; never mapped to `VerificationResult`.
+7. Human-triggered GET only; no poller/scheduler/webhook/model trigger.
+8. Fail-closed on non-repo / spawn / timeout / parse error.
+9. Audit redacted; no sensitive fields.
+10. Determinism/injection: reader testable via injected fake spawn; asserts
+    read-only argv + cwd source + no sensitive output.
+11. No ADR-0019-b code (no remote/CI/GitHub/provider client, no token handling).
+
+### ADR-0019-a allowed files (for `EX-2.14-1`)
+
+- `packages/shared/src/types.ts` — `GitStatusView`; `Project.gitStatusEnabled?`.
+- `packages/shared/src/schemas.ts` — accept `gitStatusEnabled` (boolean), reject
+  command/argv/cwd/env/root/remote/token-like fields.
+- `apps/local-server/src/verification/git-status-reader.ts` (new) — `shell:false`
+  read-only git reader, root resolution (no fallback), timeout/cap, injectable
+  `gitSpawnFn`.
+- `apps/local-server/src/routes/bridge-api.ts` — GET git-status endpoint + spawn
+  injection wiring (read-only).
+- `apps/local-server/src/routes/project-console.ts` — inert context display.
+- `apps/local-server/src/storage/project-store.ts` — `gitStatusEnabled` opt-in;
+  `apps/local-server/src/storage/json-snapshot-store.ts` only if opt-in
+  persistence requires it.
+- `docs/contracts/bridge-projects-api.md`, `CHANGELOG.md`.
+- `tests/git-status-reader.test.mjs` (new), `tests/bridge-projects-api.test.mjs`,
+  `tests/project-console-behavior.test.mjs`, `tests/json-persistence.test.mjs`
+  (last only if opt-in persistence requires it).
+
+The execution handoff is `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`.
+ADR-0019-a stays NOT ACCEPTED until `REVIEW-ADR-0019-a` (ADR-0007 §2) passes.
+
+---
 
 ## Context
 
@@ -240,5 +336,10 @@ outside it requires STOP-and-report.
 
 ## Status / Next
 
-PROPOSED — DEFERRED. Final member of the bundle. Acceptance requires both
-predecessors closed plus an explicit ADR-0007 §2 + credential-handling review.
+SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) has a fixed
+pre-acceptance design above and awaits `REVIEW-ADR-0019-a` (ADR-0007 §2 only);
+on acceptance, dispatch `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md` for
+`EX-2.14-1`, then return to `REVIEW-2.14-1`. **ADR-0019-b** (remote CI/GitHub +
+memory-only credentials) remains PROPOSED — DEFERRED and keeps the full
+ADR-0007 §2 + credential-handling prerequisite; it must not start before its own
+explicit acceptance and must never be merged into the ADR-0019-a batch.

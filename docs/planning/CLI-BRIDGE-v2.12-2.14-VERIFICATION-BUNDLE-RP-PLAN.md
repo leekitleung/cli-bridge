@@ -50,9 +50,13 @@ closed.
   network-honesty posture, env/cwd policy, and no-`baselineRoot` verify-run root
   rule. Implementation is authorized only through `EX-2.13-1`.
 - **ADR-0019** must not be accepted or implemented until ADR-0018 is accepted
-  and `EX-2.13-1` has closed through `REVIEW-2.13-1`; its own acceptance must
-  also fix provider scope, exact read endpoint(s)/command(s), credential supply,
-  timeout/rate-limit behavior, and redaction proof.
+  and `EX-2.13-1` has closed through `REVIEW-2.13-1` (both now done). **RP-2.14
+  split ADR-0019 into a/b**: **ADR-0019-a** (read-only LOCAL git status,
+  offline, no network/credentials) has a fixed pre-acceptance design and needs
+  only an ADR-0007 §2 review (`REVIEW-ADR-0019-a`); **ADR-0019-b** (remote
+  CI/GitHub + memory-only credentials) stays DEFERRED and keeps the full
+  ADR-0007 §2 + credential review. Provider scope/credential/redaction blockers
+  apply to 0019-b only.
 - Accepting the **group** (one-time) is allowed, but each ADR retains an
   independent status, independent acceptance conditions, and an independent
   ADR-0007 §2 prerequisite review (required for 0018 and 0019). Group acceptance
@@ -70,8 +74,9 @@ closed.
 | 2 | `REVIEW-2.12-1` | reviewing | Verify ADR-0017 acceptance conditions; authorize closeout commit | `RP`/next |
 | 3 | `EX-2.13-1` | execution | ADR-0018 local live execution: operator verify profiles, project `verifyProfileId` opt-in, contained runner, human gate, exit→typed mapping, audit | `REVIEW-2.13-1` |
 | 4 | `REVIEW-2.13-1` | reviewing | Verify ADR-0018 acceptance conditions + ADR-0007 §2; authorize closeout | `RP`/next |
-| 5 | `EX-2.14-1` | execution | ADR-0019 read-only `git`/CI/GitHub status → typed result, memory-only creds, audit | `REVIEW-2.14-1` |
-| 6 | `REVIEW-2.14-1` | reviewing | Verify ADR-0019 acceptance conditions + ADR-0007 §2 + credential review | bundle close |
+| 5 | `EX-2.14-1` | execution | **ADR-0019-a** read-only LOCAL git status context (offline; no network/credentials), opt-in `gitStatusEnabled`, sanitized `GitStatusView`, GET endpoint, inert console, redacted audit | `REVIEW-2.14-1` |
+| 6 | `REVIEW-2.14-1` | reviewing | Verify ADR-0019-a acceptance conditions + ADR-0007 §2; authorize closeout | `RP`/next |
+| 7 | `EX-2.14-2` (future) | execution | **ADR-0019-b** remote CI/GitHub check status + memory-only credentials → typed pass/fail — DEFERRED, needs own acceptance + ADR-0007 §2 + credential review | `REVIEW-2.14-2` |
 
 Each `EX-*` produces **one dedicated commit** carrying only that slice's allowed
 files. No EX batch commits/pushes until its REVIEW authorizes. No EX batch
@@ -102,7 +107,8 @@ review decision (per the workflow contract).
 |---|---|---|---|---|---|
 | 0017 | Typed verification result model (data + display) | low | ACCEPTED | 2026-06-13 | Senior review |
 | 0018 | Local live verification execution | high (execution) | ACCEPTED | 2026-06-13 | REVIEW-ADR-0018-b |
-| 0019 | Git/CI/GitHub read-only provider | high (network + creds) | PROPOSED — DEFERRED | — | — |
+| 0019-a | Read-only LOCAL git status context (offline) | medium (git spawn, read-only) | PROPOSED — design FIXED, awaiting `REVIEW-ADR-0019-a` | — | — |
+| 0019-b | Remote CI/GitHub status + memory-only credentials | high (network + creds) | PROPOSED — DEFERRED | — | — |
 
 **Group-acceptance semantics (hard rule).** "Accepting the bundle" is bounded
 and does NOT promote every ADR to ACCEPTED:
@@ -140,7 +146,11 @@ and does NOT promote every ADR to ACCEPTED:
 
 ## 7. Next action
 
-Dispatch `EX-2.13-1` to an execution agent using
-`CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md`, then return to
-`REVIEW-2.13-1` before closeout or any further execution. Do not author or start
-v2.14 / ADR-0019 work until ADR-0018 closes through `REVIEW-2.13-1`.
+ADR-0018 closed (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`). **RP-2.14** split
+ADR-0019 and fixed the ADR-0019-a design + authored
+`CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md`. Next: take **ADR-0019-a**
+through `REVIEW-ADR-0019-a` (ADR-0007 §2) for explicit acceptance; only then
+dispatch `EX-2.14-1`, returning to `REVIEW-2.14-1` before closeout. **ADR-0019-b**
+(remote CI/GitHub + credentials) stays DEFERRED and must not start before its
+own acceptance + ADR-0007 §2 + credential review; never merge it into the
+ADR-0019-a batch.

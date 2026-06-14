@@ -5,6 +5,23 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **RP-2.14: planned ADR-0019 and split it into a/b.** After ADR-0018 closed
+  (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`), RP-2.14 split the Git/CI/GitHub
+  verification provider so the network/credential boundary is isolated:
+  **ADR-0019-a** (read-only LOCAL git status context — offline, no network, no
+  credentials, no VCS write; surfaced as a sanitized `GitStatusView` and treated
+  as context only, never mapped to pass/fail) has a fixed pre-acceptance design
+  and needs only an ADR-0007 §2 review (`REVIEW-ADR-0019-a`); **ADR-0019-b**
+  (remote CI/GitHub check status + memory-only credentials → typed pass/fail)
+  stays PROPOSED — DEFERRED and keeps the full ADR-0007 §2 + credential review.
+  Fixed ADR-0019-a design (reuses ADR-0018 root resolution with no `baselineRoot`
+  fallback; `shell:false` read-only git commands; opt-in `gitStatusEnabled`
+  default off; human-triggered GET; redacted audit; fail-closed) and authored
+  `CLI-BRIDGE-v2.14-GIT-STATUS-PROVIDER-HANDOFF.md` for `EX-2.14-1`. Updated the
+  v2.12-2.14 bundle roadmap (a/b split, execution sequence, ledger). No ADR is
+  accepted and no implementation is authorized by this planning batch; ADR-0019-a
+  stays NOT ACCEPTED pending `REVIEW-ADR-0019-a`, and `EX-2.14-1` is gated behind
+  that acceptance. No code, no execution, no network/credentials introduced.
 - Accepted **ADR-0018 Local Live Verification Execution** after
   `REVIEW-ADR-0018-b` and drafted
   `CLI-BRIDGE-v2.13-LOCAL-LIVE-VERIFICATION-HANDOFF.md` for `EX-2.13-1`.
