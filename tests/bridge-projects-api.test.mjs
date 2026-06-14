@@ -1301,11 +1301,14 @@ test('v2.14b: github-checks success returns sanitized typed result; no token/ide
   for (const secret of ['ghp_testtoken1234567890', 'acme', 'widget', 'main', 'check_runs', 'total_count']) {
     assert.equal(pj.includes(secret), false, `response must not contain ${secret}`);
   }
-  // exactly one outbound call, to the configured host/owner/repo with encoded ref
-  assert.equal(rt.__fetchCalls.length, 1);
-  const url = rt.__fetchCalls[0].url;
-  assert.ok(url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'configured host/owner/repo');
-  assert.ok(url.endsWith('/check-runs'), 'single read endpoint');
+  // exactly two outbound calls (check-runs + status), both to configured host with encoded ref
+  assert.equal(rt.__fetchCalls.length, 2);
+  const crUrl = rt.__fetchCalls.find(c => c.url.endsWith('/check-runs'));
+  const stUrl = rt.__fetchCalls.find(c => c.url.endsWith('/status'));
+  assert.ok(crUrl, 'check-runs call present');
+  assert.ok(stUrl, 'status call present');
+  assert.ok(crUrl.url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'configured host/owner/repo cr');
+  assert.ok(stUrl.url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'configured host/owner/repo st');
   // audit whitelist; no token/identity/host
   const ev = rt.auditLog.listEvents().find(e => e.source === 'github-checks');
   assert.ok(ev, 'audit event present');
@@ -1329,11 +1332,17 @@ test('v2.14b: github-checks ignores HTTP-supplied identity/token override', asyn
     confirm: true, owner: 'evil', repo: 'pwn', ref: 'attacker', url: 'https://evil.example', token: 'ghp_evil',
   });
   assert.equal(res.statusCode, 200);
-  assert.equal(rt.__fetchCalls.length, 1);
-  const url = rt.__fetchCalls[0].url;
-  assert.ok(url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'HTTP override must not change host/owner/repo');
-  assert.equal(url.includes('evil'), false, 'no attacker-supplied host/identity');
-  assert.equal(url.includes('attacker'), false, 'no attacker-supplied ref');
+  assert.equal(rt.__fetchCalls.length, 2);
+  // HTTP-supplied identity never reaches the fetch; calls use only operator-config.
+  const urls = rt.__fetchCalls.map(c => c.url);
+  assert.equal(urls.some(u => u.includes('evil')), false, 'HTTP identity not in URL');
+  for (const u of urls) {
+    assert.ok(u.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'HTTP override must not change host/owner/repo');
+    assert.equal(u.includes('evil'), false, 'no attacker-supplied host/identity');
+  }
+  for (const u of urls) {
+    assert.equal(u.includes('attacker'), false, 'no attacker-supplied ref');
+  }
 });
 
 test('v2.14b: github-checks failure conclusion maps to failed', async () => {

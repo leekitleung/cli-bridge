@@ -943,8 +943,8 @@ URL path containment, ≤1 retry. Requires operator provider config + read-only
 GitHub token.**
 
 Credential guidance: operators must provide a least-privilege read-only GitHub
-token, preferably fine-grained `checks:read` plus `contents:read` only where
-required by the API.
+token, preferably fine-grained `checks:read` plus `commit_statuses:read`
+(and `contents:read` only where required by the API).
 
 #### Operator configuration (runtime-only, never HTTP)
 
@@ -998,24 +998,31 @@ project must have a local git branch (detached → 409).
 | 409 | Another fetch already in progress |
 | 405 | Non-POST method |
 
-**Endpoint**: single read-only GET `{apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs`
-(Accept: `application/vnd.github+json`). No other endpoint, no write/PR/merge call.
+**Endpoints**: two read-only GET calls under the same provider:
+- `{apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs`
+- `{apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/status`
+(Accept: `application/vnd.github+json`). No write/PR/merge call.
 
-**Ref**: from `git branch --show-current` (ADR-0019-a reader), fail-closed on detached
-HEAD. `ref` is one `encodeURIComponent(ref)` segment in the URL path;
-`owner`/`repo` match `^[A-Za-z0-9._-]+$` only.
+Both calls reuse the same ADR-0019-b containment: HTTPS+standard TLS,
+owner/repo `^[A-Za-z0-9._-]+$`, `encodeURIComponent(ref)` single-segment,
+10s timeout, 256 KB body cap, no cross-host redirect, single in-flight lock,
+≤1 retry per call, memory-only operator token, redacted errors.
 
-**Egress bounding**: HTTPS-only with standard platform TLS (no insecure agent),
-10s `AbortController` timeout, 256 KB body cap, no cross-host redirect (3xx →
-error), single in-flight lock per project, ≤1 retry on transient 5xx/network.
+**Source signal mapping** (FIXED, ADR-0022):
+Check-runs (`cr`): failure/timed_out/cancelled/action_required/stale → `failed`;
+queued/in_progress/null → `pending`; ≥1 success → `passed`; all skipped/neutral →
+`skipped`; zero runs → `none`; auth/rate-limit/timeout/network/parse/5xx → `errored`.
 
-**Status mapping** (FIXED):
-- failure/timed_out/cancelled/action_required/stale → `failed`
-- queued/in_progress/null → `unknown`
-- ≥1 success → `passed`
-- all skipped/neutral → `skipped`
-- zero check-runs → `unknown`
-- auth/rate-limit/network/timeout/parse error → `errored`
+Combined status (`st`): `state === "failure"` → `failed`; `state === "success"` →
+`passed`; `state === "pending" && total_count > 0` → `pending`; `state === "pending"
+&& total_count === 0` → `none`; 404/422 → `none`; auth/rate-limit/timeout/network
+/parse/5xx → `errored`. Only `state` and `total_count` are read; `statuses[]` is
+never parsed, persisted, or displayed.
+
+**Merge ladder** (FIXED): `failed > errored > pending(→unknown) > passed > skipped >`
+both `none` → `unknown`. Regression guards: `cr:none + st:passed → passed`;
+`cr:pending + st:passed → unknown`; `cr:passed + st:none → passed`; `cr:failed +
+st:passed → failed`; `cr:errored + st:passed → errored`; `cr:none + st:none → unknown`.
 
 **Stored as ADR-0017 evidence** with `commandLabel: "github-checks"`, merged into
 `/verification` summary.

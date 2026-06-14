@@ -1,17 +1,20 @@
-// v2.14 ADR-0019-b — Read-only GitHub check-runs status provider.
+// v2.14 ADR-0019-b + v2.17 ADR-0022 — Read-only GitHub commit-status provider.
 //
-// Single provider family (GitHub-compatible), single read-only endpoint:
-// GET {apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs
-// (Accept: application/vnd.github+json).
+// Two read-only endpoints under the same provider family (GitHub-compatible):
+// 1. GET /repos/{owner}/{repo}/commits/{ref}/check-runs (v2.14)
+// 2. GET /repos/{owner}/{repo}/commits/{ref}/status   (v2.17)
 //
-// Hard constraints:
+// Both sources are normalized to a closed signal set and merged via the
+// ADR-0022 ladder into one typed VerificationResult.
+//
+// Hard constraints (both calls):
 // - HTTPS only + standard platform certificate validation (no insecure agent).
-// - owner/repo MUST match ^[A-Za-z0-9._-]+$ (fail-closed 409).
+// - owner/repo MUST match ^[A-Za-z0-9._-]+$ (fail-closed).
 // - ref MUST be non-empty, no control chars, no .. , inserted as single encodeURIComponent segment.
 // - AbortController timeout ≤10s.
 // - Response body size cap.
 // - No cross-host redirect (3xx to different host → error).
-// - ≤1 retry on transient 5xx/network error.
+// - ≤1 retry per call on transient 5xx/network error.
 // - Injectable fetchFn for tests (never hits real network in tests).
 // - Token from memory-only store, NEVER persisted/audited/echoed.
 // - Redacted error/timeout surfaces — no Authorization header value, no token-bearing URL.
@@ -34,6 +37,11 @@ export interface GithubChecksApiResponse {
   check_runs: GithubCheckRun[];
 }
 
+export interface GithubStatusApiResponse {
+  state: string;
+  total_count: number;
+}
+
 export interface GithubChecksFetchResult {
   ok: boolean;
   status: number;
@@ -46,6 +54,10 @@ export interface GithubChecksResult {
   elapsedMs: number;
   error?: string;
 }
+
+// ── Source signal (closed enum) ───────────────────────────────────
+
+type SourceSignal = 'failed' | 'errored' | 'pending' | 'passed' | 'skipped' | 'none';
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -73,8 +85,7 @@ function validateRef(ref: string): string | null {
   return null;
 }
 
-function buildUrl(config: GithubChecksProviderConfig, ref: string): string | null {
-  // Validate operator-configured fields.
+function buildCheckRunsUrl(config: GithubChecksProviderConfig, ref: string): string | null {
   if (!config.apiBaseUrl.startsWith('https://')) return null; // HTTPS-only
   const ownerErr = validateOwnerRepo(config.owner, 'owner');
   if (ownerErr) return null;
@@ -88,45 +99,21 @@ function buildUrl(config: GithubChecksProviderConfig, ref: string): string | nul
   return `${base}/repos/${config.owner}/${config.repo}/commits/${encodedRef}/check-runs`;
 }
 
-// ── Parsing / mapping ─────────────────────────────────────────────
+function buildStatusUrl(config: GithubChecksProviderConfig, ref: string): string | null {
+  if (!config.apiBaseUrl.startsWith('https://')) return null;
+  const ownerErr = validateOwnerRepo(config.owner, 'owner');
+  if (ownerErr) return null;
+  const repoErr = validateOwnerRepo(config.repo, 'repo');
+  if (repoErr) return null;
+  const refErr = validateRef(ref);
+  if (refErr) return null;
 
-function mapConclusionToResult(checkRuns: GithubCheckRun[]): { result: VerificationResult; summary: string | null } {
-  if (!checkRuns || checkRuns.length === 0) {
-    return { result: 'unknown', summary: 'no check runs' };
-  }
-
-  const conclusions = checkRuns.map(r => r.conclusion);
-
-  // Any failure/timed_out/cancelled/action_required/stale → failed.
-  const failedConclusions = ['failure', 'timed_out', 'cancelled', 'action_required', 'stale'];
-  if (conclusions.some(c => c && failedConclusions.includes(c))) {
-    return { result: 'failed', summary: 'check run(s) failed' };
-  }
-
-  // Any queued/in_progress/null → unknown (still running).
-  const pendingConclusions = ['queued', 'in_progress', null, undefined];
-  if (conclusions.some(c => pendingConclusions.includes(c as string | null | undefined))) {
-    return { result: 'unknown', summary: 'check runs still in progress' };
-  }
-
-  // ≥1 success → passed.
-  if (conclusions.includes('success')) {
-    return { result: 'passed', summary: 'check runs passed' };
-  }
-
-  // All skipped/neutral, no success → skipped.
-  if (conclusions.every(c => c === 'skipped' || c === 'neutral')) {
-    return { result: 'skipped', summary: 'all check runs skipped' };
-  }
-
-  return { result: 'unknown', summary: 'unexpected check run state' };
+  const base = config.apiBaseUrl.replace(/\/$/, '');
+  const encodedRef = encodeURIComponent(ref);
+  return `${base}/repos/${config.owner}/${config.repo}/commits/${encodedRef}/status`;
 }
 
 // ── Bounded body read ─────────────────────────────────────────────
-// Reads at most `cap` bytes from a streaming response body and stops (cancels)
-// once exceeded — a real containment limit. Oversized → rejected, never parsed.
-// Falls back to text() only for injected test doubles lacking a stream body,
-// and still rejects (does not silently truncate) when over the cap.
 
 async function readCappedBody(
   response: { body?: unknown; text?: () => Promise<string> },
@@ -155,7 +142,6 @@ async function readCappedBody(
     return { ok: true, text: Buffer.concat(chunks).toString('utf8') };
   }
 
-  // Fallback for injected test doubles without a streaming body.
   if (typeof response.text === 'function') {
     const text = await response.text();
     if (text.length > cap) return { ok: false, error: 'response too large' };
@@ -165,16 +151,17 @@ async function readCappedBody(
   return { ok: false, error: 'no readable body' };
 }
 
-// ── Safe fetch ────────────────────────────────────────────────────
+// ── Safe fetch (generalized, returns capped text) ─────────────────
 
-async function safeFetchJson(
+async function safeFetchText(
   url: string,
   token: string,
   fetchFn: typeof fetch,
   baseUrl: string,
-): Promise<GithubChecksFetchResult> {
+  timeoutMs: number,
+): Promise<{ ok: true; text: string; status: number } | { ok: false; error: string; status: number }> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetchFn(url, {
@@ -184,10 +171,10 @@ async function safeFetchJson(
         'Authorization': `Bearer ${token}`,
       },
       signal: controller.signal,
-      redirect: 'manual', // No cross-host redirect
+      redirect: 'manual',
     });
 
-    // Check for redirect
+    // Check for redirect (timeout still armed).
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
       if (location) {
@@ -195,61 +182,137 @@ async function safeFetchJson(
           const redirectUrl = new URL(location);
           const baseHost = new URL(baseUrl).host;
           if (redirectUrl.host !== baseHost) {
-            return { ok: false, status: response.status, data: null, error: 'cross-host redirect rejected' };
+            return { ok: false, error: 'cross-host redirect rejected', status: response.status };
           }
         } catch {
-          return { ok: false, status: response.status, data: null, error: 'invalid redirect location' };
+          return { ok: false, error: 'invalid redirect location', status: response.status };
         }
       }
     }
 
     if (!response.ok) {
-      return { ok: false, status: response.status, data: null, error: `HTTP ${response.status}` };
+      return { ok: false, error: `HTTP ${response.status}`, status: response.status };
     }
 
-    // Bounded body read — never buffer more than the cap. This is a real
-    // containment limit (stop reading at the cap), not post-hoc truncation of
-    // an already fully-read body.
+    // The abort timer stays armed through body consumption, so a slow/hung
+    // streaming body is bounded by the same timeout. (Regression guard: do NOT
+    // clear the timer before reading the body — only in finally.)
     const bodyRead = await readCappedBody(response, GITHUB_BODY_CAP_BYTES);
     if (!bodyRead.ok) {
-      return { ok: false, status: response.status, data: null, error: bodyRead.error };
+      return { ok: false, error: bodyRead.error, status: response.status };
     }
 
-    let data: GithubChecksApiResponse;
-    try {
-      data = JSON.parse(bodyRead.text);
-    } catch {
-      return { ok: false, status: response.status, data: null, error: 'invalid json response' };
-    }
-
-    if (!data || !Array.isArray(data.check_runs)) {
-      return { ok: false, status: response.status, data: null, error: 'unexpected response shape' };
-    }
-
-    return { ok: true, status: response.status, data };
+    return { ok: true, text: bodyRead.text, status: response.status };
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      return { ok: false, status: 0, data: null, error: 'timeout' };
+      return { ok: false, error: 'timeout', status: 0 };
     }
-    return { ok: false, status: 0, data: null, error: err instanceof Error ? err.message : 'fetch error' };
+    return { ok: false, error: err instanceof Error ? err.message : 'fetch error', status: 0 };
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-function isRetryable(error: string | undefined, status: number): boolean {
-  if (!error && (status === 0 || status >= 500)) return true;
-  // 5xx is always retryable (transient server error), even when error is set.
+function isRetryable(error: string, status: number): boolean {
   if (status >= 500) return true;
+  if (status === 0) return true;
   if (error === 'timeout') return true;
-  if (error && (error.includes('fetch') || error.includes('network') || error.includes('ECONN'))) return true;
+  if (error.includes('fetch') || error.includes('network') || error.includes('ECONN')) return true;
   return false;
 }
 
 function redactError(error: string): string {
-  // Run through redaction to strip any token-bearing content.
   const result = redactSensitiveContent(error);
   return result.processedContent;
+}
+
+// ── Fetch with retry ──────────────────────────────────────────────
+
+async function safeFetchWithRetry(
+  url: string,
+  token: string,
+  fetchFn: typeof fetch,
+  baseUrl: string,
+  timeoutMs: number,
+): Promise<{ ok: true; text: string; status: number } | { ok: false; error: string; status: number }> {
+  let result = await safeFetchText(url, token, fetchFn, baseUrl, timeoutMs);
+  let retries = 0;
+  while (!result.ok && isRetryable(result.error, result.status) && retries < MAX_RETRIES) {
+    retries++;
+    result = await safeFetchText(url, token, fetchFn, baseUrl, timeoutMs);
+  }
+  return result;
+}
+
+// ── Source signal mapping ─────────────────────────────────────────
+
+function checkRunsSignal(
+  fetchResult: { ok: boolean; error: string; status: number },
+  data: GithubChecksApiResponse | null,
+): SourceSignal {
+  if (!fetchResult.ok) {
+    if (fetchResult.status === 404 || fetchResult.status === 422) return 'none';
+    return 'errored';
+  }
+
+  if (!data || !Array.isArray(data.check_runs)) return 'errored';
+  const runs = data.check_runs;
+  if (runs.length === 0) return 'none';
+
+  const conclusions = runs.map(r => r.conclusion);
+  const failedSet = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+  if (conclusions.some(c => c && failedSet.has(c))) return 'failed';
+
+  const pendingSet = new Set(['queued', 'in_progress', null, undefined]);
+  if (conclusions.some(c => pendingSet.has(c as string | null | undefined))) return 'pending';
+
+  if (conclusions.includes('success')) return 'passed';
+
+  if (conclusions.every(c => c === 'skipped' || c === 'neutral')) return 'skipped';
+
+  return 'none';
+}
+
+function statusSignal(
+  fetchResult: { ok: boolean; error: string; status: number },
+  data: GithubStatusApiResponse | null,
+): SourceSignal {
+  if (!fetchResult.ok) {
+    if (fetchResult.status === 404 || fetchResult.status === 422) return 'none';
+    return 'errored';
+  }
+
+  if (!data) return 'errored';
+
+  const state = data.state;
+  const total = data.total_count;
+
+  if (state === 'failure') return 'failed';
+  if (state === 'success') return 'passed';
+  if (state === 'pending') {
+    if (total === 0) return 'none';
+    return 'pending';
+  }
+
+  // Unknown / empty / missing state → none (fail-closed).
+  return 'none';
+}
+
+// ── Merge ladder (ADR-0022) ───────────────────────────────────────
+
+function mergeLadder(cr: SourceSignal, st: SourceSignal): { result: VerificationResult; summary: string } {
+  // 1. failed
+  if (cr === 'failed' || st === 'failed') return { result: 'failed', summary: 'check(s) failed' };
+  // 2. errored
+  if (cr === 'errored' || st === 'errored') return { result: 'errored', summary: 'source error' };
+  // 3. pending
+  if (cr === 'pending' || st === 'pending') return { result: 'unknown', summary: 'checks still pending' };
+  // 4. passed
+  if (cr === 'passed' || st === 'passed') return { result: 'passed', summary: 'checks passed' };
+  // 5. skipped
+  if (cr === 'skipped' || st === 'skipped') return { result: 'skipped', summary: 'checks skipped' };
+  // 6. both none
+  return { result: 'unknown', summary: 'no check data available' };
 }
 
 // ── Public API ────────────────────────────────────────────────────
@@ -260,18 +323,21 @@ export async function fetchGithubChecks(opts: {
   token: string;
   ref: string;
   fetchFn?: typeof fetch;
+  timeoutMs?: number;
 }): Promise<GithubChecksResult> {
   const { projectKey, config, token, ref } = opts;
   const startedAt = Date.now();
   const effectiveFetch = opts.fetchFn ?? fetch;
+  const effectiveTimeout = opts.timeoutMs ?? GITHUB_TIMEOUT_MS;
 
   // Config validation
   if (!config.apiBaseUrl || !config.apiBaseUrl.startsWith('https://')) {
     return githubChecksError('invalid apiBaseUrl: HTTPS required', startedAt);
   }
 
-  const url = buildUrl(config, ref);
-  if (!url) {
+  const crUrl = buildCheckRunsUrl(config, ref);
+  const stUrl = buildStatusUrl(config, ref);
+  if (!crUrl || !stUrl) {
     return githubChecksError('invalid path: owner/repo/ref validation failed', startedAt);
   }
 
@@ -280,42 +346,50 @@ export async function fetchGithubChecks(opts: {
     return githubChecksError('another fetch in progress', startedAt);
   }
   inFlight.add(projectKey);
+
   try {
-    let result = await safeFetchJson(url, token, effectiveFetch, config.apiBaseUrl);
+    // Fetch both sources sequentially under the lock.
+    const crFetch = await safeFetchWithRetry(crUrl, token, effectiveFetch, config.apiBaseUrl, effectiveTimeout);
+    const stFetch = await safeFetchWithRetry(stUrl, token, effectiveFetch, config.apiBaseUrl, effectiveTimeout);
 
-    // ≤1 retry on transient errors
-    let retries = 0;
-    while (!result.ok && isRetryable(result.error, result.status) && retries < MAX_RETRIES) {
-      retries++;
-      result = await safeFetchJson(url, token, effectiveFetch, config.apiBaseUrl);
+    // Parse check-runs.
+    let crData: GithubChecksApiResponse | null = null;
+    if (crFetch.ok) {
+      try {
+        const parsed = JSON.parse(crFetch.text);
+        if (parsed && Array.isArray(parsed.check_runs)) crData = parsed;
+      } catch { /* parse error → crData stays null */ }
     }
 
-    if (!result.ok || !result.data) {
-      const mapped = mapNonOkStatus(result.status, result.error);
-      return {
-        view: {
-          result: mapped.result,
-          conclusionSummary: mapped.summary,
-          checkRunCount: 0,
-          fetchedAt: startedAt,
-          available: false,
-          elapsedMs: Date.now() - startedAt,
-          commandLabel: 'github-checks',
-        },
-        elapsedMs: Date.now() - startedAt,
-        error: redactError(result.error ?? 'unknown error'),
-      };
+    // Parse combined status — only top-level state + total_count.
+    let stData: GithubStatusApiResponse | null = null;
+    if (stFetch.ok) {
+      try {
+        const parsed = JSON.parse(stFetch.text);
+        // Accept any parseable JSON; missing/unexpected state → empty string (mapped to none).
+        stData = { state: typeof parsed.state === 'string' ? parsed.state : '', total_count: typeof parsed.total_count === 'number' ? parsed.total_count : 0 };
+      } catch { /* parse error → stData stays null → errored */ }
     }
 
-    const { result: vr, summary } = mapConclusionToResult(result.data.check_runs);
+    const crSignal = checkRunsSignal(
+      { ok: crFetch.ok, error: crFetch.ok ? '' : crFetch.error, status: crFetch.status },
+      crData,
+    );
+    const stSignal = statusSignal(
+      { ok: stFetch.ok, error: stFetch.ok ? '' : stFetch.error, status: stFetch.status },
+      stData,
+    );
+
+    const { result, summary } = mergeLadder(crSignal, stSignal);
+    const checkRunCount = crData ? crData.total_count : 0;
 
     return {
       view: {
-        result: vr,
+        result,
         conclusionSummary: summary,
-        checkRunCount: result.data.total_count,
+        checkRunCount,
         fetchedAt: startedAt,
-        available: true,
+        available: crFetch.ok || stFetch.ok,
         elapsedMs: Date.now() - startedAt,
         commandLabel: 'github-checks',
       },
@@ -340,16 +414,4 @@ function githubChecksError(error: string, startedAt: number): GithubChecksResult
     elapsedMs: Date.now() - startedAt,
     error: redactError(error),
   };
-}
-
-function mapNonOkStatus(status: number, error?: string): { result: VerificationResult; summary: string | null } {
-  // 401/403 → errored (auth)
-  if (status === 401 || status === 403) return { result: 'errored', summary: `auth error (${status})` };
-  // 404/422 → unknown (not found / invalid ref)
-  if (status === 404 || status === 422) return { result: 'unknown', summary: `not found (${status})` };
-  // 429 rate limit → errored
-  if (status === 429) return { result: 'errored', summary: 'rate limited' };
-  // timeout / network → errored
-  if (error === 'timeout' || status === 0) return { result: 'errored', summary: 'network error or timeout' };
-  return { result: 'errored', summary: error ?? `http ${status}` };
 }

@@ -87,6 +87,25 @@ All notable changes to CLI Bridge are documented here.
   - Changes: project-console.ts, bridge-projects-api.md, CHANGELOG.md,
     tests/project-console-behavior.test.mjs.
 
+- **EX-2.17-1 ADR-0022: Combined commit-status augmentation** — extended
+  `github-checks-provider.ts` with a second read-only endpoint
+  `GET /repos/{owner}/{repo}/commits/{ref}/status`. Normalizes both check-runs
+  and combined status to a closed source signal set (`failed/errored/pending/
+  passed/skipped/none`) and merges via ADR-0022 ladder. Status response: reads
+  only `state` + `total_count`; `statuses[]` never parsed.
+  - **merge ladder**: `failed > errored > pending(→unknown) > passed > skipped`
+    → both `none` → `unknown`. Regression guards verified.
+  - **containment reuse**: HTTPS+standard TLS, owner/repo whitelist, encoded
+    ref segment, 10s timeout, body cap, no-cross-host redirect, ≤1 retry per
+    call, injectable fetch, redacted errors.
+  - **token scope**: updated docs to fine-grained `checks:read` +
+    `commit_statuses:read`.
+  - **tests**: 34/34 provider tests (14 new for status/mapping/merge/containment/
+    redaction, 20 backward-compat).
+  - Changes: github-checks-provider.ts, tests/github-checks-provider.test.mjs,
+    bridge-projects-api.md, bridge-projects-api.test.mjs (fetch count updated),
+    CHANGELOG.md.
+
 ### Planning / ADR
 - **ADR-0022 GitHub Combined Commit-Status Augmentation ACCEPTED**
   (`REVIEW-ADR-0022`, 2026-06-15) after RP-2.17-a fixed the source-signal merge
