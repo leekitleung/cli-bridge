@@ -1,16 +1,16 @@
 # ADR-0020: Console Verification Run-History Presentation (v2.15 planning)
 
-Status: PROPOSED — awaiting explicit acceptance
+Status: ACCEPTED — `EX-2.15-1` authorized
 
 Date: 2026-06-14
 Depends on: ADR-0017 (typed model), ADR-0018 (local live execution), ADR-0019-a
             (git status), ADR-0019-b (github checks) — all ACCEPTED & CLOSED
-Acceptance: NOT YET ACCEPTED. This is a strictly read-only, console-only
+Acceptance: ACCEPTED (2026-06-14). This is a strictly read-only, console-only
             presentation increment that renders the **already-exposed**,
             already-sanitized `liveRunRecords` run history in the project
             console verification view. It introduces no new endpoint, no
             execution, no network, no credential, and no write surface. Because
-            it crosses no capability boundary, it requires only a light
+            it crosses no capability boundary, it required only a light
             acceptance (no ADR-0007 §2 execution/credential review).
 
 ## Context
@@ -39,8 +39,9 @@ sanitized. This ADR closes that presentation gap.
 
 ### 0. Decision status
 
-**PROPOSED.** No code until explicit acceptance + an `EX-2.15-1` handoff. This is
-a console-only read-only change consuming an existing response field.
+**ACCEPTED.** `EX-2.15-1` is authorized by
+`CLI-BRIDGE-v2.15-VERIFICATION-RUN-HISTORY-HANDOFF.md`. This is a console-only
+read-only change consuming an existing response field.
 
 ### 1. What is permitted
 
@@ -186,5 +187,5 @@ Otherwise STOP and report.
 
 ## Status / Next
 
-PROPOSED. On acceptance, author `CLI-BRIDGE-v2.15-VERIFICATION-RUN-HISTORY-HANDOFF.md`
-for `EX-2.15-1`, then return to `REVIEW-2.15-1`.
+ACCEPTED. Proceed to `CLI-BRIDGE-v2.15-VERIFICATION-RUN-HISTORY-HANDOFF.md` for
+`EX-2.15-1`, then return to `REVIEW-2.15-1`.

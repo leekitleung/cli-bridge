@@ -63,6 +63,14 @@ All notable changes to CLI Bridge are documented here.
     project-store.ts, bridge-projects-api.md, CHANGELOG.md, tests/github-checks-provider.test.mjs.
 
 ### Planning / ADR
+- **ADR-0020 Console Verification Run-History Presentation ACCEPTED** for
+  `EX-2.15-1` (2026-06-14). This authorizes only a read-only console rendering
+  of the existing sanitized `/verification.liveRunRecords` history: allow-listed
+  fields, HTML-escaped strings, fail-closed empty/malformed state, no new
+  endpoint/fetch/backend change, no execution/network/credential, no write
+  affordance, and no pass/fail inference. Authored
+  `CLI-BRIDGE-v2.15-VERIFICATION-RUN-HISTORY-HANDOFF.md`; execution returns to
+  `REVIEW-2.15-1`.
 - **RP-2.15: drafted ADR-0020 Console Verification Run-History Presentation** as
   PROPOSED. The 0017→0019 verification bundle is CLOSED and
   `GET /bridge/projects/:key/verification` already returns the sanitized
