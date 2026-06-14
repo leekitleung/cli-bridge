@@ -638,6 +638,40 @@ export interface GitStatusView {
   available: boolean;
 }
 
+// v2.14 ADR-0019-b: GitHub checks provider config (operator-configured, never HTTP).
+// apiBaseUrl must be HTTPS; owner/repo must match ^[A-Za-z0-9._-]+$.
+
+export interface GithubChecksProviderConfig {
+  kind: 'github';
+  apiBaseUrl: string;
+  owner: string;
+  repo: string;
+}
+
+// v2.14 ADR-0019-b: sanitized GitHub checks result view.
+// No raw API payload, no token, no URL, no branch/owner/repo/ref, no commit SHA.
+
+export interface GithubChecksView {
+  result: VerificationResult;
+  conclusionSummary: string | null;
+  checkRunCount: number;
+  fetchedAt: number;
+  available: boolean;
+  elapsedMs: number;
+  commandLabel: string;
+}
+
+export interface GithubChecksConfirmResult {
+  profileId: string;
+  commandLabel: string;
+  result: VerificationResult;
+  recordedAt: number;
+  elapsedMs: number;
+  truncated: boolean;
+  outputDiscarded: boolean;
+  hostDisclosure: string;
+}
+
 /** Sanitized live verification run record preserved between runs. No raw output/argv/cwd/env/root. */
 export interface VerificationRunRecord {
   projectKey: string;
@@ -684,6 +718,8 @@ export interface Project {
   verifyProfileId?: string;
   /** v2.14 ADR-0019-a: opt-in local read-only git status. Default off. */
   gitStatusEnabled?: boolean;
+  /** v2.14 ADR-0019-b: opt-in remote GitHub checks. Default off. */
+  githubChecksEnabled?: boolean;
 }
 
 /** Derived aggregate view returned by GET /bridge/projects / /bridge/projects/:key. */

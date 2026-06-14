@@ -34,6 +34,8 @@ export interface CreateProjectInput {
   verifyProfileId?: string | null;
   // v2.14 ADR-0019-a: opt-in git status.
   gitStatusEnabled?: boolean;
+  // v2.14 ADR-0019-b: opt-in github checks.
+  githubChecksEnabled?: boolean;
 }
 
 export interface BuildSummaryInput {
@@ -141,6 +143,9 @@ export class InMemoryProjectStore {
       gitStatusEnabled: 'gitStatusEnabled' in input
         ? input.gitStatusEnabled
         : existing?.gitStatusEnabled ?? false,
+      githubChecksEnabled: 'githubChecksEnabled' in input
+        ? input.githubChecksEnabled
+        : existing?.githubChecksEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));
@@ -159,6 +164,7 @@ export class InMemoryProjectStore {
       createdAt: input.now ?? Date.now(),
       workspaceApplyEnabled: input.workspaceApplyEnabled ?? false,
       gitStatusEnabled: input.gitStatusEnabled ?? false,
+      githubChecksEnabled: input.githubChecksEnabled ?? false,
     };
     assertProject(project);
     this.projects.set(key, clone(project));

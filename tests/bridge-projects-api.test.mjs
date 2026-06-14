@@ -18,6 +18,7 @@ import {
   isBridgePath,
 } from '../apps/local-server/src/routes/bridge-api.ts';
 import { DEFAULT_PROJECT_KEY } from '../packages/shared/src/types.ts';
+import { GithubTokenStore } from '../apps/local-server/src/verification/github-token-store.ts';
 
 function jsonRequest(body) {
   const text = body === undefined ? '' : JSON.stringify(body);
@@ -1214,4 +1215,131 @@ test('v2.14: git-status path is GET-only (POST does not run git)', async () => {
   const res = await call(rt, 'POST', GIT_STATUS_PATH, { confirm: true });
   assert.notEqual(res.statusCode, 200, 'POST must not succeed on git-status');
   assert.equal(rt.__gitCalls.length, 0, 'POST must not spawn git');
+});
+
+// ── v2.14 ADR-0019-b: remote GitHub checks confirm route tests ────
+
+const GH_CONFIRM_PATH = `${BRIDGE_PROJECTS_PATH}/cli-bridge/verification/github-checks/confirm`;
+
+function makeGithubRuntime(opts = {}) {
+  const fetchCalls = [];
+  const gitCalls = [];
+  const githubChecksFetchFn = async (url, init) => {
+    fetchCalls.push({ url, init });
+    const runs = opts.checkRuns ?? [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success' }];
+    return {
+      ok: opts.httpOk ?? true,
+      status: opts.httpStatus ?? 200,
+      headers: { get: (h) => (String(h).toLowerCase() === 'location' ? (opts.location ?? null) : null) },
+      text: async () => JSON.stringify({ total_count: runs.length, check_runs: runs }),
+    };
+  };
+  const gitSpawnFn = async (file, args, o) => {
+    gitCalls.push({ args: [...args], cwd: o.cwd });
+    let out = '';
+    if (args.includes('--is-inside-work-tree')) out = opts.notRepo ? 'false\n' : 'true\n';
+    else if (args.includes('--show-current')) out = opts.detached ? '\n' : ((opts.branch ?? 'main') + '\n');
+    else if (args.includes('--porcelain')) out = '';
+    else if (args.includes('rev-list')) out = '0\t0\n';
+    return { ok: true, exitCode: 0, signal: null, stdoutChunks: out ? [Buffer.from(out, 'utf8')] : [], stderrChunks: [] };
+  };
+  const tokenStore = new GithubTokenStore();
+  if (!opts.noToken) tokenStore.setToken('cli-bridge', opts.token ?? 'ghp_testtoken1234567890');
+  const runtime = createBridgeRuntime({
+    projectWorkspaceRoots: 'root' in opts ? opts.root : { 'cli-bridge': '/tmp/gh-root' },
+    githubChecksConfig: 'config' in opts ? opts.config
+      : { 'cli-bridge': { kind: 'github', apiBaseUrl: 'https://api.github.com', owner: 'acme', repo: 'widget' } },
+    githubTokenStore: tokenStore,
+    githubChecksFetchFn,
+    gitSpawnFn,
+  });
+  runtime.__fetchCalls = fetchCalls;
+  runtime.__gitCalls = gitCalls;
+  return runtime;
+}
+
+test('v2.14b: github-checks 409 when githubChecksEnabled off (no fetch)', async () => {
+  const rt = makeGithubRuntime({});
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__fetchCalls.length, 0, 'no network when disabled');
+});
+
+test('v2.14b: github-checks 409 when no provider config (no fetch)', async () => {
+  const rt = makeGithubRuntime({ config: {} });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__fetchCalls.length, 0);
+});
+
+test('v2.14b: github-checks 409 when no token (no fetch)', async () => {
+  const rt = makeGithubRuntime({ noToken: true });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__fetchCalls.length, 0);
+});
+
+test('v2.14b: github-checks 409 when detached/non-repo (no fetch)', async () => {
+  const rt = makeGithubRuntime({ detached: true });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 409);
+  assert.equal(rt.__fetchCalls.length, 0, 'no network when branch undeterminable');
+});
+
+test('v2.14b: github-checks success returns sanitized typed result; no token/identity leak', async () => {
+  const rt = makeGithubRuntime({ checkRuns: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success' }] });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.result, 'passed');
+  assert.equal(res.payload.commandLabel, 'github-checks');
+  // response must not leak token / owner / repo / branch / raw payload
+  const pj = JSON.stringify(res.payload);
+  for (const secret of ['ghp_testtoken1234567890', 'acme', 'widget', 'main', 'check_runs', 'total_count']) {
+    assert.equal(pj.includes(secret), false, `response must not contain ${secret}`);
+  }
+  // exactly one outbound call, to the configured host/owner/repo with encoded ref
+  assert.equal(rt.__fetchCalls.length, 1);
+  const url = rt.__fetchCalls[0].url;
+  assert.ok(url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'configured host/owner/repo');
+  assert.ok(url.endsWith('/check-runs'), 'single read endpoint');
+  // audit whitelist; no token/identity/host
+  const ev = rt.auditLog.listEvents().find(e => e.source === 'github-checks');
+  assert.ok(ev, 'audit event present');
+  const gk = ev.result.metadata.githubChecks;
+  const allowed = new Set(['result', 'conclusionSummary', 'checkRunCount', 'available', 'elapsedMs']);
+  for (const k of Object.keys(gk)) assert.ok(allowed.has(k), `audit must not contain ${k}`);
+  const evj = JSON.stringify(ev);
+  for (const secret of ['ghp_testtoken1234567890', 'acme', 'widget', 'main', 'api.github.com']) {
+    assert.equal(evj.includes(secret), false, `audit must not contain ${secret}`);
+  }
+  // evidence stored, sanitized
+  const stored = rt.verificationRunStore.getForProject('cli-bridge');
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].profileId, 'github-checks');
+});
+
+test('v2.14b: github-checks ignores HTTP-supplied identity/token override', async () => {
+  const rt = makeGithubRuntime({});
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, {
+    confirm: true, owner: 'evil', repo: 'pwn', ref: 'attacker', url: 'https://evil.example', token: 'ghp_evil',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(rt.__fetchCalls.length, 1);
+  const url = rt.__fetchCalls[0].url;
+  assert.ok(url.startsWith('https://api.github.com/repos/acme/widget/commits/'), 'HTTP override must not change host/owner/repo');
+  assert.equal(url.includes('evil'), false, 'no attacker-supplied host/identity');
+  assert.equal(url.includes('attacker'), false, 'no attacker-supplied ref');
+});
+
+test('v2.14b: github-checks failure conclusion maps to failed', async () => {
+  const rt = makeGithubRuntime({ checkRuns: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'failure' }] });
+  await call(rt, 'PATCH', `${BRIDGE_PROJECTS_PATH}/cli-bridge`, { githubChecksEnabled: true });
+  const res = await call(rt, 'POST', GH_CONFIRM_PATH, { confirm: true });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.result, 'failed');
 });

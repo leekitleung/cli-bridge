@@ -22,6 +22,7 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
+import { GithubTokenStore } from '../verification/github-token-store.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
 import { toApplyManifest } from '../storage/workspace-apply-store.ts';
 import { normalizeProjectWorkspaceRoots } from '../storage/workspace-apply-store.ts';
@@ -30,7 +31,8 @@ import { VerificationRunStore } from '../storage/verification-run-store.ts';
 import type { VerifyProfile } from '../../../../packages/shared/src/types.ts';
 import { runVerificationProfile } from '../verification/profile-runner.ts';
 import { readGitStatus } from '../verification/git-status-reader.ts';
-import type { GitStatusView } from '../../../../packages/shared/src/types.ts';
+import { fetchGithubChecks } from '../verification/github-checks-provider.ts';
+import type { GitStatusView, GithubChecksConfirmResult } from '../../../../packages/shared/src/types.ts';
 import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
@@ -127,6 +129,12 @@ export interface BridgeRuntime {
   readonly verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
   // v2.14 ADR-0019-a: injectable git spawn for tests.
   readonly gitSpawnFn?: import('../verification/git-status-reader.js').GitSpawnFn;
+  // v2.14 ADR-0019-b: github checks provider config (operator-only).
+  readonly githubChecksConfig?: Record<string, import('../../../../packages/shared/src/types.ts').GithubChecksProviderConfig>;
+  // v2.14 ADR-0019-b: memory-only github token store.
+  readonly githubTokenStore?: GithubTokenStore;
+  // v2.14 ADR-0019-b: injectable fetch for tests.
+  readonly githubChecksFetchFn?: typeof fetch;
   readonly projectWorkspaceRoots?: Record<string, string>;
 }
 
@@ -156,6 +164,12 @@ export interface BridgeRuntimeOptions {
   verificationSpawnFn?: import('../verification/profile-runner.js').SpawnFn;
   // v2.14 ADR-0019-a: injectable git spawn for tests.
   gitSpawnFn?: import('../verification/git-status-reader.js').GitSpawnFn;
+  // v2.14 ADR-0019-b: github checks provider config (operator-only, never HTTP).
+  githubChecksConfig?: Record<string, import('../../../../packages/shared/src/types.ts').GithubChecksProviderConfig>;
+  // v2.14 ADR-0019-b: memory-only github token store (operator-set, never persisted).
+  githubTokenStore?: GithubTokenStore;
+  // v2.14 ADR-0019-b: injectable fetch for tests.
+  githubChecksFetchFn?: typeof fetch;
 }
 
 
@@ -1150,6 +1164,98 @@ async function handleGitStatusGet(
   });
 }
 
+// ── v2.14 ADR-0019-b: GitHub checks confirm ─────────────────────
+
+async function handleGithubChecksConfirm(
+  runtime: BridgeRuntime,
+  projectKey: string,
+): Promise<BridgeResult> {
+  const project = runtime.projectStore.get(projectKey);
+  if (!project) return error(404, 'Project not found');
+  if (project.archivedAt) return error(409, 'Cannot run github checks for archived project');
+  if (!project.githubChecksEnabled) return error(409, 'GitHub checks not enabled for this project');
+
+  const config = runtime.githubChecksConfig?.[projectKey];
+  if (!config) return error(409, 'No GitHub checks provider config for this project');
+
+  const token = runtime.githubTokenStore?.getToken(projectKey);
+  if (!token) return error(409, 'No GitHub token configured for this project');
+
+  // Get current branch via the ADR-0019-a reader (read-only, no spawn here — use direct git).
+  const workspaceRoot = runtime.projectWorkspaceRoots?.[projectKey];
+  if (!workspaceRoot) return error(409, 'No project workspace root configured');
+
+  // Read branch from local git.
+  const gitResult = await readGitStatus({
+    projectKey,
+    workspaceRoot,
+    spawnFn: runtime.gitSpawnFn,
+  });
+
+  if (!gitResult.view.isGitRepo || !gitResult.view.branch) {
+    return error(409, 'Cannot determine branch — detached or not a git repository');
+  }
+
+  const ref = gitResult.view.branch;
+  const result = await fetchGithubChecks({
+    projectKey,
+    config,
+    token,
+    ref,
+    fetchFn: runtime.githubChecksFetchFn,
+  });
+
+  // Store as ADR-0017 evidence.
+  if (runtime.verificationRunStore) {
+    runtime.verificationRunStore.add(projectKey, {
+      projectKey,
+      profileId: 'github-checks',
+      commandLabel: 'github-checks',
+      result: result.view.result,
+      recordedAt: result.view.fetchedAt,
+      elapsedMs: result.elapsedMs,
+      truncated: false,
+      outputDiscarded: true,
+    });
+  }
+
+  // Redacted audit event — no token, no URL, no raw payload, no branch/owner/repo.
+  runtime.auditLog.createAndAppend({
+    sessionId: 'github-checks-' + projectKey + '-' + Date.now(),
+    projectId: projectKey,
+    type: 'workspace_apply_result',
+    source: 'github-checks',
+    target: 'project-' + projectKey,
+    result: {
+      ok: result.view.available,
+      metadata: {
+        githubChecks: {
+          result: result.view.result,
+          conclusionSummary: result.view.conclusionSummary,
+          checkRunCount: result.view.checkRunCount,
+          available: result.view.available,
+          elapsedMs: result.elapsedMs,
+        },
+      },
+    },
+  });
+
+  const hostDisclosure = `read-only network call to ${config.apiBaseUrl} using a stored credential`;
+
+  const response: GithubChecksConfirmResult = {
+    profileId: 'github-checks',
+    commandLabel: 'github-checks',
+    result: result.view.result,
+    recordedAt: result.view.fetchedAt,
+    elapsedMs: result.elapsedMs,
+    truncated: false,
+    outputDiscarded: true,
+    hostDisclosure,
+  };
+
+  return ok(response);
+}
+
 // ── v2.13 ADR-0018: Live verification handlers ──────────────────
 
 function handleVerificationProfilesGet(
@@ -1382,6 +1488,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     verificationSpawnFn: options.verificationSpawnFn,
     // v2.14 ADR-0019-a
     gitSpawnFn: options.gitSpawnFn,
+    // v2.14 ADR-0019-b
+    githubChecksConfig: options.githubChecksConfig,
+    githubTokenStore: options.githubTokenStore ?? new GithubTokenStore(),
+    githubChecksFetchFn: options.githubChecksFetchFn,
     projectWorkspaceRoots,
   };
 }
@@ -1751,6 +1861,8 @@ export const BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX = '/verification/profil
 export const BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX = '/verification/confirm';
 // v2.14 ADR-0019-a: read-only local git status
 export const BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX = '/verification/git-status';
+// v2.14 ADR-0019-b: remote github checks confirm
+export const BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX = '/verification/github-checks/confirm';
 
 // v2.2 WorkBuddy non-executing task system project-scoped path.
 export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
@@ -1767,7 +1879,8 @@ function matchProjectObservabilityPath(pathname: string): {
   for (const sub of [BRIDGE_PROJECT_TIMELINE_SUFFIX, BRIDGE_PROJECT_AUDIT_SUFFIX,
     BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX,
     BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX, BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX,
-    BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX]) {
+    BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX,
+    BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX]) {
     if (rest.endsWith(sub)) {
       const raw = rest.slice(0, -sub.length);
       if (raw.length === 0 || raw.includes('/')) continue;
@@ -2206,6 +2319,9 @@ export async function handleBridgeRequest(
     // v2.14 ADR-0019-a: gitStatusEnabled — boolean toggle, default off.
     const gitStatusEnabled = typeof parsed.body.gitStatusEnabled === 'boolean'
       ? parsed.body.gitStatusEnabled : undefined;
+    // v2.14 ADR-0019-b: githubChecksEnabled — boolean toggle, default off.
+    const githubChecksEnabled = typeof parsed.body.githubChecksEnabled === 'boolean'
+      ? parsed.body.githubChecksEnabled : undefined;
     // v2.13: verifyProfileId — string to set, null to remove, undefined to leave unchanged.
     // Reject non-string/non-null values explicitly.
     if (parsed.body.verifyProfileId !== undefined && parsed.body.verifyProfileId !== null
@@ -2216,7 +2332,9 @@ export async function handleBridgeRequest(
       : (typeof parsed.body.verifyProfileId === 'string' ? parsed.body.verifyProfileId as string | null : undefined);
 
     // Reject disallowed command-like fields (root-like fields silently ignored per ADR-0014).
-    const blocked = ['key', 'createdAt', 'archivedAt', 'verifyCommand', 'command', 'argv', 'env', 'shell', 'stdout', 'stderr', 'output', 'remote', 'token', 'network', 'provider', 'credentials', 'gitCmd', 'gitCommand', 'repoUrl'];
+    const blocked = ['key', 'createdAt', 'archivedAt', 'verifyCommand', 'command', 'argv', 'env', 'shell', 'stdout', 'stderr', 'output', 'remote', 'token', 'network', 'provider', 'credentials', 'gitCmd', 'gitCommand', 'repoUrl',
+      // ADR-0019-b: operator-only identity fields.
+      'owner', 'repo', 'ref', 'apiBaseUrl', 'url', 'host', 'checksToken', 'githubToken', 'authorization', 'credential'];
     for (const field of blocked) {
       if (field in parsed.body) return error(400, `Field '${field}' is not allowed in project PATCH`);
     }
@@ -2235,6 +2353,7 @@ export async function handleBridgeRequest(
       workspaceApplyEnabled,
       verifyProfileId: parsed.body.verifyProfileId !== undefined ? verifyProfileId : undefined,
       gitStatusEnabled,
+      githubChecksEnabled,
     });
     runtime.persist();
     return ok({ project: updated });
@@ -2333,6 +2452,11 @@ export async function handleBridgeRequest(
   if (obsPath.matched && method === 'POST' && obsPath.sub === BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX) {
     if (!obsPath.key) return error(400, 'Invalid project key');
     return handleVerificationConfirmPost(runtime, obsPath.key, request);
+  }
+  // v2.14 ADR-0019-b: github checks confirm (POST)
+  if (obsPath.matched && method === 'POST' && obsPath.sub === BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX) {
+    if (!obsPath.key) return error(400, 'Invalid project key');
+    return handleGithubChecksConfirm(runtime, obsPath.key);
   }
   if (obsPath.matched) return error(405, 'Method not allowed');
 

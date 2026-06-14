@@ -35,6 +35,33 @@ All notable changes to CLI Bridge are documented here.
     project-console.ts, project-store.ts, bridge-projects-api.md, CHANGELOG.md,
     git-status-reader.test.mjs (new).
 
+- **EX-2.14-2 ADR-0019-b: Remote GitHub checks status provider** — added an opt-in
+  (`githubChecksEnabled`, default `false`), human-triggered (confirm gate),
+  read-only GitHub check-runs status fetch provider:
+  - **types**: `GithubChecksProviderConfig`, `GithubChecksView`, `GithubChecksConfirmResult`,
+    `Project.githubChecksEnabled`.
+  - **token store**: `github-token-store.ts` — memory-only, never persisted.
+  - **provider**: `github-checks-provider.ts` — injectable `fetchFn`, HTTPS-only +
+    standard TLS, `owner`/`repo` whitelist `^[A-Za-z0-9._-]+$`,
+    `encodeURIComponent(ref)` single-segment path, 10s timeout, body cap, no
+    cross-host redirect, ≤1 retry, redacted error surfaces.
+  - **mapping**: check_runs conclusions → typed `VerificationResult` (ADR FIXED rules).
+  - **route**: `POST .../verification/github-checks/confirm` — human-triggered, host
+    disclosure, opt-in/config/token absent → 409, stores ADR-0017 evidence.
+  - **console**: "Run Checks" confirm button, host disclosure, typed result + timing,
+    no token/URL/payload shown.
+  - **follow-up-2**: `readCappedBody()` now enforces a real streaming body cap
+    (`reader.cancel()` on overflow) and the request timeout now spans body
+    consumption as well as headers; added oversized-response regressions for both
+    streaming and fallback `text()` paths.
+  - **contract**: `docs/contracts/bridge-projects-api.md` updated with endpoint spec,
+    operator guidance, credential scope recommendation.
+  - **verification**: all tests pass (731/731), typecheck clean, lint clean,
+    diff-check clean.
+  - Changes: types.ts, schemas.ts, github-token-store.ts (new),
+    github-checks-provider.ts (new), bridge-api.ts, project-console.ts,
+    project-store.ts, bridge-projects-api.md, CHANGELOG.md, tests/github-checks-provider.test.mjs.
+
 ### Planning / ADR
 - **ADR-0019-b Remote GitHub Checks Provider ACCEPTED** (`REVIEW-ADR-0019-b`,
   2026-06-14, ADR-0007 §2 + credential review) after RP-2.14-b-1 fixed the final

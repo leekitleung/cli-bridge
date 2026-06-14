@@ -933,3 +933,100 @@ no scheduler/model trigger.
 
 **Non-goals**: remote CI/GitHub/provider clients, credentials, git writes,
 fetch/pull/commit/push, pass/fail mapping, ADR-0019-b.
+
+### Remote GitHub Checks Status (v2.14, ADR-0019-b)
+
+Operator-configured, opt-in (`githubChecksEnabled`, default `false`),
+human-triggered, **read-only** GitHub check-runs status read. **Single read-only
+endpoint, HTTPS-only with standard TLS, no cross-host redirect, memory-only token,
+URL path containment, ≤1 retry. Requires operator provider config + read-only
+GitHub token.**
+
+Credential guidance: operators must provide a least-privilege read-only GitHub
+token, preferably fine-grained `checks:read` plus `contents:read` only where
+required by the API.
+
+#### Operator configuration (runtime-only, never HTTP)
+
+Per-project `githubChecksConfig[projectKey]`:
+```json
+{
+  "kind": "github",
+  "apiBaseUrl": "https://api.github.com",
+  "owner": "my-org",
+  "repo": "my-repo"
+}
+```
+
+Token: `githubTokenStore.setToken(projectKey, token)` — memory-only,
+never persisted/audited/echoed.
+
+#### POST .../verification/github-checks/confirm
+
+Human-triggered network call. Body: `{}` (no owner/repo/ref/token override).
+
+**Returns 200 (sanitized typed evidence)**:
+```json
+{
+  "profileId": "github-checks",
+  "commandLabel": "github-checks",
+  "result": "passed",
+  "recordedAt": 1718000000000,
+  "elapsedMs": 342,
+  "truncated": false,
+  "outputDiscarded": true,
+  "hostDisclosure": "read-only network call to https://api.github.com using a stored credential"
+}
+```
+
+**Configuration required**: `githubChecksEnabled`, `githubChecksConfig[projectKey]`,
+`githubTokenStore[projectKey]`, `projectWorkspaceRoots[projectKey]`, and the
+project must have a local git branch (detached → 409).
+
+**Error cases**:
+
+| Status | Condition |
+|--------|-----------|
+| 404 | Project not found |
+| 409 | Archived project |
+| 409 | `githubChecksEnabled` not `true` |
+| 409 | No provider config |
+| 409 | No token configured |
+| 409 | No workspace root |
+| 409 | Detached HEAD / not a git repo |
+| 409 | Invalid owner/repo (regex mismatch) |
+| 409 | Another fetch already in progress |
+| 405 | Non-POST method |
+
+**Endpoint**: single read-only GET `{apiBaseUrl}/repos/{owner}/{repo}/commits/{ref}/check-runs`
+(Accept: `application/vnd.github+json`). No other endpoint, no write/PR/merge call.
+
+**Ref**: from `git branch --show-current` (ADR-0019-a reader), fail-closed on detached
+HEAD. `ref` is one `encodeURIComponent(ref)` segment in the URL path;
+`owner`/`repo` match `^[A-Za-z0-9._-]+$` only.
+
+**Egress bounding**: HTTPS-only with standard platform TLS (no insecure agent),
+10s `AbortController` timeout, 256 KB body cap, no cross-host redirect (3xx →
+error), single in-flight lock per project, ≤1 retry on transient 5xx/network.
+
+**Status mapping** (FIXED):
+- failure/timed_out/cancelled/action_required/stale → `failed`
+- queued/in_progress/null → `unknown`
+- ≥1 success → `passed`
+- all skipped/neutral → `skipped`
+- zero check-runs → `unknown`
+- auth/rate-limit/network/timeout/parse error → `errored`
+
+**Stored as ADR-0017 evidence** with `commandLabel: "github-checks"`, merged into
+`/verification` summary.
+
+**Audit**: redacted event with `githubChecks` metadata (`result`, `conclusionSummary`,
+`checkRunCount`, `available`, `elapsedMs`). No token, no URL, no branch/owner/repo,
+no raw API payload, no Authorization header value.
+
+**Console**: "Run Checks" confirm button in verification view; host disclosure text
+displayed (inert); typed result + timing after fetch; no token/URL/payload shown.
+
+**Non-goals**: second provider, generic CI, write/PR/merge/status-write, background
+polling/webhook/scheduler/model trigger, arbitrary URL, credential persistence,
+raw API payload display, ADR-0007 workspace write.

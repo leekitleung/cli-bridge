@@ -783,6 +783,18 @@ function renderSectionView() {
     html += '</div>';
     html += '</div>';
 
+    // ── v2.14 ADR-0019-b: GitHub checks confirm gate ───
+    html += '<div id="github-checks-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
+    html += '<div style="font-size:12px;font-weight:500;">GitHub Checks (read-only, network)</div>';
+    html += '<div id="github-checks-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">';
+    html += '<span class="unavailable">not yet fetched</span>';
+    html += '</div>';
+    html += '<div id="github-checks-disclosure" style="font-size:10px;color:var(--muted);margin:4px 0;"></div>';
+    html += '<div style="margin-top:6px;">';
+    html += '<button id="btn-github-checks-confirm" class="primary" style="font-size:11px;padding:4px 8px;">Fetch Checks</button>';
+    html += '</div>';
+    html += '</div>';
+
     const verView = store.cache.verification;
     html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {
@@ -913,6 +925,7 @@ function renderSectionView() {
   if (store.view === 'verification') {
     initLiveVerificationGate();
     initGitStatusGate();
+    initGithubChecksGate();
   }
 }
 
@@ -1038,6 +1051,44 @@ async function initGitStatusGate() {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', fetchGitStatus);
   }
+}
+
+// ─── v2.14 ADR-0019-b: GitHub Checks Gate ───
+
+async function initGithubChecksGate() {
+  const metaEl = document.getElementById('github-checks-meta');
+  const confirmBtn = document.getElementById('btn-github-checks-confirm');
+  const disclosureEl = document.getElementById('github-checks-disclosure');
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification/github-checks/confirm';
+
+  if (!metaEl || !confirmBtn) return;
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    metaEl.innerHTML = '<span class="unavailable">fetching...</span>';
+    try {
+      const res = await api(base, 'POST', { confirm: true });
+      if (res.ok && res.data) {
+        const d = res.data;
+        // Display inert typed result — no token/URL/payload.
+        var resultEmoji = d.result === 'passed' ? '&#x2705;' : d.result === 'failed' ? '&#x274C;' : d.result === 'errored' ? '&#x26A0;' : '&#x2753;';
+        metaEl.innerHTML = resultEmoji + ' <strong>' + escapeHtml(d.result) + '</strong> &middot; github-checks &middot; ' + d.elapsedMs + 'ms';
+        // Show host disclosure (inert text, not a URL).
+        if (disclosureEl && d.hostDisclosure) {
+          disclosureEl.innerHTML = escapeHtml(d.hostDisclosure);
+        }
+      } else {
+        const msg = res.data?.message || 'unavailable';
+        metaEl.innerHTML = '<span class="unavailable">' + escapeHtml(msg) + '</span>';
+      }
+    } catch {
+      metaEl.innerHTML = '<span class="unavailable">fetch failed</span>';
+    } finally {
+      confirmBtn.disabled = false;
+      // Refresh verification cache to include the new run record.
+      refreshVerificationCache();
+    }
+  });
 }
 
 // Uses ONLY GET endpoints: manifest, file list, and size-capped redacted

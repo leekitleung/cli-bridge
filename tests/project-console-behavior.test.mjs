@@ -1424,3 +1424,56 @@ test('v2.14: git status renders inert unavailable without throwing', async () =>
   const meta = document.getElementById('git-status-meta');
   assert.ok(meta.innerHTML.includes('unavailable'), 'renders inert unavailable');
 });
+
+// ── v2.14b ADR-0019-b: GitHub checks console gate (human-triggered) ──
+
+function setupGithubChecksFixtures(setFixture, confirmPayload) {
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  setFixture('/bridge/projects/cli-bridge/verification/profiles', { ok: true, payload: { profiles: [], selectedProfileId: null, workspaceRootAvailable: true } });
+  setFixture('/bridge/projects/cli-bridge/verification/git-status', { ok: true, payload: { available: false, isGitRepo: false, branch: null, dirty: false, aheadCount: null, behindCount: null, fetchedAt: 1 } });
+  setFixture('/bridge/projects/cli-bridge/verification/github-checks/confirm', { ok: true, payload: confirmPayload });
+}
+
+test('v2.14b: github checks gate is human-triggered (no auto-fire) and renders inert result', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setupGithubChecksFixtures(setFixture, {
+    profileId: 'github-checks', commandLabel: 'github-checks', result: 'passed',
+    recordedAt: 1, elapsedMs: 12, truncated: false, outputDiscarded: true,
+    hostDisclosure: 'read-only network call to https://api.github.com using a stored credential',
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 100));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  // Must NOT auto-fire the credentialed call on view load.
+  let ghCalls = fetchCalls.filter(c => c.path.endsWith('/verification/github-checks/confirm'));
+  assert.equal(ghCalls.length, 0, 'credentialed call must not fire before explicit click');
+
+  // No free-form input / no write-execute controls in the section.
+  const section = document.getElementById('github-checks-section');
+  assert.ok(section, 'github-checks-section exists');
+  assert.equal(section.querySelectorAll('input, textarea').length, 0, 'no free-form input');
+  const btnText = [...section.querySelectorAll('button')].map(b => b.textContent || '').join(' ');
+  assert.equal(/\b(run|execute|commit|apply|promote|discard)\b/i.test(btnText), false, 'no write/execute control labels');
+
+  // Explicit human click triggers exactly one POST.
+  document.getElementById('btn-github-checks-confirm').click();
+  await new Promise(r => setTimeout(r, 100));
+
+  ghCalls = fetchCalls.filter(c => c.path.endsWith('/verification/github-checks/confirm'));
+  assert.equal(ghCalls.length, 1, 'one call after click');
+  assert.equal(ghCalls[0].method, 'POST', 'confirm is POST');
+
+  const meta = document.getElementById('github-checks-meta').innerHTML;
+  assert.ok(meta.includes('passed'), 'renders typed result');
+  assert.equal(meta.includes('ghp_'), false, 'no token in DOM');
+});

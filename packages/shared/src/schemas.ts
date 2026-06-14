@@ -924,6 +924,19 @@ export function validateProject(value: unknown): SchemaValidationResult {
       && typeof value.gitStatusEnabled !== 'boolean') {
     errors.push('gitStatusEnabled must be a boolean or absent');
   }
+  // v2.14 ADR-0019-b: githubChecksEnabled must be boolean if present.
+  if ('githubChecksEnabled' in value && value.githubChecksEnabled !== undefined
+      && typeof value.githubChecksEnabled !== 'boolean') {
+    errors.push('githubChecksEnabled must be a boolean or absent');
+  }
+  // v2.14 ADR-0019-b: reject identity/token fields that must be operator-only.
+  for (const blocked of ['owner', 'repo', 'ref', 'apiBaseUrl', 'url', 'host', 'token', 'checksToken',
+    'githubToken', 'authorization', 'credential', 'provider']) {
+    if (blocked in (value as Record<string, unknown>)
+        && (value as Record<string, unknown>)[blocked] !== undefined) {
+      errors.push(`field '${blocked}' is rejected — operator-only configuration`);
+    }
+  }
   return { ok: errors.length === 0, errors };
 }
 
