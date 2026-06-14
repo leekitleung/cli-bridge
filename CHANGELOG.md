@@ -36,6 +36,27 @@ All notable changes to CLI Bridge are documented here.
     git-status-reader.test.mjs (new).
 
 ### Planning / ADR
+- **ADR-0019-b Remote GitHub Checks Provider ACCEPTED** (`REVIEW-ADR-0019-b`,
+  2026-06-14, ADR-0007 §2 + credential review) after RP-2.14-b-1 fixed the final
+  URL containment blocker and follow-up credential/TLS/redaction requirements.
+  The accepted `EX-2.14-2` scope is limited to one human-triggered, opt-in,
+  read-only GitHub-compatible check-runs endpoint with operator-configured
+  identity, memory-only operator-set token, strict `owner`/`repo` whitelist,
+  single-segment `encodeURIComponent(ref)`, HTTPS with standard certificate
+  validation, no cross-host redirects, bounded timeout/body cap, ≤1 retry, fixed
+  conclusion mapping, redacted error/audit/console surfaces, and least-privilege
+  read-only token guidance. Handoff status is now dispatchable only on explicit
+  human trigger and returns to `REVIEW-2.14-2`. No implementation, network call,
+  or credential handling code was added by this acceptance batch.
+- **RP-2.14-b-1: hardened ADR-0019-b URL/TLS/redaction/token-scope containment**
+  after `REVIEW-ADR-0019-b` returned CHANGES REQUIRED on the URL path safety
+  rule. Fixed the ADR and handoff to require `owner`/`repo`
+  `^[A-Za-z0-9._-]+$`, reject invalid values with 409/no-call, encode `ref` as a
+  single path segment while rejecting empty/`..`/control-character refs, keep the
+  final URL under the configured `apiBaseUrl` host/scheme/path boundary, forbid
+  insecure TLS bypasses, redact errors/timeouts before storage/display, assert no
+  Authorization value or token-bearing URL leaks, and document least-privilege
+  read-only GitHub token scope.
 - **RP-2.14-b: fixed the ADR-0019-b pre-acceptance design** (remote GitHub check
   status provider) after ADR-0019-a closed. Resolved every previously-deferred
   blocker into fixed decisions so nothing is delegated to execution: single
@@ -52,10 +73,9 @@ All notable changes to CLI Bridge are documented here.
   requirement. Reuses the v2.4a memory-credential + outbound-fetch + token-
   redaction pattern. Authored `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md`
   (gated) and updated the bundle roadmap (0019-a CLOSED; 0019-b design FIXED).
-  No ADR is accepted and no implementation is authorized by this planning batch;
-  ADR-0019-b stays NOT ACCEPTED pending `REVIEW-ADR-0019-b` (ADR-0007 §2 +
-  credential review), and `EX-2.14-2` is gated behind that acceptance. No code,
-  no network/credentials introduced.
+  At the end of RP-2.14-b, ADR-0019-b still awaited `REVIEW-ADR-0019-b`
+  (ADR-0007 §2 + credential review), and `EX-2.14-2` remained gated behind that
+  acceptance. No code, no network/credentials introduced.
 - **ADR-0019-a Read-only Local Git Status Provider ACCEPTED** (`REVIEW-ADR-0019-a`,
   2026-06-13, ADR-0007 §2; no credential review needed) after RP-2.14-a hardened
   git-spawn containment. Authorizes only an opt-in (`gitStatusEnabled`, default

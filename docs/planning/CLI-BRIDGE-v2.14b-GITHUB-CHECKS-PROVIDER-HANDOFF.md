@@ -1,14 +1,15 @@
 # CLI Bridge v2.14b — Remote GitHub Checks Verification Provider — Implementation Handoff (ADR-0019-b)
 
-**Status**: HANDOFF AUTHORED — **NOT DISPATCHABLE**. `EX-2.14-2` may run only
-after `REVIEW-ADR-0019-b` accepts ADR-0019-b (ADR-0007 §2 **+ credential
-review**) and an explicit human sign-off. Until then this is a pre-written,
-gated handoff.
+**Status**: HANDOFF AUTHORIZED — **DISPATCHABLE ON EXPLICIT HUMAN TRIGGER**.
+ADR-0019-b was accepted by `REVIEW-ADR-0019-b` PASS (ADR-0007 §2 **+ credential
+review**) on 2026-06-14. `EX-2.14-2` still requires an explicit human dispatch
+and returns to `REVIEW-2.14-2`.
 **Date**: 2026-06-13
 **Batch**: `EX-2.14-2` (execution) → returns to `REVIEW-2.14-2`
 **Based on**:
 - `docs/planning/ADR-0019-git-ci-github-provider-integration.md` — "RP-2.14-b —
-  ADR-0019-b fixed pre-acceptance design"
+  ADR-0019-b fixed pre-acceptance design", including RP-2.14-b-1 URL path
+  containment and credential/TLS/redaction fixes
 - Reuse references: `apps/local-server/src/model/api-key.ts` (memory-only key
   store), `apps/local-server/src/model/openai-adapter.ts` (outbound HTTPS +
   bearer + AbortController timeout + 4xx/5xx classification),
@@ -52,11 +53,16 @@ ADR-0017 evidence, and surface it inertly — with no token/URL/payload leakage.
    operator/runtime-set only, never exported/persisted; wire injection in
    `createBridgeRuntime` (like `baselineRoot`/`projectWorkspaceRoots`).
 4. **Provider client** (`apps/local-server/src/verification/github-checks-provider.ts`):
-   injectable `fetchFn`; HTTPS-only; URL built from config + sanitized
-   owner/repo/ref; `ref` from ADR-0019-a `git branch --show-current` (detached →
-   no call); `Authorization` header from the memory store; `AbortController`
-   timeout ≤10s; response body size cap; **no cross-host redirect**; single-run
-   lock per project; ≤1 retry on transient 5xx/network; 4xx/429 non-retryable.
+   injectable `fetchFn`; HTTPS-only with standard certificate validation (no
+   insecure agent and no `NODE_TLS_REJECT_UNAUTHORIZED=0`); URL built only from
+   configured `apiBaseUrl` plus fixed path segments; `owner`/`repo` must match
+   `^[A-Za-z0-9._-]+$`; `ref` from ADR-0019-a `git branch --show-current`
+   (detached → no call) must be non-empty, reject control characters and `..`,
+   and be inserted only as one `encodeURIComponent(ref)` segment; final URL must
+   remain under the configured host/scheme/path boundary; `Authorization` header
+   from the memory store; `AbortController` timeout ≤10s; response body size
+   cap; **no cross-host redirect**; single-run lock per project; ≤1 retry on
+   transient 5xx/network; 4xx/429 non-retryable.
 5. **Mapping**: aggregate `check_runs[].conclusion` exactly per ADR §"Status
    mapping — FIXED" → typed `VerificationResult`.
 6. **Route**: human-triggered confirm endpoint that discloses target host +
@@ -64,10 +70,16 @@ ADR-0017 evidence, and surface it inertly — with no token/URL/payload leakage.
    absent → 409 with no network call; archived → 409.
 7. **Console**: inert typed result + provider label + timing; confirm gate with
    disclosure; no token/URL/payload shown; no write/execute control.
-8. **Audit**: redacted fetch event (provider kind, typed result, timing); no
-   token/URL/payload/identity.
+8. **Audit/redaction**: redacted fetch event (provider kind, typed result,
+   timing); no token/URL/payload/identity. Error and timeout messages must also
+   pass through redaction before storage/display; tests must prove no
+   Authorization header value or token-bearing URL leaks.
 9. **Contract** + **CHANGELOG**.
-10. **Tests** mapped to ADR-0019-b acceptance conditions §11 (injected `fetchFn`,
+   Contract/handoff text must tell operators to provide a least-privilege
+   read-only GitHub token, preferably fine-grained `checks:read` plus
+   `contents:read` only where required.
+10. **Tests** mapped to ADR-0019-b acceptance conditions, especially §13
+    (injected `fetchFn`,
     never real network).
 
 ## 4. Allowed view / modify range
@@ -83,12 +95,17 @@ ADR-0019-b "allowed file families". Anything outside → STOP and report.
 - No token in snapshot/audit/log/response/console; no raw API payload surfaced.
 - No non-HTTPS; no cross-host redirect; no arbitrary URL; no retry storm
   (>1 retry); no poller/webhook/scheduler/model trigger.
+- No insecure TLS bypass (`NODE_TLS_REJECT_UNAUTHORIZED=0`, insecure agent, or
+  equivalent).
+- No unsafe URL path insertion: owner/repo must fail closed outside
+  `^[A-Za-z0-9._-]+$`; ref must be one encoded path segment and must fail closed
+  when empty, containing `..`, or containing control characters.
 - No VCS write; no ADR-0007 workspace write; no widening beyond ADR-0019-b.
 - No product/architecture decisions (all fixed in the ADR).
 
 ## 6. Acceptance criteria
 
-The 12 ADR-0019-b acceptance conditions in the ADR.
+The 14 ADR-0019-b acceptance conditions in the ADR.
 
 ## 7. Verification commands (run and report all)
 
@@ -103,8 +120,10 @@ The 12 ADR-0019-b acceptance conditions in the ADR.
 - Changed files; per-subtask notes; suite pass counts + `npm test` total;
   typecheck/lint/diff-check;
 - Boundary evidence: single read endpoint; HTTPS-only + no-cross-host redirect;
-  token never leaks (snapshot/audit/response/console) with explicit proof;
-  injected fetch (no real network); ≤1 retry; mapping cases; confirm-gate;
+  standard TLS validation; URL path containment for owner/repo/ref; token never
+  leaks (snapshot/audit/response/console/logs/error-timeout surfaces) with
+  explicit proof; injected fetch (no real network); ≤1 retry; mapping cases;
+  confirm-gate;
 - Confirm no second provider/endpoint, no VCS write, no HTTP-supplied identity/
   token; not committed/pushed; dirty tree left for `REVIEW-2.14-2`.
 

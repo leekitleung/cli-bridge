@@ -3,24 +3,29 @@
 Status: SPLIT (RP-2.14). **ADR-0019-a** (read-only LOCAL git status, offline) —
         **ACCEPTED** & CLOSED (`REVIEW-ADR-0019-a` / `EX-2.14-1`, 2026-06-13).
         **ADR-0019-b** (remote GitHub check status + memory-only credentials) —
-        pre-acceptance design FIXED (RP-2.14-b), awaiting `REVIEW-ADR-0019-b`
-        (ADR-0007 §2 + credential review).
+        **ACCEPTED** (`REVIEW-ADR-0019-b` PASS, 2026-06-14) after RP-2.14-b /
+        RP-2.14-b-1 fixed the network, credential, TLS, redaction, and URL path
+        containment design.
 
-Date: 2026-06-13 (revised 2026-06-13: RP-2.14 a/b split)
+Date: 2026-06-13 (revised 2026-06-13: RP-2.14 a/b split; revised 2026-06-14:
+      ADR-0019-b accepted)
 Bundle: RP-2.12 Planning Bundle (ADR-0017 → ADR-0018 → ADR-0019)
 Depends on: ADR-0017 and ADR-0018 — both ACCEPTED and CLOSED
             (`EX-2.12-1` `cfce284`, `EX-2.13-1` `b87b622`)
 Blocks: none (last member of the bundle)
-Acceptance: NOT YET ACCEPTED. RP-2.14 split this ADR so the network/credential
+Acceptance: ADR-0019-b ACCEPTED by `REVIEW-ADR-0019-b` PASS (2026-06-14) after
+            RP-2.14-b-1 fixed the final URL path containment gap and the
+            credential/TLS/redaction recommendations. RP-2.14 split this ADR so
+            the network/credential
             boundary is isolated. **ADR-0019-a** reads ONLY local `git`
             read-only state (no network, no credentials, no VCS write) and
             surfaces it as sanitized context; its design is fixed in
             "RP-2.14 split decision" below and it needs only an ADR-0007 §2
             review (no credential review). **ADR-0019-b** (remote CI/GitHub
-            check status + memory-only credentials → typed pass/fail) remains
-            DEFERRED and keeps the full credential-handling prerequisite. The
-            §1-§5 umbrella text below describes the combined original intent and
-            now governs ADR-0019-b.
+            check status + memory-only credentials → typed pass/fail) is
+            accepted only for the fixed `EX-2.14-2` handoff below; implementation
+            still requires explicit human dispatch and returns to
+            `REVIEW-2.14-2`.
 
 ## RP-2.14 split decision (a/b) and ADR-0019-a fixed design
 
@@ -33,9 +38,10 @@ the heaviest boundary (outbound network + credentials) is isolated:
   review (no credential review). Design is fixed below; nothing is left to the
   execution agent.
 - **ADR-0019-b — remote CI/GitHub check status + memory-only credentials** →
-  typed pass/fail. Remains **PROPOSED — DEFERRED**; keeps the full
-  credential-handling prerequisite and the §1-§5 umbrella scope below. Must not
-  start before its own explicit acceptance + ADR-0007 §2 + credential review.
+  typed pass/fail. Now **ACCEPTED** (`REVIEW-ADR-0019-b` PASS, 2026-06-14) for
+  the fixed `EX-2.14-2` scope only; keeps the full credential-handling
+  prerequisite and the §1-§5 umbrella scope below. Must not start until an
+  explicit human dispatch of `EX-2.14-2`.
 
 Rationale: ADR-0019-b is what crosses the network/credential line; ADR-0019-a
 delivers a complete read-only chain (read → sanitized view → GET endpoint →
@@ -147,8 +153,14 @@ credential** boundary, so it carries the full ADR-0007 §2 prerequisite load plu
 a credential-handling review. RP-2.14-b fixes every previously-open blocker
 (provider scope, exact endpoint, identity mapping, credential supply, egress
 bounding, rate-limit/errors, mapping, redaction proof) so nothing is delegated to
-the execution agent. **It does not accept the ADR**; acceptance requires
-`REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) + explicit sign-off.
+the execution agent. **At authoring time, RP-2.14-b did not accept the ADR**;
+acceptance required `REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) +
+explicit sign-off.
+
+**Acceptance update (2026-06-14).** `REVIEW-ADR-0019-b` passed after
+RP-2.14-b-1 fixed URL path containment and the TLS/redaction/token-scope
+recommendations. ADR-0019-b is ACCEPTED for `EX-2.14-2` only; no code has been
+implemented by this acceptance, and execution still requires a human dispatch.
 
 **Reuses established patterns** (lowers novelty/risk): memory-only credentials
 mirror `InMemoryApiKeyStore` (never persisted/audited/echoed); outbound HTTPS +
@@ -180,12 +192,25 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
   only as the `Authorization` header to the configured host. Absent token →
   fail-closed `unknown` (409), no network call.
 - **Egress bounding — FIXED**: outbound request only to the operator-configured
-  `apiBaseUrl` host; **HTTPS only** (reject non-HTTPS config); cross-host
-  redirects are NOT followed (a 3xx to a different host → error); bounded
-  `AbortController` timeout (≤10s); response body size cap; URL is built solely
-  from operator config + sanitized `owner/repo/ref` (no arbitrary URL); a
-  single in-flight fetch per project (lock); an injectable `fetchFn` for tests
-  (never hits the real network in tests).
+  `apiBaseUrl` host; **HTTPS only** (reject non-HTTPS config); standard platform
+  certificate validation only — no insecure agent and no
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`; cross-host redirects are NOT followed (a 3xx
+  to a different host → error); bounded `AbortController` timeout (≤10s);
+  response body size cap; a single in-flight fetch per project (lock); an
+  injectable `fetchFn` for tests (never hits the real network in tests).
+- **URL path construction — FIXED (RP-2.14-b-1 containment rule)**: request URL
+  construction accepts only the operator-configured `{ apiBaseUrl, owner, repo }`
+  plus the local branch `ref`; no full request URL or endpoint URL is ever
+  accepted from HTTP, storage, model output, or operator config beyond the
+  configured `apiBaseUrl`. `owner` and `repo` MUST match
+  `^[A-Za-z0-9._-]+$`; otherwise fail closed with `409` and make no request.
+  `ref` MUST be non-empty, rejected on any control character,
+  rejected if it contains `..`, and inserted into the path only as a single
+  `encodeURIComponent(ref)` segment. The final URL MUST be produced by joining
+  fixed path segments under `apiBaseUrl` as
+  `/repos/{owner}/{repo}/commits/{encodedRef}/check-runs`; encoded path segments
+  must not change the configured host, scheme, or path boundaries. Any violation
+  is a containment failure (`409`, no network call).
 - **Rate-limit / errors — FIXED**: at most **one** retry on transient 5xx/network
   error (no exponential storm); 401/403/404/422 → non-retryable; 429 → no retry;
   any of timeout / 4xx / 5xx-after-retry / rate-limit / parse error → typed
@@ -205,6 +230,15 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
   `VerificationRunRecord` — `result`, `commandLabel` = `"github-checks"`,
   `recordedAt`, timing, flags only. No raw payload, no token, no URL, no
   branch/owner/repo/ref, no `sha`.
+- **Error and audit redaction — FIXED (RP-2.14-b-1)**: every error, timeout,
+  thrown exception, audit event, response DTO, and console string passes through
+  the existing redaction path before storage or display. Tests must assert no
+  `Authorization` header value and no token-bearing URL can appear in snapshot,
+  audit, logs, route responses, or console state.
+- **Credential scope handoff — FIXED (RP-2.14-b-1)**: operator documentation and
+  handoff text MUST require a least-privilege read-only GitHub token, preferably
+  fine-grained `checks:read` plus `contents:read` only when needed by the GitHub
+  API/provider configuration. Wider write scopes are not authorized by this ADR.
 - **No VCS write — FIXED**: read-only GET only; ADR-0007 line held.
 
 ### ADR-0007 §2 + credential prerequisites (positions)
@@ -212,10 +246,10 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
 | Prerequisite | ADR-0019-b position |
 |---|---|
 | Reversibility | Read-only remote read; no remote/local mutation. |
-| Containment | One read endpoint, operator-config host only, HTTPS-only, no cross-host redirect, timeout + body cap, single-run lock, injectable fetch. |
+| Containment | One read endpoint, operator-config host only, HTTPS-only with standard certificate validation, no cross-host redirect, timeout + body cap, single-run lock, injectable fetch, strict owner/repo whitelist, encoded single-segment ref, no arbitrary/full URL input. |
 | Human authority | Human-triggered confirm with host + credential disclosure; no auto trigger. |
 | No autonomy | No poller/webhook/scheduler/model trigger. |
-| Audit completeness | Redacted fetch audit (provider kind, typed result, timing); no token/URL/payload/identity. |
+| Audit completeness | Redacted fetch audit and redacted error/timeout surfaces (provider kind, typed result, timing); no Authorization value, token-bearing URL, token, raw URL, payload, or identity. |
 | Fail-closed | Missing config/token, detached ref, timeout, 4xx/5xx, rate-limit, parse error → `errored`/`unknown`/409; never false pass. |
 | Opt-in & revocable | `githubChecksEnabled` default off; removing config/token/flag restores prior flow. |
 | Credential handling | Memory-only, operator-set, never HTTP/persisted/audited/echoed; redaction asserts no token leak anywhere. |
@@ -228,8 +262,10 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
 3. Credential memory-only, operator-set, never via HTTP; absent → 409/no call;
    token never in snapshot/audit/log/response/console (tests assert).
 4. Egress: HTTPS-only to configured host; no cross-host redirect; timeout +
-   body cap; URL built from config + sanitized identity; injectable fetch in
-   tests (no real network).
+   body cap; standard certificate validation only (no insecure agent or
+   `NODE_TLS_REJECT_UNAUTHORIZED=0`); URL built from operator `apiBaseUrl`,
+   strict-whitelisted `owner`/`repo`, and single-segment encoded `ref`;
+   injectable fetch in tests (no real network).
 5. Rate-limit/errors: ≤1 retry; 429/4xx no false pass; all error paths →
    `errored`/`unknown`.
 6. Status mapping exactly as fixed above; no free-text inference.
@@ -238,13 +274,24 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
    raw payload/token/URL/identity/sha.
 9. Redacted audit; no token/URL/payload/identity.
 10. Opt-in default off; revocable; backward compatible (existing suites pass).
-11. Tests cover: no-config 409/no-call, no-token 409/no-call, detached-ref
+11. URL path containment: `owner`/`repo` match only `^[A-Za-z0-9._-]+$`;
+    invalid values → 409/no-call; `ref` is non-empty, rejects control characters
+    and `..`, and is inserted only as `encodeURIComponent(ref)`; final URL is
+    assembled from fixed path segments under configured `apiBaseUrl`, and encoded
+    segments cannot alter host/scheme/path boundaries.
+12. Redaction and token scope: error/timeout strings are redacted before any
+    storage/display; tests assert no Authorization header value or token-bearing
+    URL leaks; operator handoff documents least-privilege read-only token scope
+    (fine-grained `checks:read`/`contents:read` where applicable).
+13. Tests cover: no-config 409/no-call, no-token 409/no-call, detached-ref
     409/no-call, each mapping case via injected fetch, HTTPS-only + no-cross-host
-    redirect, ≤1-retry, token-never-leaks (snapshot/audit/response/console),
-    confirm-gate + GET/console no-write, no real network.
-12. No VCS write; ADR-0007 line held.
+    redirect + standard TLS only, owner/repo/ref URL containment, ≤1-retry,
+    token-never-leaks including error/timeout surfaces
+    (snapshot/audit/response/console/logs), confirm-gate + GET/console no-write,
+    no real network.
+14. No VCS write; ADR-0007 line held.
 
-### ADR-0019-b allowed file families (for `EX-2.14-2`, finalized at acceptance)
+### ADR-0019-b allowed file families (accepted scope for `EX-2.14-2`)
 
 - `packages/shared/src/types.ts` — `GithubChecksView`/result DTO (reusing
   ADR-0017 evidence), `Project.githubChecksEnabled?`, provider-config types.
@@ -252,7 +299,9 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
   owner/repo/ref/url/host/token in any HTTP body.
 - A new provider client module under `apps/local-server/src/verification/`
   (e.g. `github-checks-provider.ts`) — injectable `fetchFn`, HTTPS-only,
-  timeout/cap, no-cross-host redirect, single-run lock, mapping.
+  standard TLS certificate validation, strict owner/repo whitelist,
+  `encodeURIComponent(ref)` single-segment path construction, timeout/cap,
+  no-cross-host redirect, single-run lock, mapping.
 - A memory-only token store (mirror `InMemoryApiKeyStore`); operator/runtime
   injection wiring in `createBridgeRuntime`.
 - `apps/local-server/src/routes/bridge-api.ts` / `project-console.ts` — confirm
@@ -261,7 +310,8 @@ bearer auth + `AbortController` timeout + 4xx/5xx classification mirror
   `CHANGELOG.md`, relevant `tests/*.mjs`.
 
 The execution handoff is `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md`
-(authored, **NOT dispatchable** until `REVIEW-ADR-0019-b` accepts).
+(authored and updated by RP-2.14-b-1, **dispatchable only on explicit human
+trigger** after this ADR acceptance).
 
 ---
 
@@ -287,7 +337,9 @@ ADR-0007 §2 plus a dedicated credential-handling story.
 
 ### 0. Decision status
 
-**PROPOSED — DEFERRED.** No code, and no acceptance, until ALL of:
+**SPLIT / ACCEPTED BY SLICE.** ADR-0019-a is accepted and closed. ADR-0019-b is
+accepted for `EX-2.14-2` after `REVIEW-ADR-0019-b` PASS (2026-06-14). Before
+this acceptance, no code and no acceptance were allowed until ALL of:
 
 1. ADR-0017 accepted and `EX-2.12-1` closed (typed sink exists);
 2. ADR-0018 accepted and `EX-2.13-1` closed (execution/result-mapping patterns
@@ -296,8 +348,10 @@ ADR-0007 §2 plus a dedicated credential-handling story.
    ADR-0007 §2 prerequisite review **and** an approved credential-handling
    design.
 
-Implementation, if accepted, proceeds in `EX-2.14-1` and returns to
-`REVIEW-2.14-1`. This is the final member of the bundle.
+ADR-0019-a implementation proceeded in `EX-2.14-1` and closed through
+`REVIEW-2.14-1`. ADR-0019-b implementation, when explicitly dispatched,
+proceeds in `EX-2.14-2` and returns to `REVIEW-2.14-2`. This is the final member
+of the bundle.
 
 ### 1. What is proposed (read-only status integration)
 
@@ -371,25 +425,33 @@ Out of scope:
 | Opt-in and revocable | Per-project opt-in, off by default, disableable; offline flow (ADR-0017/0018) remains fully functional when off. |
 | **Credential handling (addendum)** | Tokens supplied per request, **memory-only**, never persisted to store/disk/log/audit, never echoed; scoped to read-only status; documented redaction. |
 
-### 5. Pre-acceptance blockers the next planning review must resolve
+### 5. Pre-acceptance blockers resolved by RP-2.14 / RP-2.14-b
 
-These are not execution-agent design choices. ADR-0019 must not be promoted to
-ACCEPTED until a planning/review batch fixes each item below and carries the
-chosen answers into the `EX-2.14-1` handoff.
+These were not execution-agent design choices. ADR-0019 was not promoted until
+planning/review batches fixed each item below and carried the chosen answers into
+the slice handoffs (`EX-2.14-1` for local git status, `EX-2.14-2` for remote
+GitHub checks).
 
 - **Provider scope**: `git` local read only, or also remote CI/GitHub? If
   GitHub, which read-only endpoints (checks/status), and minimal token scope.
-  This must be resolved before acceptance; otherwise EX-2.14-1 is not bounded.
+  Resolved by the a/b split and RP-2.14-b: ADR-0019-a is local git only;
+  ADR-0019-b is GitHub-compatible check-runs only.
 - **Credential supply**: how a read-only token is provided per request and
   proven non-persistent; behavior when absent (fail-closed `unknown`). This
-  must be resolved before acceptance.
+  Resolved by RP-2.14-b: memory-only operator/runtime token store; absent token
+  fails closed with no request.
 - **Identity mapping**: how a project maps to repo/branch/commit for the status
   query, without trusting arbitrary user-supplied URLs unsafely.
+  Resolved by RP-2.14-b / RP-2.14-b-1: operator-configured `apiBaseUrl`/owner/
+  repo, local branch ref, strict owner/repo whitelist, encoded ref path segment.
 - **Rate limiting / errors**: backoff, no retry storm, timeout, fail-closed.
+  Resolved by RP-2.14-b.
 - **Redaction proof**: tests that tokens/URLs/raw payloads never reach store,
   audit, log, or console. This must be resolved before acceptance.
+  Resolved by RP-2.14-b / RP-2.14-b-1 acceptance conditions.
 - **Boundary confirmation**: read-only client cannot be extended into a write
   path (commit/push/PR) within this slice.
+  Resolved by ADR-0019-b fixed endpoint and no-VCS-write acceptance condition.
 
 ## Alternatives Considered
 
@@ -490,9 +552,8 @@ outside it requires STOP-and-report.
 
 SPLIT (RP-2.14). **ADR-0019-a** (read-only local git status) is **ACCEPTED** and
 CLOSED (`REVIEW-ADR-0019-a` / `EX-2.14-1` / `REVIEW-2.14-1`, 2026-06-13).
-**ADR-0019-b** (remote GitHub check status + memory-only credentials) has a
-**fixed pre-acceptance design** (RP-2.14-b, see section above) and awaits
-`REVIEW-ADR-0019-b` (ADR-0007 §2 + credential review) + explicit acceptance;
-only then is `CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md` dispatchable
-as `EX-2.14-2`, returning to `REVIEW-2.14-2`. It must never be merged into the
-closed ADR-0019-a batch.
+**ADR-0019-b** (remote GitHub check status + memory-only credentials) is
+**ACCEPTED** (`REVIEW-ADR-0019-b` PASS, 2026-06-14) for `EX-2.14-2` only.
+`CLI-BRIDGE-v2.14b-GITHUB-CHECKS-PROVIDER-HANDOFF.md` is dispatchable only on an
+explicit human trigger; execution returns to `REVIEW-2.14-2`. It must never be
+merged into the closed ADR-0019-a batch.
