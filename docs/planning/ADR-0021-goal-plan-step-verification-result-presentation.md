@@ -1,11 +1,12 @@
 # ADR-0021: Goal Plan-Step Verification-Result Presentation (v2.16 planning)
 
-Status: PROPOSED — awaiting explicit acceptance
+Status: ACCEPTED
 
 Date: 2026-06-14
 Depends on: ADR-0017 (typed model), ADR-0020 (run-history presentation) — CLOSED
-Acceptance: NOT YET ACCEPTED. Strictly read-only, console-only presentation
-            increment that surfaces the **already-exposed** per-step typed
+Acceptance: ACCEPTED (2026-06-14) by `REVIEW-ADR-0021` after RP-2.16-a fixed the
+            deterministic multi-record selection + enum fail-closed rule.
+            Strictly read-only, console-only presentation that surfaces the **already-exposed** per-step typed
             verification `result` in the goal view's plan-step table, by joining
             existing `/verification.records[].stepId` onto the existing plan
             steps. No new endpoint, no new fetch, no execution, no network, no
@@ -42,8 +43,10 @@ list from ADR-0020.
 
 ### 0. Decision status
 
-**PROPOSED.** No code until explicit acceptance + an `EX-2.16-1` handoff. This is
-a console-only read-only change consuming existing cached fields.
+**ACCEPTED** (2026-06-14, `REVIEW-ADR-0021`). No code until an `EX-2.16-1`
+handoff is authored; implementation proceeds in `EX-2.16-1` and returns to
+`REVIEW-2.16-1`. This is a console-only read-only change consuming an existing
+cached response field.
 
 ### 1. What is permitted
 
@@ -215,6 +218,6 @@ Otherwise STOP and report.
 
 ## Status / Next
 
-PROPOSED. On acceptance, author
-`CLI-BRIDGE-v2.16-GOAL-STEP-VERIFICATION-HANDOFF.md` for `EX-2.16-1`, then return
-to `REVIEW-2.16-1`.
+ACCEPTED (2026-06-14). Handoff `CLI-BRIDGE-v2.16-GOAL-STEP-VERIFICATION-HANDOFF.md`
+authored and dispatchable on a human trigger for `EX-2.16-1`; implementation
+returns to `REVIEW-2.16-1` before closeout.
