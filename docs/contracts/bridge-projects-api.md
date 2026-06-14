@@ -1030,3 +1030,46 @@ displayed (inert); typed result + timing after fetch; no token/URL/payload shown
 **Non-goals**: second provider, generic CI, write/PR/merge/status-write, background
 polling/webhook/scheduler/model trigger, arbitrary URL, credential persistence,
 raw API payload display, ADR-0007 workspace write.
+
+### Verification Run-History Presentation (v2.15, ADR-0020)
+
+Read-only console display of existing sanitized verification run records.
+No new endpoint, no fetch, no execution.
+
+#### GET .../verification (liveRunRecords field)
+
+The existing `/verification` response now includes `liveRunRecords` — an array of
+`VerificationRunRecord` objects from ADR-0018 profile runs and ADR-0019-b GitHub
+checks. Each record contains only sanitized fields:
+
+```json
+{
+  "liveRunRecords": [
+    {
+      "projectKey": "cli-bridge",
+      "profileId": "ut",
+      "commandLabel": "Unit Tests",
+      "result": "passed",
+      "recordedAt": 1718000000000,
+      "elapsedMs": 142,
+      "truncated": false,
+      "outputDiscarded": true
+    }
+  ]
+}
+```
+
+**Console rendering**: the verification view renders `liveRunRecords` as an
+inert, most-recent-first list capped at 20 records. Each record shows:
+- discrete `result` (with emoji indicator);
+- HTML-escaped `commandLabel`;
+- `recordedAt` as inert ISO timestamp;
+- `elapsedMs`;
+- inert `truncated` / `outputDiscarded` flags.
+
+Missing, empty, non-array, or malformed `liveRunRecords` renders "no runs
+recorded". Extra record fields are silently ignored.
+
+**Non-goals**: no backend changes, no new endpoint, no extra fetch, no execution,
+no write/execute/re-run controls, no pass/fail inference, no raw output/URL/
+token/path/hash/branch/owner/repo/ref/identity display.

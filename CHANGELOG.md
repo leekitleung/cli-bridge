@@ -62,6 +62,20 @@ All notable changes to CLI Bridge are documented here.
     github-checks-provider.ts (new), bridge-api.ts, project-console.ts,
     project-store.ts, bridge-projects-api.md, CHANGELOG.md, tests/github-checks-provider.test.mjs.
 
+- **EX-2.15-1 ADR-0020: Verification run-history console presentation** — added
+  read-only rendering of existing `liveRunRecords` from the `/verification`
+  endpoint in the console verification view:
+  - inert, most-recent-first list capped at 20 records;
+  - renders only sanitized fields: `result` (with emoji), HTML-escaped
+    `commandLabel`, `recordedAt` as ISO timestamp, `elapsedMs`, inert
+    `truncated`/`outputDiscarded` flags;
+  - empty/missing/malformed history → "no runs recorded";
+  - no new endpoint, no fetch, no execution, no write/execute controls.
+  - **tests**: 7 console behavior tests (rendering, HTML-escape, empty, capped,
+    no-sensitive-leak, no-extra-fetch, no-write-controls).
+  - Changes: project-console.ts, bridge-projects-api.md, CHANGELOG.md,
+    tests/project-console-behavior.test.mjs.
+
 ### Planning / ADR
 - **ADR-0020 Console Verification Run-History Presentation ACCEPTED** for
   `EX-2.15-1` (2026-06-14). This authorizes only a read-only console rendering

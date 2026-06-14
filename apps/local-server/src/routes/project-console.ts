@@ -795,6 +795,40 @@ function renderSectionView() {
     html += '</div>';
     html += '</div>';
 
+    html += '<div id="history-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
+    html += '<div style="font-size:12px;font-weight:500;">Verification History</div>';
+    (function() {
+      var recs = (store.cache.verification && Array.isArray(store.cache.verification.liveRunRecords)) ? store.cache.verification.liveRunRecords : null;
+      if (recs && recs.length) {
+        html += '<div style="font-size:11px;margin-top:6px;">';
+        var sorted = [].concat(recs).sort(function(a, b) { return (b.recordedAt || 0) - (a.recordedAt || 0); }).slice(0, 20);
+        sorted.forEach(function(r) {
+          var e = r.result === 'passed' ? '\u2713' : r.result === 'failed' ? '\u2717' : r.result === 'errored' ? '\u26A0' : r.result === 'skipped' ? '\u25CB' : '?';
+          var t = r.recordedAt ? new Date(r.recordedAt).toISOString() : 'unknown';
+          var l = escapeHtml(r.commandLabel || 'unknown');
+          html += '<div style="padding:3px 0;border-bottom:1px solid var(--border);">';
+          html += '<span style="margin-right:6px;">' + e + '</span>';
+          html += '<span>' + escapeHtml(r.result || 'unknown') + '</span>';
+          html += '<span style="color:var(--muted);margin:0 6px;">\u2014</span>';
+          html += '<span>' + l + '</span>';
+          html += '<span style="color:var(--muted);margin:0 6px;">\u00B7</span>';
+          html += '<span style="font-size:10px;color:var(--muted);">' + t + '</span>';
+          html += '<span style="color:var(--muted);margin:0 6px;">\u00B7</span>';
+          html += '<span style="font-size:10px;color:var(--muted);">' + (r.elapsedMs != null ? r.elapsedMs : '?') + 'ms</span>';
+          if (r.truncated) html += '<span style="font-size:10px;color:#f59e0b;margin-left:4px;">[truncated]</span>';
+          if (r.outputDiscarded) html += '<span style="font-size:10px;color:#22c55e;margin-left:4px;">[discarded]</span>';
+          html += '</div>';
+        });
+        if (recs.length > 20) {
+          html += '<div style="font-size:10px;color:var(--muted);margin-top:4px;">showing latest 20 of ' + recs.length + ' records</div>';
+        }
+        html += '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:var(--muted);margin-top:6px;"><span class="unavailable">no records</span></div>';
+      }
+    })();
+    html += '</div>';
+
     const verView = store.cache.verification;
     html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {

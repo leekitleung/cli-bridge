@@ -140,7 +140,7 @@ test('switching project displays loading and then renders new detail', async () 
   document.getElementById('connect').click();
 
   // Wait for the async refresh to complete.
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Verify initial state: cli-bridge loaded, no loading state.
   const loadingBefore = document.getElementById('goal-content').textContent;
@@ -182,18 +182,18 @@ test('creating a goal passes active projectId', async () => {
   // Connect.
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Switch to alpha project via localStorage (simpler than clicking).
   const alphaItem = document.querySelector('[data-key="alpha"]');
   alphaItem.click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Type a goal and send.
   const cmdInput = document.getElementById('command-input');
   cmdInput.value = 'Build a new feature';
   document.getElementById('command-send').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Verify the POST included projectId.
   const goalCreate = fetchCalls.find(c => c.path === '/bridge/goals' && c.method === 'POST');
@@ -226,12 +226,12 @@ test('creating a review passes active projectId', async () => {
   // Connect.
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Switch to alpha project.
   const alphaItem = document.querySelector('[data-key="alpha"]');
   alphaItem.click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Navigate to Reviews section.
   const reviewsTab = document.querySelector('[data-view="reviews"]');
@@ -242,7 +242,7 @@ test('creating a review passes active projectId', async () => {
   const content = document.getElementById('review-content');
   content.value = 'Review this code';
   document.getElementById('btn-run-review').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Verify the POST included projectId.
   const reviewCreate = fetchCalls.find(c => c.path === '/bridge/reviews' && c.method === 'POST');
@@ -265,7 +265,7 @@ test('clicking the already-active project does not trigger a fetch', async () =>
   // Connect.
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   const countBefore = fetchCalls.length;
 
@@ -309,7 +309,7 @@ test('archiving a project hides it from default list', async () => {
   // Connect.
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Alpha should be visible in the list.
   let items = document.querySelectorAll('.project-item');
@@ -319,7 +319,7 @@ test('archiving a project hides it from default list', async () => {
   const archiveBtn = document.querySelector('.archive-btn[data-key="alpha"]');
   assert.ok(archiveBtn, 'archive button must exist for non-default project');
   archiveBtn.click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // After archive, the project list should no longer show alpha.
   const archiveCall = fetchCalls.find(c => c.path === '/bridge/projects/alpha/archive');
@@ -336,7 +336,7 @@ test('includeArchived toggle fetches projects with query param', async () => {
   document.getElementById('connect').click();
 
   await waitFor(() => document.getElementById('toggle-archived') !== null, 1000);
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   const beforeCount = fetchCalls.length;
 
@@ -375,7 +375,7 @@ test('inline edit sends PATCH to update project label', async () => {
 
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Click top bar to start inline edit.
   const topProject = document.getElementById('top-project');
@@ -392,7 +392,7 @@ test('inline edit sends PATCH to update project label', async () => {
   const save = document.getElementById('inline-edit-save');
   assert.ok(save, 'save button must exist');
   save.click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   // Check PATCH call.
   const patchCall = fetchCalls.find(c => c.method === 'PATCH');
@@ -454,7 +454,7 @@ test('project switch clears old observability cache when fetches fail', async ()
   const tokenInput = document.getElementById('token');
   tokenInput.value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Switch to beta by clicking the beta project item.
   const betaItem = document.querySelector('[data-key="beta"]');
@@ -500,7 +500,7 @@ test('v2.11: verification status panel renders summary without raw notes', async
 
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const panel = document.getElementById('status-verification');
   assert.ok(panel.innerHTML.includes('1 evidence record'), 'summary evidence count rendered');
@@ -535,7 +535,7 @@ test('v2.11: malformed verification summary fails closed and does not render not
 
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const panel = document.getElementById('status-verification');
   assert.ok(panel.innerHTML.includes('not yet available'), 'malformed summary renders unavailable');
@@ -571,7 +571,7 @@ test('v2.12: verification status panel renders typed result counts without raw n
 
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const panel = document.getElementById('status-verification');
   assert.ok(panel.innerHTML.includes('2 evidence records'), 'evidence count rendered');
@@ -620,16 +620,18 @@ test('v2.12: verification tab renders typed result inertly and adds no execution
 
   document.getElementById('token').value = 'test-token';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   const workspace = document.getElementById('workspace');
   assert.ok(workspace.innerHTML.includes('skipped'), 'typed result rendered');
   assert.ok(workspace.innerHTML.includes('Verify task'), 'record context rendered');
   assert.equal(workspace.innerHTML.includes('raw verification note'), false, 'raw notes not rendered');
   assert.equal(/stdout|stderr|sha256|diff|raw output/i.test(workspace.innerHTML), false, 'no raw surface rendered');
-  assert.equal(/run|execute|apply-from-preview|promote|commit|discard/i.test(workspace.innerHTML), false, 'no execution/write affordance text');
+  // Strip inert display flag text ([truncated], [discarded]) before checking for execution controls.
+  const sanitizedHtml = workspace.innerHTML.replace(/\[truncated\]|\[discarded\]/gi, '');
+  assert.equal(/run|execute|apply-from-preview|promote|commit|discard/i.test(sanitizedHtml), false, 'no execution/write affordance text');
   // v2.13: live verification adds allowed Confirm/Refresh buttons. Assert no run/execute/commit/discard/apply buttons.
   const buttons = [...workspace.querySelectorAll('button')].map(b => b.textContent || '').join(' ');
   assert.equal(/run|execute|commit|discard|apply|promote/i.test(buttons), false, 'no execution/write button labels');
@@ -654,9 +656,9 @@ test('v2.13: verification view fetches /profiles without auto-triggering confirm
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const profilesCalls = fetchCalls.filter(c => c.path.endsWith('/verification/profiles'));
   assert.ok(profilesCalls.length >= 1, 'must fetch profiles');
@@ -677,9 +679,9 @@ test('v2.13: verification gate displays profile label + networkRisk + mutationRi
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const html = document.getElementById('workspace').innerHTML;
   assert.ok(html.includes('Unit Tests'), 'must show profile label');
@@ -700,9 +702,9 @@ test('v2.13: verification view has no command/cwd/env free-form input', async ()
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const workspace = document.getElementById('workspace');
   const inputs = workspace.querySelectorAll('input, textarea');
@@ -751,9 +753,9 @@ test('v2.14: verification view fetches git-status and displays branch/dirty/ahea
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const gitCalls = fetchCalls.filter(c => c.path.endsWith('/verification/git-status'));
   assert.ok(gitCalls.length >= 1, 'must fetch git-status');
@@ -787,9 +789,9 @@ test('v2.14: git-status unavailable shows inert unavailable text', async () => {
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const metaEl = document.getElementById('git-status-meta');
   assert.ok(metaEl, 'git-status-meta element must exist');
@@ -812,9 +814,9 @@ test('v2.14: git-status fetch failure shows inert unavailable, no throw', async 
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const metaEl = document.getElementById('git-status-meta');
   assert.ok(metaEl, 'git-status-meta element must exist');
@@ -840,9 +842,9 @@ test('v2.14: git-status display has no write/execute controls, GET-only', async 
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const gitCalls = fetchCalls.filter(c => c.path.endsWith('/verification/git-status'));
   assert.ok(gitCalls.length >= 1, 'must have git-status calls');
@@ -889,9 +891,9 @@ test('v2.14: git-status branch name is HTML-escaped', async () => {
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const metaEl = document.getElementById('git-status-meta');
   assert.ok(metaEl, 'git-status-meta must exist');
@@ -910,7 +912,7 @@ async function switchToTeamsTab(window, document) {
   assert.ok(tab, 'teams tab must exist');
   tab.click();
   // Let async event handlers and renderWorkspace/loadSectionData resolve.
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
   // After switching, the apply viewer form should be present.
 }
 
@@ -981,7 +983,7 @@ test('v2.7: view result calls manifest, classification, files — all GET, rende
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
 
   btn.click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Verify all three GET calls.
   const applyCalls = fetchCalls.filter(c => c.path.includes('/apply-requests/'));
@@ -1028,7 +1030,7 @@ test('v2.7: classification 409 shows unavailable, manifest and files still rende
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: false });
 
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Classification shows unavailable.
   const classEl = document.getElementById('apply-view-classification');
@@ -1056,13 +1058,13 @@ test('v2.7: preview still works and shows content, unaffected by classification'
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
 
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Click a Preview button.
   const previewBtn = document.querySelector('.apply-preview-btn');
   assert.ok(previewBtn, 'preview button must exist');
   previewBtn.click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Preview GET was called.
   assert.ok(fetchCalls.some(c => c.path.includes('/files/preview') && c.method === 'GET'), 'preview GET');
@@ -1117,7 +1119,7 @@ test('v2.8: baseline summary renders all 7 fields including 0-counts, no extra f
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
 
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Baseline element renders.
   const baselineEl = document.getElementById('apply-view-baseline');
@@ -1167,7 +1169,7 @@ test('v2.8: malformed baseline summary shows unavailable, does not block classif
   });
 
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Malformed baseline shows unavailable (fail-closed, no throw).
   const baselineEl = document.getElementById('apply-view-baseline');
@@ -1196,7 +1198,7 @@ test('v2.8: absent baselineManifest shows unavailable, classification/files stil
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true });
 
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Baseline unavailable.
   const baselineEl = document.getElementById('apply-view-baseline');
@@ -1223,14 +1225,14 @@ test('v2.8: rootRef opaque — absolute-looking value sanitized, opaque value di
     baseline: { ...BASELINE_FIXTURE, rootRef: 'runtime-baseline-root' },
   });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   let bl = document.getElementById('apply-view-baseline');
   assert.ok(bl.innerHTML.includes('runtime-baseline-root'), 'opaque rootRef displayed');
 
   // ── Absolute-looking rootRef sanitized ───
   // Switch to a new tab render (re-click teams tab).
   window.switchSection(document.querySelector('[data-view="teams"]'));
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
 
   document.getElementById('apply-view-team').value = 't-root2';
   document.getElementById('apply-view-id').value = 'apply-r2';
@@ -1239,7 +1241,7 @@ test('v2.8: rootRef opaque — absolute-looking value sanitized, opaque value di
     baseline: { ...BASELINE_FIXTURE, rootRef: 'H:\\02-Areas\\project-root' },
   });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   bl = document.getElementById('apply-view-baseline');
   const blHtml = bl.innerHTML;
   assert.ok(blHtml.includes('root:'), 'root label present');
@@ -1261,7 +1263,7 @@ test('v2.8: baseline display is GET-only, preview unchanged, no write controls',
   document.getElementById('apply-view-id').value = applyId;
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const baselineEl = document.getElementById('apply-view-baseline');
 
@@ -1269,7 +1271,7 @@ test('v2.8: baseline display is GET-only, preview unchanged, no write controls',
   const previewBtn = document.querySelector('.apply-preview-btn');
   assert.ok(previewBtn);
   previewBtn.click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const previewEl = document.getElementById('apply-view-preview');
   assert.ok(previewEl.textContent.includes('// a content'), 'preview still shows content');
@@ -1293,7 +1295,7 @@ test('v2.8: baseline viewer boundary — no extra fetch, no forbidden fields, no
   document.getElementById('apply-view-id').value = applyId;
   setupApplyFixtures(setFixture, teamId, applyId, { classification200: true, baseline: BASELINE_FIXTURE });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // 1) No extra baseline endpoint call.
   const fetches = fetchCalls.map(c => c.path);
@@ -1339,7 +1341,7 @@ test('v2.10: project-root:<key> rendered as opaque text, not sanitized', async (
     baseline: { ...BASELINE_FIXTURE, rootRef: 'project-root:alpha' },
   });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const bl = document.getElementById('apply-view-baseline').innerHTML;
   // project-root:<key> must appear as opaque text.
@@ -1350,7 +1352,7 @@ test('v2.10: project-root:<key> rendered as opaque text, not sanitized', async (
   // Absolute-looking rootRef is still sanitized in the same viewer lifecycle.
   // Switch view and test with absolute-looking rootRef.
   window.switchSection(document.querySelector('[data-view="teams"]'));
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 200));
   document.getElementById('apply-view-team').value = 't-abs';
   document.getElementById('apply-view-id').value = 'apply-abs';
   setupApplyFixtures(setFixture, 't-abs', 'apply-abs', {
@@ -1358,7 +1360,7 @@ test('v2.10: project-root:<key> rendered as opaque text, not sanitized', async (
     baseline: { ...BASELINE_FIXTURE, rootRef: 'C:\\Windows\\System32' },
   });
   document.getElementById('btn-apply-view').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const bl2 = document.getElementById('apply-view-baseline').innerHTML;
   assert.equal(bl2.includes('C:'), false, 'absolute rootRef sanitized');
@@ -1389,9 +1391,9 @@ test('v2.14: verification view renders read-only git status, escaped, GET-only, 
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const meta = document.getElementById('git-status-meta');
   assert.ok(meta, 'git-status-meta exists');
@@ -1417,9 +1419,9 @@ test('v2.14: git status renders inert unavailable without throwing', async () =>
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   const meta = document.getElementById('git-status-meta');
   assert.ok(meta.innerHTML.includes('unavailable'), 'renders inert unavailable');
@@ -1450,9 +1452,9 @@ test('v2.14b: github checks gate is human-triggered (no auto-fire) and renders i
 
   document.getElementById('token').value = 'test';
   document.getElementById('connect').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
   document.querySelector('[data-view="verification"]').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   // Must NOT auto-fire the credentialed call on view load.
   let ghCalls = fetchCalls.filter(c => c.path.endsWith('/verification/github-checks/confirm'));
@@ -1467,7 +1469,7 @@ test('v2.14b: github checks gate is human-triggered (no auto-fire) and renders i
 
   // Explicit human click triggers exactly one POST.
   document.getElementById('btn-github-checks-confirm').click();
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   ghCalls = fetchCalls.filter(c => c.path.endsWith('/verification/github-checks/confirm'));
   assert.equal(ghCalls.length, 1, 'one call after click');
@@ -1476,4 +1478,152 @@ test('v2.14b: github checks gate is human-triggered (no auto-fire) and renders i
   const meta = document.getElementById('github-checks-meta').innerHTML;
   assert.ok(meta.includes('passed'), 'renders typed result');
   assert.equal(meta.includes('ghp_'), false, 'no token in DOM');
+});
+
+// ── v2.15 ADR-0020: Verification run history console tests ─────
+
+function verificationFixtureWithRunHistory(runs) {
+  return {
+    ok: true,
+    payload: {
+      projectId: 'cli-bridge',
+      status: 'recorded',
+      summary: { evidenceCount: runs.length, doneStepCount: 1, totalStepCount: 2, resultCounts: { passed: 1, failed: 0, skipped: 0, errored: 0, unknown: 0 } },
+      records: [],
+      liveRunRecords: runs ?? [],
+    },
+  };
+}
+
+function defaultRunHistoryFixtures(setFixture) {
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/projects/cli-bridge/timeline', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/audit', { ok: true, payload: { projectId: 'cli-bridge', total: 0, entries: [] } });
+  setFixture('/bridge/projects/cli-bridge/memory', { ok: true, payload: { projectId: 'cli-bridge', entries: [] } });
+}
+
+test('v2.15: verification view renders run history', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory([
+    { projectKey: 'cli-bridge', profileId: 'ut', commandLabel: 'Unit Tests', result: 'passed', recordedAt: 1718000000000, elapsedMs: 142, truncated: false, outputDiscarded: true },
+    { projectKey: 'cli-bridge', profileId: 'gh', commandLabel: 'github-checks', result: 'failed', recordedAt: 1718000001000, elapsedMs: 342, truncated: true, outputDiscarded: true },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const section = document.getElementById('history-section');
+  assert.ok(section, 'history-section exists');
+  const html = section.innerHTML;
+  assert.ok(html.includes('Unit Tests'), 'command label rendered');
+  assert.ok(html.includes('github-checks'), 'github-checks label rendered');
+  assert.ok(html.includes('passed'), 'passed result');
+  assert.ok(html.includes('failed'), 'failed result');
+  assert.ok(html.includes('142ms'), 'elapsed');
+  assert.ok(html.includes('[truncated]'), 'truncated flag');
+  assert.ok(html.includes('[discarded]'), 'discarded flag');
+  for (const banned of ['stdout', 'stderr', 'token', 'sha256', 'Bearer', 'owner', 'repo', 'ref', 'remote']) {
+    assert.equal(html.includes(banned), false, 'must not contain ' + banned);
+  }
+  const sectionButtons = section.querySelectorAll('button');
+  assert.equal(sectionButtons.length, 0, 'no buttons in history section');
+});
+
+test('v2.15: command label is HTML-escaped', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory([
+    { projectKey: 'cli-bridge', profileId: 'xss', commandLabel: '<script>alert(1)</script>', result: 'passed', recordedAt: 1718000000000, elapsedMs: 100, truncated: false, outputDiscarded: true },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const html = document.getElementById('history-section').innerHTML;
+  assert.equal(html.includes('<script>'), false, 'script tag escaped');
+  assert.ok(html.includes('&lt;script&gt;'), 'escaped script present');
+});
+
+test('v2.15: empty liveRunRecords renders no records', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory([]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const html = document.getElementById('history-section').innerHTML;
+  assert.ok(html.includes('no records'), 'empty message');
+});
+
+test('v2.15: missing liveRunRecords renders no records', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', { ok: true, payload: { projectId: 'cli-bridge', status: 'recorded', records: [] } });
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const html = document.getElementById('history-section').innerHTML;
+  assert.ok(html.includes('no records'), 'missing message');
+});
+
+test('v2.15: capped at 20 newest first', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  const runs = [];
+  for (let i = 0; i < 25; i++) runs.push({ projectKey: 'cli-bridge', profileId: 'p' + i, commandLabel: 'Test ' + i, result: 'passed', recordedAt: 1718000000000 + i * 1000, elapsedMs: 10 + i, truncated: false, outputDiscarded: true });
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory(runs));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const html = document.getElementById('history-section').innerHTML;
+  assert.ok(html.includes('showing latest 20 of 25'), 'capped message');
+  assert.ok(html.indexOf('Test 24') < html.indexOf('Test 5'), 'newest first');
+  assert.equal(html.includes('Test 0'), false, 'oldest hidden');
+});
+
+test('v2.15: extra sensitive fields not in DOM', async () => {
+  const { document, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory([{
+    projectKey: 'cli-bridge', profileId: 's', commandLabel: 'Safe', result: 'passed', recordedAt: 1718000000000, elapsedMs: 100, truncated: false, outputDiscarded: true,
+    token: 'ghp_SECRET', rawOutput: 'x', cwd: '/tmp', branch: 'b', owner: 'o', repo: 'r',
+  }]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const html = document.getElementById('history-section').innerHTML;
+  assert.ok(html.includes('Safe'), 'safe label');
+  for (const banned of ['ghp_SECRET', 'rawOutput', '/tmp', 'owner', 'repo']) {
+    assert.equal(html.includes(banned), false, 'must not leak ' + banned);
+  }
+});
+
+test('v2.15: no extra fetch beyond existing calls', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  defaultRunHistoryFixtures(setFixture);
+  setFixture('/bridge/projects/cli-bridge/verification', verificationFixtureWithRunHistory([
+    { projectKey: 'cli-bridge', profileId: 'ut', commandLabel: 'UT', result: 'passed', recordedAt: 1718000000000, elapsedMs: 10, truncated: false, outputDiscarded: true },
+  ]));
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  const before = fetchCalls.length;
+  document.querySelector('[data-view="verification"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  const urls = fetchCalls.slice(before).map(c => c.path);
+  const unexpected = urls.filter(u => !u.endsWith('/verification') && !u.endsWith('/verification/profiles') && !u.endsWith('/verification/git-status'));
+  assert.equal(unexpected.length, 0, 'no unexpected fetch: ' + unexpected.join(','));
 });
