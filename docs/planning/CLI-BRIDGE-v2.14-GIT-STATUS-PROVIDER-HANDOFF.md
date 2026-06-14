@@ -54,15 +54,20 @@ displayed inertly in the console verification view, with a redacted audit event.
    (new): `shell:false` structured argv, the four read-only commands only, cwd
    only from `projectWorkspaceRoots[key]` (no fallback; absent → not available,
    no spawn), bounded timeout + output cap + discard raw output, export
-   `gitSpawnFn` injection point.
+   `gitSpawnFn` injection point. **Execution environment (fixed):** pass a
+   minimal env allowlist only (no host-env inheritance) — `PATH` (+ Windows
+   `SystemRoot`/`SystemDrive`) — plus `GIT_TERMINAL_PROMPT=0` and
+   `GIT_OPTIONAL_LOCKS=0`; invoke with `-c core.fsmonitor=` and an empty hooks
+   path so repo-local config cannot drive command execution.
 4. **Parse → sanitized view** — porcelain/rev-parse/rev-list → `GitStatusView`;
    non-repo → `isGitRepo:false`; spawn/timeout/parse error → fail-closed
    unavailable.
 5. **Route** — `GET /bridge/projects/:key/verification/git-status` (human
    triggered, read-only). Not enabled → 409; no project root → 409 (no spawn);
    archived → 409; success → sanitized view; failure fail-closed (no raw output).
-6. **Audit** — redacted fetch event (project, isGitRepo, dirty, ahead/behind,
-   timing); no absolute cwd/root, remote URL, commit hash, token, raw output.
+6. **Audit** — redacted fetch event with a fixed field whitelist (project,
+   isGitRepo, dirty, ahead/behind, timing); no absolute cwd/root, remote URL,
+   commit hash, token, branch name, or raw output.
 7. **Console** — inert git status context in the verification view (branch /
    dirty / ahead-behind / isGitRepo). GET-only; no mutate/run controls; missing
    → inert "unavailable".
@@ -98,6 +103,9 @@ Anything outside → STOP and report.
   token, or diff.
 - No mapping git status to `VerificationResult` pass/fail.
 - No `shell:true` / string interpolation.
+- No host-environment inheritance for the git child: pass only the minimal env
+  allowlist + `GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0`, with repo-config
+  command execution disabled (`-c core.fsmonitor=` / empty hooks path).
 - No `baselineRoot` fallback; missing project root → fail-closed, no spawn.
 - No poller/scheduler/webhook/model trigger; human-triggered GET only.
 - No write/apply/commit/promote/discard control.

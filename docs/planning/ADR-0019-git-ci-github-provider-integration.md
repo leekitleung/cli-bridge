@@ -59,14 +59,28 @@ lighter ADR-0007 §2 gate alone.
     upstream — local refs only, never `git fetch`/`pull`/network).
   No `git` write of any kind (no commit/push/merge/rebase/tag/checkout/branch
   mutation/fetch/pull).
+- **Execution environment (FIXED — Containment, RP-2.14-a)**: the `git` child
+  does **not** inherit the host environment. Pass a minimal env allowlist
+  sufficient for `git` resolution (`PATH`; on Windows also `SystemRoot` /
+  `SystemDrive`), plus fixed safety vars `GIT_TERMINAL_PROMPT=0` (never prompt
+  for credentials) and `GIT_OPTIONAL_LOCKS=0`. Invoke with
+  `git -c core.fsmonitor= -c core.hooksPath=<empty>` (or equivalent) so a
+  repository's local config cannot drive command execution during `git status`.
+  Trust note: `projectWorkspaceRoots[projectKey]` is operator-configured (never
+  HTTP), so the repo is an operator-trusted location — consistent with ADR-0018
+  running operator profiles in the same root; these flags are defense-in-depth.
+  No network egress is performed by any command above.
 - **Sanitized `GitStatusView`**: `{ branch: string|null, dirty: boolean,
   aheadCount: number|null, behindCount: number|null, isGitRepo: boolean,
   fetchedAt: number, available: boolean }`. **Never** exposes commit hash/SHA,
-  remote URL, absolute path, raw git stdout/stderr, or diff.
+  remote URL, absolute path, raw git stdout/stderr, or diff. `branch` is
+  length-capped and stripped of control characters, and HTML-escaped at the
+  console.
 - **Fail-closed**: non-repo → `isGitRepo:false`; spawn/timeout/parse error →
   inert "unavailable"; `gitStatusEnabled` off or no project root → `409`.
-- **Audit**: one redacted fetch event (project, isGitRepo, dirty, ahead/behind,
-  timing); no path/URL/hash/token/raw output.
+- **Audit**: one redacted fetch event with a fixed field whitelist
+  (`project`, `isGitRepo`, `dirty`, `aheadCount`, `behindCount`, `timing`); no
+  path/URL/hash/token/raw output, and not the branch name.
 - **No** network, **no** credentials, **no** autonomy/poller/webhook, **no** VCS
   write, **no** write/apply/promote/run affordance.
 
@@ -88,6 +102,15 @@ lighter ADR-0007 §2 gate alone.
 10. Determinism/injection: reader testable via injected fake spawn; asserts
     read-only argv + cwd source + no sensitive output.
 11. No ADR-0019-b code (no remote/CI/GitHub/provider client, no token handling).
+12. **Execution environment (Containment)**: the `git` child runs with a minimal
+    env allowlist (no host-env inheritance) plus `GIT_TERMINAL_PROMPT=0` and
+    `GIT_OPTIONAL_LOCKS=0`, and with repo-config command execution disabled
+    (`-c core.fsmonitor=` / empty hooks path). Tests assert the spawn receives
+    the allowlisted env and the hardening flags, and never the full host env.
+13. **Branch + audit sanitization**: `branch` is length-capped and
+    control-char-stripped (and HTML-escaped at the console); the audit event
+    carries only the §-fixed field whitelist and never the branch name, paths,
+    URLs, hashes, tokens, or raw output.
 
 ### ADR-0019-a allowed files (for `EX-2.14-1`)
 

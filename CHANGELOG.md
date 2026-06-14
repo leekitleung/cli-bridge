@@ -5,6 +5,18 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Planning / ADR
+- **RP-2.14-a: hardened ADR-0019-a git-spawn containment** after
+  `REVIEW-ADR-0019-a` returned CHANGES REQUIRED on one ADR-0007 §2 Containment
+  gap (the git child's execution environment was undecided). Fixed in the
+  ADR-0019-a design + `EX-2.14-1` handoff: the `git` child uses a minimal env
+  allowlist (no host-env inheritance) plus `GIT_TERMINAL_PROMPT=0` /
+  `GIT_OPTIONAL_LOCKS=0`, and disables repo-config-driven command execution
+  (`-c core.fsmonitor=` / empty hooks path) — defense-in-depth over the
+  operator-trusted-root model. Also fixed branch-name length/control-char
+  sanitization (+ console escaping) and a fixed audit field whitelist (no branch
+  name/path/URL/hash/token/raw output). Added acceptance conditions #12-#13.
+  ADR-0019-a still NOT ACCEPTED; pending re-review (`REVIEW-ADR-0019-a` PASS) and
+  explicit acceptance before `EX-2.14-1`.
 - **RP-2.14: planned ADR-0019 and split it into a/b.** After ADR-0018 closed
   (`EX-2.13-1` / `REVIEW-2.13-1`, `b87b622`), RP-2.14 split the Git/CI/GitHub
   verification provider so the network/credential boundary is isolated:
