@@ -1785,3 +1785,75 @@ test('v2.16: verify column has no write controls, no extra fetch', async () => {
   cells.forEach(function(td) { if (td.querySelector('button,a,input,textarea')) ok = false; });
   assert.ok(ok, 'verify column has no controls');
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// RP-2.19  Console pairing-token discipline (localStorage convenience)
+// ═══════════════════════════════════════════════════════════════════
+//
+// Self-contained jsdom setup: seeds localStorage BEFORE scripts run (via
+// beforeParse) and captures the raw fetch url + headers so we can assert the
+// token is sent only in the pairing header — never in a request URL/query,
+// never as visible DOM text — and that manual entry remains the default.
+
+const RP219_TOKEN = 'TOKxyz123SECRETvalue';
+
+function setupConsoleRp219(seed = {}) {
+  const html = renderProjectConsoleHtml();
+  const calls = [];
+  const storage = { ...seed };
+  const storageApi = {
+    getItem: (k) => (k in storage ? storage[k] : null),
+    setItem: (k, v) => { storage[k] = String(v); },
+    removeItem: (k) => { delete storage[k]; },
+  };
+  const dom = new JSDOM(html, {
+    url: 'http://localhost:9300/console/project',
+    runScripts: 'dangerously',
+    resources: 'usable',
+    beforeParse(win) {
+      Object.defineProperty(win, 'localStorage', {
+        value: storageApi,
+        configurable: true,
+        writable: true,
+      });
+      win.fetch = async (url, init = {}) => {
+        calls.push({ url: String(url), headers: init.headers || {}, method: init.method || 'GET' });
+        return { ok: true, status: 200, json: async () => ({}) };
+      };
+    },
+  });
+  return { window: dom.window, document: dom.window.document, calls, storage };
+}
+
+test('RP-2.19: a stored token pre-fills the input but does NOT auto-connect', () => {
+  const { document } = setupConsoleRp219({ 'cli-bridge-pairing-token': RP219_TOKEN });
+  assert.equal(document.getElementById('token').value, RP219_TOKEN);
+  // Manual entry contract: not connected until the operator clicks Connect.
+  const status = document.getElementById('conn-status').textContent || '';
+  assert.ok(!status.includes('connected'));
+  assert.equal(document.getElementById('command-send').disabled, true);
+});
+
+test('RP-2.19: connect persists the token and sends it only in the pairing header', async () => {
+  const { document, calls, storage } = setupConsoleRp219();
+  document.getElementById('token').value = RP219_TOKEN;
+  document.getElementById('connect').dispatchEvent(new (document.defaultView.MouseEvent)('click'));
+
+  await waitFor(() => (document.getElementById('conn-status').textContent || '').includes('connected'));
+
+  // Persisted to localStorage for this browser only.
+  assert.equal(storage['cli-bridge-pairing-token'], RP219_TOKEN);
+
+  // The metrics call carried the token in the pairing header.
+  const metrics = calls.find((c) => c.url.includes('/bridge/metrics'));
+  assert.ok(metrics, 'expected a /bridge/metrics request');
+  assert.equal(metrics.headers['x-cli-bridge-pairing-token'], RP219_TOKEN);
+
+  // The token must never appear in any request URL/query.
+  for (const c of calls) {
+    assert.ok(!c.url.includes(RP219_TOKEN), `token leaked into URL: ${c.url}`);
+  }
+
+  // The token must never be rendered as visible DOM text.
+  assert.ok(!document.body.textContent.includes(RP219_TOKEN));
+});

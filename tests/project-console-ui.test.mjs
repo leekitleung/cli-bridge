@@ -83,13 +83,26 @@ test('project console does not call /console/project for data loading', () => {
   assert.equal(html.includes('`/console/project`'), false);
 });
 
-test('project console keeps token in memory and persists only the active project key', () => {
+test('project console persists pairing token to localStorage (browser-only) and only via header', () => {
   const html = renderProjectConsoleHtml();
 
+  // RP-2.19: the active project key is still persisted.
   assert.match(html, /localStorage\.getItem\('cli-bridge-active-project'\)/);
-  assert.equal(/localStorage\.[gs]etItem\([^)]*token/i.test(html), false);
+
+  // RP-2.19: the pairing token is now persisted to localStorage for browser
+  // convenience (pre-fill on load, save on successful connect).
+  assert.match(html, /localStorage\.getItem\('cli-bridge-pairing-token'\)/);
+  assert.match(html, /localStorage\.setItem\('cli-bridge-pairing-token'/);
+
+  // Store still starts with an empty in-memory token (manual Connect required;
+  // a stored value only pre-fills the input, never auto-connects).
   assert.match(html, /const store = \{/);
   assert.match(html, /token: ''/);
+
+  // The token must still be sent ONLY via the pairing header — never embedded
+  // in a request URL/query.
+  assert.match(html, /'x-cli-bridge-pairing-token': store\.token/);
+  assert.equal(/[?&][^=]*token=/i.test(html), false);
 });
 
 test('project console is honest about data that is not yet available', () => {

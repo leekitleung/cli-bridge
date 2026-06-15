@@ -5,6 +5,30 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Implemented
+- **EX-2.19-1 RP-2.19: Operator launcher convenience (low-risk wrapper)** —
+  ergonomics around the existing operator launcher with no change to the
+  pairing-token auth model (per-launch random token still required on every
+  request; no stable/fixed/persisted-to-config token; no auth bypass).
+  - **default config path**: `start-local-configured.ts` defaults to
+    `scripts/local-config.json` when `CLI_BRIDGE_LOCAL_CONFIG` is unset
+    (`resolveConfigPath`); env still overrides; missing-both fails with an
+    example-pointing message.
+  - **double-click entry**: `scripts/start-local.cmd` only sets the default
+    config path (when unset) and runs `npm run start:local-server:configured`.
+  - **auto-open console**: best-effort, suppressible (`CLI_BRIDGE_NO_OPEN`) and
+    interactive-only browser open of `/console/project`; the pairing token is
+    never placed in the URL (no query, no fragment).
+  - **console remembers token**: `project-console.ts` pre-fills a previously
+    stored pairing token from `localStorage` (manual Connect still required) and
+    persists it on a successful connect; the token is sent only via the
+    `x-cli-bridge-pairing-token` header — never in a request URL/query, config,
+    server state, or log.
+  - **excluded**: stable pairing token, URL `#fragment` token, token-in-config,
+    any auth bypass, auto-enabling github checks / auto verification, any new
+    endpoint or credential mechanism.
+  - **tests**: launcher `resolveConfigPath` / `shouldAutoOpen` /
+    `buildConsoleOpenTarget`; console token discipline (pre-fill without
+    auto-connect; token only in header, not in URL/DOM text).
 - **EX-2.14-1 ADR-0019-a: Read-only local git status provider** — added an opt-in
   (`gitStatusEnabled`, default `false`), human-triggered (GET-only), read-only,
   offline local `git` status context provider. Key components:

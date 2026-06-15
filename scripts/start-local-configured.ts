@@ -22,14 +22,16 @@
 //     at a real executable (e.g. `node`, or an absolute path to a tool .exe).
 //     On macOS/Linux `npm run <script>` works directly.
 //
-// Config source: env CLI_BRIDGE_LOCAL_CONFIG = path to a JSON file
-// (see scripts/local-config.example.json). Token source: env
+// Config source: env CLI_BRIDGE_LOCAL_CONFIG = path to a JSON file; when unset it
+// defaults to scripts/local-config.json (see scripts/local-config.example.json).
+// Token source: env
 //   CLI_BRIDGE_GH_TOKEN                 (global default for all projects)
 //   CLI_BRIDGE_GH_TOKEN__<projectKey>   (per-project override; '-' → '_')
 
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   DEFAULT_LOCAL_SERVER_PORT,
@@ -67,6 +69,40 @@ export interface LocalConfig {
 
 const CREATE_PROJECT_PATH = '/bridge/projects';
 
+/** Default config file used when CLI_BRIDGE_LOCAL_CONFIG is unset/empty. */
+const DEFAULT_CONFIG_FILENAME = 'local-config.json';
+
+function scriptsDir(): string {
+  return dirname(fileURLToPath(import.meta.url));
+}
+
+/**
+ * Resolve which config file to load (RP-2.19). The env var still takes
+ * precedence; when unset/empty, default to scripts/local-config.json.
+ */
+export function resolveConfigPath(
+  env: NodeJS.ProcessEnv = process.env,
+): { path: string; fromEnv: boolean } {
+  const fromEnvValue = env.CLI_BRIDGE_LOCAL_CONFIG;
+  if (typeof fromEnvValue === 'string' && fromEnvValue.trim().length > 0) {
+    return { path: resolve(fromEnvValue.trim()), fromEnv: true };
+  }
+  return { path: resolve(scriptsDir(), DEFAULT_CONFIG_FILENAME), fromEnv: false };
+}
+
+/** Whether the launcher should best-effort open the console in a browser. */
+export function shouldAutoOpen(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = env.CLI_BRIDGE_NO_OPEN;
+  return !(typeof flag === 'string' && flag.trim().length > 0);
+}
+
+/** The console URL to open. Never carries the pairing token (no query/fragment). */
+export function buildConsoleOpenTarget(
+  handle: Pick<LocalServerHandle, 'url'>,
+): string {
+  return `${handle.url}/console/project`;
+}
+
 /** Minimal fetch-like signature so tests can inject a fake. */
 export type FetchLike = (
   url: string,
@@ -96,21 +132,20 @@ export function parseConfig(raw: string): LocalConfig {
   return config;
 }
 
-/** Read + parse the config file referenced by CLI_BRIDGE_LOCAL_CONFIG. */
+/** Read + parse the config file (env path, else the default scripts path). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalConfig {
-  const configPath = env.CLI_BRIDGE_LOCAL_CONFIG;
-  if (!configPath || configPath.trim().length === 0) {
-    throw new Error(
-      'CLI_BRIDGE_LOCAL_CONFIG must point to a JSON config file. ' +
-        'See scripts/local-config.example.json.',
-    );
-  }
-  const abs = resolve(configPath.trim());
+  const { path: abs, fromEnv } = resolveConfigPath(env);
   let raw: string;
   try {
     raw = readFileSync(abs, 'utf8');
   } catch {
-    throw new Error(`Cannot read config file: ${abs}`);
+    if (fromEnv) {
+      throw new Error(`Cannot read config file: ${abs}`);
+    }
+    throw new Error(
+      `No launcher config found at ${abs}. Set CLI_BRIDGE_LOCAL_CONFIG or create ` +
+        'scripts/local-config.json (copy scripts/local-config.example.json).',
+    );
   }
   return parseConfig(raw);
 }
@@ -260,6 +295,22 @@ function isMainModule(): boolean {
   return import.meta.url === pathToFileURL(entryPoint).href;
 }
 
+/** Best-effort, non-fatal browser open. Never throws; never carries a token. */
+function openInBrowser(target: string): void {
+  try {
+    if (process.platform === 'win32') {
+      // `start` is a cmd builtin; empty title arg avoids quoting issues.
+      spawn('cmd', ['/c', 'start', '', target], { detached: true, stdio: 'ignore' }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn('xdg-open', [target], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch {
+    // Opening is a convenience only; ignore any failure.
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const port = typeof config.port === 'number' ? config.port : DEFAULT_LOCAL_SERVER_PORT;
@@ -277,6 +328,12 @@ async function main(): Promise<void> {
 
   for (const line of formatStartupSummary(handle, config, tokenProjects)) {
     console.log(line);
+  }
+
+  // RP-2.19: best-effort open the console. Suppressible (CLI_BRIDGE_NO_OPEN) and
+  // only when interactive. The pairing token is never placed in the URL.
+  if (shouldAutoOpen() && process.stdout.isTTY) {
+    openInBrowser(buildConsoleOpenTarget(handle));
   }
 }
 

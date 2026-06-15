@@ -16,6 +16,10 @@ import {
   shouldAccept409,
   bootstrapProjects,
   formatStartupSummary,
+  resolveConfigPath,
+  shouldAutoOpen,
+  buildConsoleOpenTarget,
+  loadConfig,
 } from '../scripts/start-local-configured.ts';
 
 const PAIRING_HEADER = 'x-cli-bridge-pairing-token';
@@ -253,4 +257,47 @@ test('formatStartupSummary never includes a github token value', () => {
   assert.ok(!joined.includes('SECRET_GH_TOKEN'));
   assert.ok(joined.includes('cli-bridge'));
   assert.ok(joined.includes('Pairing token: PAIR'));
+});
+
+// ── RP-2.19 §5.1 default config path resolution ──
+
+test('resolveConfigPath honors env override and falls back to the default file', () => {
+  const fromEnv = resolveConfigPath({ CLI_BRIDGE_LOCAL_CONFIG: 'some/custom.json' });
+  assert.equal(fromEnv.fromEnv, true);
+  assert.match(fromEnv.path.replace(/\\/g, '/'), /custom\.json$/);
+
+  const def = resolveConfigPath({});
+  assert.equal(def.fromEnv, false);
+  assert.match(def.path.replace(/\\/g, '/'), /scripts\/local-config\.json$/);
+
+  const blank = resolveConfigPath({ CLI_BRIDGE_LOCAL_CONFIG: '   ' });
+  assert.equal(blank.fromEnv, false);
+});
+
+test('loadConfig with neither env nor default file throws an example-pointing error', () => {
+  // No scripts/local-config.json exists in the repo, so missing-both holds.
+  assert.throws(
+    () => loadConfig({}),
+    (err) => {
+      assert.match(err.message, /local-config\.example\.json/);
+      return true;
+    },
+  );
+});
+
+// ── RP-2.19 §5.2 auto-open is suppressible / inert ──
+
+test('shouldAutoOpen is true by default and false when suppressed', () => {
+  assert.equal(shouldAutoOpen({}), true);
+  assert.equal(shouldAutoOpen({ CLI_BRIDGE_NO_OPEN: '1' }), false);
+  assert.equal(shouldAutoOpen({ CLI_BRIDGE_NO_OPEN: 'true' }), false);
+  assert.equal(shouldAutoOpen({ CLI_BRIDGE_NO_OPEN: '' }), true);
+});
+
+test('buildConsoleOpenTarget points at the console with no token/query', () => {
+  const target = buildConsoleOpenTarget({ url: 'http://127.0.0.1:31337' });
+  assert.equal(target, 'http://127.0.0.1:31337/console/project');
+  assert.ok(!target.includes('?'));
+  assert.ok(!target.includes('#'));
+  assert.ok(!target.toLowerCase().includes('token'));
 });

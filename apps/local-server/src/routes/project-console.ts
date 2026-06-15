@@ -16,7 +16,10 @@
 // never auto-executes a step, and never bypasses a gate.
 //
 // Served at GET /console/project as a single self-contained HTML document.
-// The pairing token is entered by the user and kept only in page memory.
+// The pairing token is entered by the user (manual Connect); for browser
+// convenience it may be pre-filled from / persisted to localStorage on this
+// browser only (RP-2.19). It is sent solely via the x-cli-bridge-pairing-token
+// header — never placed in a request URL/query, server state, config, or log.
 
 export const CONSOLE_PROJECT_PATH = '/console/project';
 
@@ -338,6 +341,16 @@ async function api(path, method, body) {
 }
 
 // ─── Connect ───
+// RP-2.19: pre-fill a previously stored pairing token so a returning browser
+// session does not need re-entry. Manual Connect is still required (we only
+// pre-fill the input; we never auto-connect). The token is read from
+// localStorage only and is sent solely via the x-cli-bridge-pairing-token
+// header — never placed in any request URL/query.
+try {
+  const _savedToken = localStorage.getItem('cli-bridge-pairing-token');
+  if (_savedToken) $('token').value = _savedToken;
+} catch (_e) { /* localStorage unavailable: fall back to manual entry */ }
+
 $('connect').addEventListener('click', async () => {
   store.token = $('token').value.trim();
   if (!store.token) return;
@@ -345,6 +358,9 @@ $('connect').addEventListener('click', async () => {
   const res = await api('/bridge/metrics');
   if (res.ok) {
     store.connected = true;
+    // Persist the working token for this browser only (localStorage). Never
+    // sent to the server except as the pairing header, never logged.
+    try { localStorage.setItem('cli-bridge-pairing-token', store.token); } catch (_e) { /* ignore */ }
     $('conn-dot').classList.add('ok');
     $('conn-status').textContent = 'connected';
     $('command-send').disabled = false;
