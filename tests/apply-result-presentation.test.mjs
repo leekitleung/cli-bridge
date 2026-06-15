@@ -413,7 +413,7 @@ test('AC8 no apply-from-preview: console viewer exposes no apply/promote/write a
   assert.ok(consoleSrc.includes('Apply Result (read-only)'), 'console has read-only apply viewer');
   // ...and the viewer functions must issue GET requests only (no write verb).
   const vStart = consoleSrc.indexOf('async function viewApplyResult');
-  const vEnd = consoleSrc.indexOf('async function runReviewFlow');
+  const vEnd = consoleSrc.indexOf('async function runReviewCommand');
   assert.ok(vStart !== -1 && vEnd !== -1 && vEnd > vStart, 'viewer functions located');
   const viewer = consoleSrc.slice(vStart, vEnd);
   assert.equal(/'POST'|'PUT'|'DELETE'|'PATCH'/.test(viewer), false, 'viewer must use GET only');

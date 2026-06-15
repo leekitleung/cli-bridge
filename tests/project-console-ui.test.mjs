@@ -1,8 +1,8 @@
 // Project Workspace Console Phase A tests.
 //
-// The page is a thin project-centric cockpit. These tests lock the contract
-// that it renders as a standalone HTML view, calls only existing governed
-// /bridge/* endpoints, and is honest about Phase A data availability.
+// The page is a thin project-centric command workspace. These tests lock the
+// contract that it renders as a standalone HTML view, calls only existing
+// governed /bridge/* endpoints, and keeps the primary path in the composer.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -26,23 +26,39 @@ function extractBridgePaths(html) {
   return [...html.matchAll(/['"`](\/bridge\/[^'"`]+)['"`]/g)].map((match) => match[1]);
 }
 
-test('project console HTML renders the three-region project cockpit shell', () => {
+test('project console HTML renders the command-first project shell', () => {
   const html = renderProjectConsoleHtml();
 
   assert.match(html, /CLI Bridge — Project Workspace/);
   assert.match(html, /Project navigation/);
   assert.match(html, /Project workspace/);
-  assert.match(html, /Project status/);
+  assert.match(html, /Compact project facts/);
   assert.match(html, /id="command-input"/);
 
-  assert.match(html, /Timeline &amp; Goals/);
-  assert.match(html, /Reviews/);
-  assert.match(html, /Prompts/);
-  assert.match(html, /Audit/);
-  assert.match(html, /Memory/);
+  assert.match(html, /Recent session/);
+  assert.match(html, /Project history/);
+  assert.match(html, /Conversation/);
+  assert.match(html, /status · history · plan · continue · verify/);
+  assert.match(html, /id="facts-rail"/);
+  assert.match(html, /id="fact-next"/);
+  assert.match(html, /id="fact-verify"/);
+  assert.match(html, /data-active-project-plan/);
+  assert.match(html, /data-next-action/);
+  assert.equal(html.includes('Timeline &amp; Goals'), false);
+  assert.equal(html.includes('id="section-nav"'), false);
+  assert.equal(html.includes('data-view='), false);
+  assert.equal(html.includes('role="tablist"'), false);
+  assert.equal(html.includes('Context Commands'), false);
+  assert.equal(html.includes('"nav workspace status"'), false);
+  assert.equal(html.includes('"commandbar commandbar commandbar"'), false);
+  assert.equal(html.includes('cockpit'), false);
+  assert.equal(html.includes('id="btn-approve"'), false);
+  assert.equal(html.includes('id="btn-step"'), false);
+  assert.equal(html.includes('id="btn-gen-plan"'), false);
+  assert.equal(html.includes('gate-btn'), false);
 
-  assert.match(html, /\/console">Review console/);
-  assert.match(html, /\/console\/goals">Goal console/);
+  assert.equal(html.includes('Review console'), false);
+  assert.equal(html.includes('Goal console'), false);
 });
 
 test('project console is a thin client over only allowlisted bridge endpoints', () => {
@@ -83,19 +99,17 @@ test('project console does not call /console/project for data loading', () => {
   assert.equal(html.includes('`/console/project`'), false);
 });
 
-test('project console persists pairing token to localStorage (browser-only) and only via header', () => {
+test('project console keeps pairing token in memory only and sends it only via header', () => {
   const html = renderProjectConsoleHtml();
 
-  // RP-2.19: the active project key is still persisted.
+  // Active project key can be persisted for workspace continuity.
   assert.match(html, /localStorage\.getItem\('cli-bridge-active-project'\)/);
 
-  // RP-2.19: the pairing token is now persisted to localStorage for browser
-  // convenience (pre-fill on load, save on successful connect).
-  assert.match(html, /localStorage\.getItem\('cli-bridge-pairing-token'\)/);
-  assert.match(html, /localStorage\.setItem\('cli-bridge-pairing-token'/);
+  // Pairing token is a bearer secret and must not be persisted.
+  assert.equal(html.includes("localStorage.getItem('cli-bridge-pairing-token')"), false);
+  assert.equal(html.includes("localStorage.setItem('cli-bridge-pairing-token'"), false);
 
-  // Store still starts with an empty in-memory token (manual Connect required;
-  // a stored value only pre-fills the input, never auto-connects).
+  // Store starts with an empty in-memory token; manual Connect is required.
   assert.match(html, /const store = \{/);
   assert.match(html, /token: ''/);
 
@@ -111,29 +125,32 @@ test('project console is honest about data that is not yet available', () => {
   assert.match(html, /not yet available/);
   assert.match(html, /No audit events recorded yet/);
   assert.match(html, /No derived memory|create goals and plans/);
-  assert.match(html, /placeholder baseline/);
+  assert.equal(html.includes('placeholder baseline'), false);
 
   assert.equal(html.includes('tests 297/297'), false);
   assert.equal(html.includes('ahead 4 commits'), false);
   assert.equal(html.includes('4/6 slices'), false);
 });
 
-test('project console command bar routes only to controlled goal workflow actions', () => {
+test('project console command bar routes only to controlled workflow actions', () => {
   const html = renderProjectConsoleHtml();
 
   assert.match(html, /project-console-/);
   assert.match(html, /creating goal/);
-  assert.match(html, /generating plan \(this may take a moment\)/);
+  assert.match(html, /generating plan/);
   assert.match(html, /advancing/);
+  assert.match(html, /approve plan/);
+  assert.match(html, /approve gate/);
+  assert.match(html, /plan history/);
+  assert.match(html, /switch project/);
   assert.match(html, /blocked-needs-gate/);
-  assert.match(html, /Approve gate/);
 
   // P1 fix: goal creation in command bar must pass active projectId.
   assert.match(html, /projectId:\s*store\.activeProjectKey/,
     'goal creation must include projectId: store.activeProjectKey');
 
-  // Reviews are created in the Reviews section view (Task 8), not from the
-  // command bar. The command bar only routes to goal workflow endpoints.
+  // Reviews are still created by the existing controlled review flow. The
+  // command bar may show that context, but must not invent a new review path.
   assert.match(html, /\/bridge\/reviews', 'POST'/);  // present in reviews section, not command bar
   // P1 fix: review creation must also pass active projectId.
   assert.match(html, /projectId:\s*store\.activeProjectKey/);
@@ -219,9 +236,11 @@ test('project switch loading state uses try/finally to prevent stuck state', () 
 
   // switchingProject is set false only inside finally (not duplicated after).
   const afterFinally = html.split('finally')[1] || '';
-  // The only switchingProject = false should be inside the finally block.
+  // Project switching is now available from the project rail and the command
+  // composer; both paths must clear the loading state in finally blocks.
   const allFalseMatches = html.match(/switchingProject\s*=\s*false/g) || [];
-  assert.equal(allFalseMatches.length, 1, 'switchingProject = false must appear exactly once (inside finally)');
+  assert.ok(allFalseMatches.length >= 1, 'switchingProject = false must be present in a finally block');
+  assert.match(html, /switch project /, 'command-driven project switching must exist');
 });
 
 // Task 21 regression: console uses project summary data from /bridge/projects/:key response.
@@ -274,21 +293,22 @@ test('all bridge paths in console are within the allowed set', () => {
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
 });
 
-// B3: new project create control must be present and use allowlisted POST.
-test('new project create UI is present and calls POST /bridge/projects', () => {
+// B3: project creation is command-only and uses allowlisted POST.
+test('project create is command-only and calls POST /bridge/projects', () => {
   const html = renderProjectConsoleHtml();
-  assert.ok(html.includes('btn-new-proj'), 'new project button should exist');
-  assert.ok(html.includes('new-proj-key'), 'new project key input should exist');
+  assert.equal(html.includes('btn-new-proj'), false, 'new project button must not exist');
+  assert.equal(html.includes('new-proj-key'), false, 'new project key input must not exist');
+  assert.ok(html.includes('project create &lt;key&gt;'), 'project create command should be discoverable');
   // Must call POST /bridge/projects — already in the allowlist.
   assert.ok(html.includes("'/bridge/projects'"), 'should reference /bridge/projects');
   // No /exec, /shell additions.
   assert.equal(/\/(exec|shell)['"`]/.test(html), false);
 });
 
-// v2.2: Tasks/WorkBuddy nav present and non-executing labeled.
-test('Tasks nav is present and no exec/shell paths', () => {
+// v2.2/v2.20: Tasks/WorkBuddy context present and non-executing labeled.
+test('Tasks context is present and no exec/shell paths', () => {
   const html = renderProjectConsoleHtml();
-  assert.ok(html.includes('workbuddy'), 'workbuddy tasks nav should exist');
+  assert.ok(html.includes('workbuddy'), 'workbuddy tasks context should exist');
   assert.ok(html.includes('Non-executing') || html.includes('non-executing'),
     'workbuddy should be labeled as non-executing');
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);

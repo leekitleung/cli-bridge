@@ -5,6 +5,32 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Implemented
+- **EX-2.20-1 RP-2.20: Codex-like command-first middle-layer UI reset** —
+  reshaped `/console/project` toward a left project/history rail, single
+  conversation workspace, and bottom composer without changing backend
+  capability or auth semantics.
+  - **left rail**: removed feature-tab navigation from the project rail; it now
+    prioritizes recent session, projects, and project-owned history derived
+    from existing timeline/detail data.
+  - **main workspace**: current goal, active project plan, derived next action,
+    and timeline now sit in a single conversation surface; the active plan is
+    shown directly under the current goal.
+  - **context commands**: reviews, prompts, audit, memory, verification, tasks,
+    and teams now expand from the composer as inline context below the main
+    conversation; the old `data-view` / section-click path was removed.
+  - **command routing**: added deterministic handling for `status`, `recent`,
+    `history`, `plan history`, `approve plan`, `approve gate`, `cancel`,
+    `review`, `verify`, `audit`, `memory`, `teams`, `tasks`, `apply`, and
+    `switch project <key>`; mutations still route only through existing
+    governed `/bridge/*` endpoints and gates.
+  - **tests**: updated console UI contract tests and behavior coverage to reject
+    `#section-nav`, `data-view`, right-panel workflow, and plan execution
+    buttons while proving composer commands render context and route governed
+    actions.
+  - **excluded**: no new endpoint, no shell/exec/run/generic command surface, no
+    model intent parser, no auth/token changes, no new conversation storage, no
+    private session import, no shell-history import, and no automatic terminal
+    transcript capture.
 - **EX-2.19-1 RP-2.19: Operator launcher convenience (low-risk wrapper)** —
   ergonomics around the existing operator launcher with no change to the
   pairing-token auth model (per-launch random token still required on every

@@ -1,6 +1,6 @@
-// v2.0 §7.5 Project Workspace Console — a project-centric cockpit view that
-// consolidates goal/review/prompt/audit/status into a single three-region
-// workspace where Project is the top-level entity.
+// v2.0 §7.5 Project Workspace Console — a project-centric command workspace
+// that keeps project history in the left rail and makes the main path a single
+// conversation plus command composer.
 //
 // Data source (Task 15): Reads from the read-only /bridge/projects aggregation
 // endpoints:
@@ -16,10 +16,9 @@
 // never auto-executes a step, and never bypasses a gate.
 //
 // Served at GET /console/project as a single self-contained HTML document.
-// The pairing token is entered by the user (manual Connect); for browser
-// convenience it may be pre-filled from / persisted to localStorage on this
-// browser only (RP-2.19). It is sent solely via the x-cli-bridge-pairing-token
-// header — never placed in a request URL/query, server state, config, or log.
+// The pairing token is entered by the user (manual Connect), kept in memory
+// only for this page, and sent solely via the x-cli-bridge-pairing-token header
+// — never placed in localStorage, a request URL/query, server state, config, or log.
 
 export const CONSOLE_PROJECT_PATH = '/console/project';
 
@@ -33,12 +32,15 @@ export function renderProjectConsoleHtml(): string {
 <style>
 :root {
   color-scheme: light dark;
-  --bg: #0f172a;
-  --surface: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #2563eb;
+  --bg: #0d0d0d;
+  --surface: #171717;
+  --panel: #202020;
+  --hover: #242424;
+  --border: #303030;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --subtle: #71717a;
+  --accent: #10a37f;
   --warn: #b45309;
   --danger: #7f1d1d;
   --done: #14532d;
@@ -51,12 +53,12 @@ body {
   background: var(--bg);
   color: var(--text);
   display: grid;
-  grid-template-rows: 56px 1fr 64px;
-  grid-template-columns: 280px 1fr 320px;
+  grid-template-rows: 56px 1fr 118px;
+  grid-template-columns: 280px minmax(0, 1fr) 248px;
   grid-template-areas:
-    "topbar topbar topbar"
-    "nav workspace status"
-    "commandbar commandbar commandbar";
+    "nav topbar topbar"
+    "nav workspace facts"
+    "nav commandbar commandbar";
   height: 100vh;
   overflow: hidden;
 }
@@ -68,24 +70,36 @@ header {
   align-items: center;
   gap: 16px;
   padding: 0 24px;
-  background: var(--surface);
+  background: rgba(13, 13, 13, 0.96);
   border-bottom: 1px solid var(--border);
 }
 header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
 header .project-name { font-size: 13px; color: var(--muted); }
 header .branch { font-size: 11px; color: var(--muted); font-family: monospace; }
 header .spacer { flex: 1; }
-header .conn-row { display: flex; gap: 8px; align-items: center; }
+header .conn-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 210px) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
 header input, header button { font: inherit; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 6px 10px; font-size: 12px; }
-header button { cursor: pointer; background: var(--surface); border-color: var(--border); }
-header .conn-status { font-size: 11px; color: var(--muted); min-width: 80px; }
-header .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: inline-block; }
+header input { width: 100%; min-width: 0; }
+header button { cursor: pointer; background: var(--panel); border-color: var(--border); }
+header #connect { display: inline-flex; align-items: center; gap: 7px; }
+header .conn-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+header .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: inline-block; flex: 0 0 auto; }
 header .conn-dot.ok { background: #22c55e; }
-header .classic-links { font-size: 11px; display: flex; gap: 12px; }
-header .classic-links a { color: var(--muted); text-decoration: none; }
-header .classic-links a:hover { color: var(--text); }
 
-/* ─── Left Nav ─── */
+/* ─── Left Rail ─── */
 nav {
   grid-area: nav;
   background: var(--surface);
@@ -95,19 +109,25 @@ nav {
   overflow-y: auto;
   padding: 16px 0;
 }
-nav h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 16px 8px; }
+nav h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--subtle); margin: 0 16px 8px; }
+nav .recent-session { margin: 0 16px 14px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 12px; }
+nav .recent-session .label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
 nav .project-list { list-style: none; margin: 0; padding: 0; }
 nav .project-list li { padding: 8px 16px; cursor: pointer; font-size: 13px; border-left: 3px solid transparent; }
-nav .project-list li:hover { background: var(--bg); }
-nav .project-list li.active { border-left-color: var(--accent); background: var(--bg); }
+nav .project-list li:hover { background: var(--hover); }
+nav .project-list li.active { border-left-color: var(--accent); background: var(--hover); }
 nav .project-list li .status-label { display: block; font-size: 11px; color: var(--muted); }
-nav .section-nav { list-style: none; margin: 24px 0 0; padding: 0; border-top: 1px solid var(--border); padding-top: 12px; }
-nav .section-nav li { padding: 6px 16px; cursor: pointer; font-size: 12px; color: var(--muted); }
-nav .section-nav li:hover { color: var(--text); }
-nav .section-nav li.active { color: var(--text); font-weight: 500; }
+nav .project-history { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+nav .project-history-list { list-style: none; margin: 0; padding: 0; }
+nav .project-history-list li { padding: 5px 16px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 nav .archive-toggle { display: block; padding: 6px 16px; font-size: 11px; color: var(--muted); cursor: pointer; }
 nav .archive-toggle input { margin-right: 4px; vertical-align: middle; }
-.archive-btn { font-size: 10px; padding: 0 4px; margin-left: 4px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--muted); line-height: 16px; }
+.new-project { margin: 0 16px 14px; font-size: 11px; color: var(--muted); }
+.new-project summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.new-project-row { display:flex; gap:6px; margin-top: 6px; }
+.new-project:not([open]) .new-project-row, .new-project:not([open]) #new-proj-status { display: none; }
+.new-project-row input { min-width: 0; flex: 1; font-size:11px; padding:5px 7px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); }
+.new-project-row button { font-size:11px; padding:5px 8px; cursor:pointer; background:var(--panel); border:1px solid var(--border); border-radius:6px; color:var(--text); }
 .pill.archived { background: var(--border); }
 nav .empty-state { padding: 16px; font-size: 12px; color: var(--muted); }
 
@@ -115,68 +135,136 @@ nav .empty-state { padding: 16px; font-size: 12px; color: var(--muted); }
 main {
   grid-area: workspace;
   overflow-y: auto;
-  padding: 24px;
+  padding: 28px min(8vw, 96px) 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+  max-width: 1040px;
+  width: 100%;
+  justify-self: center;
 }
-main .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-main .card h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+main .card { background: transparent; border: 0; border-radius: 0; padding: 0; }
+main .card h3 { font-size: 12px; margin: 0 0 12px; color: var(--subtle); text-transform: uppercase; letter-spacing: 0.06em; }
+main .context-stack { display: grid; gap: 10px; }
+main .context-block {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 12px 0 2px;
+  max-width: 780px;
+}
+main .context-block:first-child { border-top: 0; padding-top: 0; }
+main .context-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+main .next-action {
+  border-top-color: rgba(16, 163, 127, 0.55);
+  color: var(--text);
+  font-size: 13px;
+}
 main .timeline { display: flex; flex-direction: column; gap: 12px; }
-main .timeline-entry { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
+main .timeline-entry {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--border);
+  border-radius: 0;
+  padding: 2px 0 2px 12px;
+  font-size: 13px;
+  max-width: 780px;
+}
 main .timeline-entry .origin { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
 main .timeline-entry .origin.user { color: var(--accent); }
 main .timeline-entry .origin.system { color: var(--muted); }
 main .timeline-entry .body { white-space: pre-wrap; }
 
-/* ─── Right Status Panel ─── */
-aside {
-  grid-area: status;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
+/* ─── Right Facts Rail ─── */
+.facts-rail {
+  grid-area: facts;
+  padding: 28px 24px 20px 0;
   overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  color: var(--muted);
 }
-aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 8px; }
-aside .status-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; }
-aside .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-aside .progress-bar .fill { height: 100%; background: var(--accent); border-radius: 3px; }
-aside .unavailable { color: var(--muted); font-style: italic; font-size: 11px; }
+.facts-rail h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--subtle);
+  margin: 0 0 14px;
+}
+.facts-rail .fact {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+  font-size: 12px;
+}
+.facts-rail .fact:first-of-type { border-top: 0; padding-top: 0; }
+.facts-rail .fact-label {
+  color: var(--subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  margin-bottom: 5px;
+}
+.facts-rail .fact-value { color: var(--text); overflow-wrap: anywhere; }
+.facts-rail code { color: var(--text); }
+
+.internal-context-store { display: none; }
+.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.progress-bar .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+.unavailable { color: var(--muted); font-style: italic; font-size: 12px; }
 
 /* ─── Bottom Command Bar ─── */
 footer {
   grid-area: commandbar;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "hints status"
+    "input send";
   align-items: center;
-  gap: 12px;
-  padding: 0 24px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  column-gap: 12px;
+  row-gap: 8px;
+  padding: 14px min(8vw, 96px) 18px;
+  background: transparent;
+  border-top: 0;
+  max-width: 1120px;
+  width: 100%;
+  justify-self: center;
 }
 footer input {
-  flex: 1;
+  grid-area: input;
+  width: 100%;
+  min-width: 0;
   font: inherit;
-  border-radius: 8px;
+  border-radius: 18px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text);
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 18px 20px;
+  font-size: 15px;
+  line-height: 1.35;
+  min-height: 58px;
+  box-shadow: 0 14px 48px rgba(0, 0, 0, 0.32);
 }
 footer button {
+  grid-area: send;
   font: inherit;
-  border-radius: 8px;
-  border: 1px solid var(--accent);
+  border-radius: 16px;
+  border: 1px solid rgba(16, 163, 127, 0.5);
   background: var(--accent);
   color: #fff;
-  padding: 10px 20px;
+  padding: 17px 22px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
+  min-height: 58px;
 }
 footer button:disabled { opacity: 0.5; cursor: not-allowed; }
+footer .command-status { grid-area: status; justify-self: end; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+footer .command-hints { grid-area: hints; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.command-log { display: grid; gap: 10px; max-width: 780px; }
+.command-message { background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
+.command-message .prompt { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-bottom: 6px; }
+.command-message.error { border-color: rgba(248, 113, 113, 0.55); }
+.command-chip { display: inline; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.command-chip + .command-chip::before { content: " · "; color: var(--muted); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 
 /* ─── Shared ─── */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -187,7 +275,6 @@ footer button:disabled { opacity: 0.5; cursor: not-allowed; }
 .pill.mut { background: #7c2d12; color: #fed7aa; }
 button.secondary { background: var(--surface); border-color: var(--border); color: var(--text); cursor: pointer; }
 button.danger { background: var(--danger); border-color: #991b1b; color: #fff; cursor: pointer; }
-button.gate-btn { background: var(--gate); border-color: #d97706; color: #fff; cursor: pointer; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; max-height: 240px; font-size: 12px; white-space: pre-wrap; margin: 0; }
@@ -196,13 +283,35 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 
 /* ─── Responsive ─── */
 @media (max-width: 1100px) {
-  body { grid-template-columns: 280px 1fr; grid-template-areas: "topbar topbar" "nav workspace" "commandbar commandbar"; }
-  aside { display: none; }
+  body { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "nav topbar" "nav workspace" "nav commandbar"; }
+  .facts-rail { display: none; }
+  main, footer { padding-left: 32px; padding-right: 32px; }
 }
 @media (max-width: 760px) {
-  body { grid-template-columns: 1fr; grid-template-areas: "topbar" "workspace" "commandbar"; }
+  body { grid-template-columns: 1fr; grid-template-rows: 56px 1fr 122px; grid-template-areas: "topbar" "workspace" "commandbar"; }
   nav { display: none; }
-  aside { display: none; }
+  header { padding: 0 16px; gap: 12px; }
+  header h1 { font-size: 13px; }
+  header .project-name, header .branch { display: none; }
+  header .conn-status { display: none; }
+  header .conn-row { flex: 1; grid-template-columns: minmax(0, 1fr) auto; }
+  header .conn-row input { min-width: 0; width: 100%; max-width: 140px; }
+  header .spacer { display: none; }
+  main, footer { padding-left: 16px; padding-right: 16px; }
+  footer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "hints hints"
+      "input send";
+    column-gap: 12px;
+    row-gap: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  footer input { min-width: 0; padding: 16px 18px; min-height: 58px; font-size: 15px; }
+  footer button { padding: 16px 20px; min-height: 58px; }
+  footer .command-status { display: none; }
+  footer .command-hints { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 }
 </style>
 </head>
@@ -213,106 +322,93 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <h1>CLI Bridge</h1>
   <span class="project-name" id="top-project" title="Click to edit label" style="cursor:pointer">Project: —</span>
   <span class="branch" id="top-branch"></span>
-  <div class="classic-links">
-    <a href="/console">Review console</a>
-    <a href="/console/goals">Goal console</a>
-  </div>
   <span class="spacer"></span>
   <div class="conn-row">
     <input id="token" type="password" placeholder="pairing token" size="28" aria-label="Pairing token" />
-    <button class="secondary" id="connect">Connect</button>
-    <span class="conn-dot" id="conn-dot"></span>
+    <button class="secondary" id="connect" aria-label="Connect"><span class="conn-dot" id="conn-dot" aria-hidden="true"></span><span>Connect</span></button>
     <span class="conn-status" id="conn-status" aria-live="polite" role="status"></span>
   </div>
 </header>
 
 <!-- Left Nav -->
 <nav aria-label="Project navigation">
-  <h2>Projects</h2>
-  <div style="padding:0 16px 8px;display:flex;gap:6px;">
-    <input id="new-proj-key" type="text" placeholder="project-key" size="18" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);" />
-    <button id="btn-new-proj" style="font-size:11px;padding:4px 8px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);">+ New</button>
-    <span id="new-proj-status" style="font-size:10px;color:var(--muted);"></span>
+  <div class="recent-session" id="recent-session">
+    <span class="label">Recent session</span>
+    <span id="recent-session-label">Active project conversation</span>
   </div>
+  <h2>Projects</h2>
+  <div class="new-project">New: <code>project create &lt;key&gt;</code></div>
   <ul class="project-list" id="project-list">
     <li class="empty-state" id="project-empty">No projects yet</li>
   </ul>
   <label class="archive-toggle"><input type="checkbox" id="toggle-archived" /> Show archived</label>
-  <ul class="section-nav" id="section-nav" role="tablist">
-    <li class="active" data-view="workspace" role="tab" tabindex="0" aria-selected="true">Timeline &amp; Goals</li>
-    <li data-view="reviews" role="tab" tabindex="0" aria-selected="false">Reviews</li>
-    <li data-view="prompts" role="tab" tabindex="0" aria-selected="false">Prompts</li>
-    <li data-view="audit" role="tab" tabindex="0" aria-selected="false">Audit</li>
-    <li data-view="memory" role="tab" tabindex="0" aria-selected="false">Memory</li>
-    <li data-view="verification" role="tab" tabindex="0" aria-selected="false">Verification</li>
-    <li data-view="workbuddy" role="tab" tabindex="0" aria-selected="false">Tasks</li>
-    <li data-view="teams" role="tab" tabindex="0" aria-selected="false">Team</li>
-  </ul>
+  <div class="project-history" aria-label="Project-owned history">
+    <h2>Project history</h2>
+    <ul class="project-history-list" id="project-history-list">
+      <li class="empty-state">Connect to load project history</li>
+    </ul>
+  </div>
 </nav>
 
 <!-- Center Workspace -->
 <main id="workspace" aria-label="Project workspace">
   <div class="card" id="goal-card">
-    <h3>Current Goal</h3>
+    <h3>Conversation</h3>
     <div id="goal-content" class="loading">Connect to load…</div>
   </div>
   <div id="timeline-container">
     <div class="timeline" id="timeline">
-      <div class="loading">Connect to load activity timeline…</div>
+      <div class="loading">Connect to load project activity.</div>
     </div>
   </div>
+  <div id="command-log" class="command-log" aria-live="polite"></div>
+  <div id="context-container" aria-live="polite"></div>
 </main>
 
-<!-- Right Status Panel -->
-<aside aria-label="Project status">
-  <div>
-    <h2>Summary</h2>
+<aside class="facts-rail" id="facts-rail" aria-label="Compact project facts">
+  <h2>Facts</h2>
+  <div class="fact"><div class="fact-label">Project</div><div class="fact-value" id="fact-project">not connected</div></div>
+  <div class="fact"><div class="fact-label">Next</div><div class="fact-value" id="fact-next">connect</div></div>
+  <div class="fact"><div class="fact-label">Plan</div><div class="fact-value" id="fact-plan">not available</div></div>
+  <div class="fact"><div class="fact-label">Verification</div><div class="fact-value" id="fact-verify">not available</div></div>
+  <div class="fact"><div class="fact-label">Audit</div><div class="fact-value" id="fact-audit">not available</div></div>
+  <div class="fact"><div class="fact-label">Last event</div><div class="fact-value" id="fact-last-event">none</div></div>
+</aside>
+
+<!-- Internal context store. Hidden DOM preserves existing render targets without
+     exposing a right-side feature panel or clickable section navigation. -->
+<div class="internal-context-store" hidden aria-hidden="true">
+  <div id="status-store">
     <div class="status-card" id="status-summary">
       <span class="unavailable">unavailable</span>
     </div>
-  </div>
-  <div>
-    <h2>Progress</h2>
     <div class="status-card" id="status-progress">
       <span class="unavailable">unavailable</span>
     </div>
-  </div>
-  <div>
-    <h2>Active Goal</h2>
     <div class="status-card" id="status-active-goal">
       <span class="unavailable">unavailable</span>
     </div>
-  </div>
-  <div>
-    <h2>Goals</h2>
     <div class="status-card" id="status-goals">
       <span class="unavailable">not yet available</span>
     </div>
-  </div>
-  <div>
-    <h2>Latest Audit</h2>
     <div class="status-card" id="status-audit">
       <span class="unavailable">not yet available</span>
     </div>
-  </div>
-  <div>
-    <h2>Memory</h2>
     <div class="status-card" id="status-memory">
       <span class="unavailable">not yet available</span>
     </div>
-  </div>
-  <div>
-    <h2>Verification</h2>
     <div class="status-card" id="status-verification">
       <span class="unavailable">not yet available</span>
     </div>
   </div>
-</aside>
+</div>
 
 <!-- Bottom Command Bar -->
 <footer>
-  <input id="command-input" type="text" placeholder="输入项目目标 / 继续当前项目 / 搜索历史 / 生成 plan…" aria-label="Project command" />
+  <input id="command-input" type="text" placeholder="goal <任务> / status / verify" aria-label="Project command" />
   <button id="command-send" disabled>Send</button>
+  <span class="command-hints">help · status · history · plan · continue · verify</span>
+  <output class="command-status" id="command-status" aria-live="polite" role="status"></output>
 </footer>
 
 <script>
@@ -322,7 +418,9 @@ const store = {
   base: location.origin,
   connected: false,
   activeProjectKey: localStorage.getItem('cli-bridge-active-project') || 'cli-bridge',
-  view: 'workspace',
+  contextView: '',
+  commandMessages: [],
+  lastApplyPreviewBase: '',
   cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null, teams: null },
   switchingProject: false,
 };
@@ -341,35 +439,32 @@ async function api(path, method, body) {
 }
 
 // ─── Connect ───
-// RP-2.19: pre-fill a previously stored pairing token so a returning browser
-// session does not need re-entry. Manual Connect is still required (we only
-// pre-fill the input; we never auto-connect). The token is read from
-// localStorage only and is sent solely via the x-cli-bridge-pairing-token
-// header — never placed in any request URL/query.
-try {
-  const _savedToken = localStorage.getItem('cli-bridge-pairing-token');
-  if (_savedToken) $('token').value = _savedToken;
-} catch (_e) { /* localStorage unavailable: fall back to manual entry */ }
-
+// Pairing tokens are bearer secrets. Keep them in memory for this page only:
+// never persist them to localStorage, URLs, server state, config, or logs.
 $('connect').addEventListener('click', async () => {
   store.token = $('token').value.trim();
   if (!store.token) return;
-  $('conn-status').textContent = 'connecting…';
+  $('connect').setAttribute('aria-label', 'Connect: checking token');
+  $('connect').setAttribute('title', 'Checking token');
+  $('conn-status').textContent = '';
   const res = await api('/bridge/metrics');
   if (res.ok) {
     store.connected = true;
-    // Persist the working token for this browser only (localStorage). Never
-    // sent to the server except as the pairing header, never logged.
-    try { localStorage.setItem('cli-bridge-pairing-token', store.token); } catch (_e) { /* ignore */ }
     $('conn-dot').classList.add('ok');
-    $('conn-status').textContent = 'connected';
+    $('connect').setAttribute('aria-label', 'Connect: connected');
+    $('connect').setAttribute('title', 'Connected');
+    $('conn-status').textContent = '';
+    $('token').value = '';
     $('command-send').disabled = false;
+    appendCommandMessage('connect', 'Connected. Try <span class="command-chip">status</span><span class="command-chip">goal improve README</span><span class="command-chip">verify</span>');
     await refreshAll();
   } else {
     store.connected = false;
     $('conn-dot').classList.remove('ok');
-    $('conn-status').textContent = 'auth failed (' + res.status + ')';
-    $('conn-status').style.color = '#f87171';
+    $('connect').setAttribute('aria-label', 'Connect: auth failed');
+    $('connect').setAttribute('title', 'Auth failed (' + res.status + ')');
+    $('conn-status').textContent = '';
+    appendCommandMessage('connect', 'Connection failed. Check the pairing token printed by the local server and try again.', true);
   }
 });
 
@@ -405,9 +500,11 @@ async function refreshAll() {
 // ─── Render ───
 function renderAll() {
   renderProjectList();
+  renderProjectHistory();
   renderTopBar();
   renderStatusPanel();
   renderWorkspace();
+  renderFactsRail();
 }
 
 function renderProjectList() {
@@ -426,22 +523,14 @@ function renderProjectList() {
   list.innerHTML = visible.map(p => {
     const activeClass = p.project.key === store.activeProjectKey ? ' active' : '';
     const isArchived = !!p.project.archivedAt;
-    const isDefault = p.project.key === 'cli-bridge';
     const badge = isArchived ? ' <span class="pill archived">archived</span>' : '';
-    const archiveBtn = (!isArchived && !isDefault)
-      ? '<button class="archive-btn" data-key="' + escapeHtml(p.project.key) + '" data-action="archive" title="Archive project">A</button>'
-      : (isArchived && !isDefault
-        ? '<button class="archive-btn" data-key="' + escapeHtml(p.project.key) + '" data-action="unarchive" title="Unarchive project">U</button>'
-        : '');
     const statusLabel = '<span class="status-label">' + escapeHtml(p.status || 'idle') + ' · ' + escapeHtml(String(p.goalCount)) + ' goals' + badge + '</span>';
-    return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + archiveBtn + '</li>';
+    return '<li class="project-item' + activeClass + '" data-key="' + escapeHtml(p.project.key) + '"><span>' + escapeHtml(p.project.label) + '</span>' + statusLabel + '</li>';
   }).join('');
 
   // Bind project switching
   list.querySelectorAll('.project-item').forEach(li => {
     li.addEventListener('click', async (e) => {
-      // Ignore clicks on archive buttons.
-      if (e.target.classList.contains('archive-btn')) return;
       if (li.dataset.key === store.activeProjectKey) return;
       store.activeProjectKey = li.dataset.key;
       localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
@@ -466,33 +555,32 @@ function renderProjectList() {
       }
     });
   });
-
-  // Bind archive/unarchive buttons
-  list.querySelectorAll('.archive-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const key = btn.dataset.key;
-      const action = btn.dataset.action; // 'archive' or 'unarchive'
-      const path = '/bridge/projects/' + key + '/' + action;
-      const res = await api(path, 'POST');
-      if (res.ok) {
-        await refreshAll();
-      }
-    });
-  });
 }
 
 function renderTopBar() {
   const detail = store.cache.detail;
   const label = detail && detail.project ? detail.project.label : store.activeProjectKey;
   const description = detail && detail.project ? detail.project.description || '' : '';
-  const key = store.activeProjectKey;
   $('top-project').textContent = 'Project: ' + label;
-  $('top-project').title = description ? label + ' — ' + description : 'Click to edit label';
-  $('top-project').onclick = () => beginInlineEdit(key, label, description, (newLabel) => {
-    api('/bridge/projects/' + encodeURIComponent(key), 'PATCH', { label: newLabel })
-      .then(res => { if (res.ok) refreshAll(); });
-  });
+  $('recent-session-label').textContent = label + ' · latest project context';
+  $('top-project').title = description ? label + ' — ' + description : 'Use project rename <key> <label>';
+  $('top-project').onclick = null;
+}
+
+function renderProjectHistory() {
+  const list = $('project-history-list');
+  if (!list) return;
+  const timeline = store.cache.timeline;
+  const entries = timeline && Array.isArray(timeline.entries) ? timeline.entries : [];
+  if (!entries.length) {
+    list.innerHTML = '<li class="empty-state">No project history yet</li>';
+    return;
+  }
+  list.innerHTML = entries.slice(0, 8).map(e => {
+    const label = e.label || e.kind || e.source || 'project event';
+    const status = e.statusLabel ? ' · ' + e.statusLabel : '';
+    return '<li>' + escapeHtml(label.slice(0, 72)) + escapeHtml(status) + '</li>';
+  }).join('');
 }
 
 function renderStatusPanel() {
@@ -604,39 +692,159 @@ function renderWorkspace() {
     $('goal-card').style.display = '';
     $('goal-content').innerHTML = '<div class="loading">Loading project detail…</div>';
     $('timeline-container').style.display = 'none';
+    $('context-container').innerHTML = '';
+    renderFactsRail();
     return;
   }
-  if (store.view === 'workspace') {
-    renderGoalCard();
-    renderTimeline();
-    $('timeline-container').style.display = '';
-    $('goal-card').style.display = '';
+  renderGoalCard();
+  renderTimeline();
+  renderCommandLog();
+  renderCommandContext();
+  $('timeline-container').style.display = '';
+  $('goal-card').style.display = '';
+}
+
+function renderFactsRail() {
+  const rail = $('facts-rail');
+  if (!rail) return;
+  const detail = store.cache.detail;
+  const activeGoal = getActiveGoalEntry();
+  const next = getNextAction(activeGoal);
+  const summary = detail && detail.summary ? detail.summary : null;
+  const project = detail && detail.project ? detail.project : null;
+  const timelineEntries = store.cache.timeline && Array.isArray(store.cache.timeline.entries)
+    ? store.cache.timeline.entries : [];
+  const auditView = store.cache.audit;
+  const verSummary = store.cache.verification ? store.cache.verification.summary : null;
+
+  $('fact-project').innerHTML = project
+    ? escapeHtml(project.label || project.key) + '<br><span class="unavailable">' + escapeHtml(summary?.status || 'unknown') + '</span>'
+    : (store.connected ? '<span class="unavailable">not available</span>' : '<span class="unavailable">connect first</span>');
+
+  $('fact-next').innerHTML = '<code>' + escapeHtml(next.command) + '</code><br><span class="unavailable">' + escapeHtml(next.label) + '</span>';
+
+  if (activeGoal && activeGoal.plan) {
+    const steps = activeGoal.plan.steps || [];
+    const done = steps.filter(s => s.status === 'done').length;
+    const gate = getBlockedGateTarget(activeGoal);
+    $('fact-plan').innerHTML = escapeHtml(activeGoal.plan.status) + '<br><span class="unavailable">' + escapeHtml(String(done)) + ' / ' + escapeHtml(String(steps.length)) + ' steps</span>'
+      + (gate ? '<br><span class="pill gate">gate blocked</span>' : '');
+  } else if (activeGoal && activeGoal.goal.status === 'draft') {
+    $('fact-plan').innerHTML = '<code>plan</code><br><span class="unavailable">draft goal</span>';
   } else {
-    $('goal-card').style.display = 'none';
-    $('timeline-container').style.display = 'none';
-    renderSectionView();
+    $('fact-plan').innerHTML = '<span class="unavailable">no active plan</span>';
+  }
+
+  if (verSummary && typeof verSummary.evidenceCount === 'number') {
+    const typed = verSummary.resultCounts || {};
+    const failed = Number(typed.failed || 0) + Number(typed.errored || 0);
+    $('fact-verify').innerHTML = escapeHtml(String(verSummary.evidenceCount)) + ' records'
+      + (failed > 0 ? '<br><span class="pill failed">' + escapeHtml(String(failed)) + ' attention</span>' : '');
+  } else {
+    $('fact-verify').innerHTML = '<span class="unavailable">not available</span>';
+  }
+
+  if (auditView && typeof auditView.total === 'number') {
+    $('fact-audit').innerHTML = escapeHtml(String(auditView.total)) + ' events';
+  } else if (detail && Array.isArray(detail.auditEvents)) {
+    $('fact-audit').innerHTML = escapeHtml(String(detail.auditEvents.length)) + ' events';
+  } else {
+    $('fact-audit').innerHTML = '<span class="unavailable">not available</span>';
+  }
+
+  if (timelineEntries.length) {
+    const e = timelineEntries[0];
+    const label = e.label || e.kind || e.source || 'project event';
+    $('fact-last-event').innerHTML = escapeHtml(String(label).slice(0, 96));
+  } else {
+    $('fact-last-event').innerHTML = '<span class="unavailable">none</span>';
   }
 }
 
-function renderGoalCard() {
+function getActiveGoalEntry() {
   const goals = store.cache.detail ? store.cache.detail.goals || [] : [];
-  const activeGoal = goals.find(g => g.goal.status !== 'done' && g.goal.status !== 'cancelled');
+  return goals.find(g => g.goal.status !== 'done' && g.goal.status !== 'cancelled' && g.goal.status !== 'failed') || null;
+}
+
+function getDraftGoalEntry() {
+  const goals = store.cache.detail ? store.cache.detail.goals || [] : [];
+  return goals.find(g => g.goal.status === 'draft') || null;
+}
+
+function getRunnableGoalEntry() {
+  const goals = store.cache.detail ? store.cache.detail.goals || [] : [];
+  return goals.find(g => g.plan && (g.plan.status === 'approved' || g.plan.status === 'executing')) || null;
+}
+
+function getApprovalGoalEntry() {
+  const goals = store.cache.detail ? store.cache.detail.goals || [] : [];
+  return goals.find(g => g.plan && g.plan.status === 'awaiting-approval') || null;
+}
+
+function getBlockedGateTarget(goalEntry) {
+  if (!goalEntry || !goalEntry.plan || !Array.isArray(goalEntry.plan.steps)) return null;
+  const blocked = goalEntry.plan.steps.filter(s => s.status === 'blocked-needs-gate');
+  if (blocked.length !== 1) return null;
+  return blocked[0];
+}
+
+function getNextAction(goalEntry) {
+  if (!goalEntry) return { command: 'goal <task>', label: 'Create a project-scoped goal' };
+  if (!goalEntry.plan && goalEntry.goal.status === 'draft') return { command: 'plan', label: 'Generate a plan for this goal' };
+  if (goalEntry.plan && goalEntry.plan.status === 'awaiting-approval') return { command: 'approve plan', label: 'Approve the active plan' };
+  const gate = getBlockedGateTarget(goalEntry);
+  if (gate) return { command: 'approve gate', label: 'Approve the blocked mutating step gate' };
+  if (goalEntry.plan && (goalEntry.plan.status === 'approved' || goalEntry.plan.status === 'executing')) return { command: 'continue', label: 'Run the next approved step' };
+  return { command: 'status', label: 'Inspect current project status' };
+}
+
+function renderGoalCard() {
+  const activeGoal = getActiveGoalEntry();
   if (!activeGoal) {
-    $('goal-content').innerHTML = '<span class="unavailable">no active goal — use the command bar to create one</span>';
+    const current = store.connected
+      ? '<span class="unavailable">No active goal</span>'
+      : '<span class="unavailable">Paste the current pairing token and Connect.</span>';
+    const plan = store.connected
+      ? '<span class="unavailable">No active plan yet</span>'
+      : '<span class="unavailable">Project data loads after connection.</span>';
+    const next = store.connected
+      ? '<code>goal &lt;task&gt;</code> creates a project-scoped goal.'
+      : '<code>connect</code> unlocks project status and commands.';
+    $('goal-content').innerHTML =
+      '<div class="context-stack">'
+      + '<div class="context-block" data-current-goal="true"><div class="context-label">Current goal</div>' + current + '</div>'
+      + '<div class="context-block" data-active-project-plan="true"><div class="context-label">Active project plan</div>' + plan + '</div>'
+      + '<div class="context-block next-action" data-next-action="true"><strong>Next action</strong><br>' + next + '</div>'
+      + '<div class="action-status" id="goal-action-status" aria-live="polite" role="status"></div>'
+      + '</div>';
     return;
   }
   const g = activeGoal.goal;
-  let html = '<div style="font-size:14px;font-weight:500;">' + escapeHtml(g.description) + '</div>';
+  const next = getNextAction(activeGoal);
+  let html = '<div class="context-stack">';
+  html += '<div class="context-block" data-current-goal="true">';
+  html += '<div class="context-label">Current goal</div>';
+  html += '<div style="font-size:15px;font-weight:600;">' + escapeHtml(g.description) + '</div>';
   html += '<div style="margin-top:6px;"><span class="pill">' + escapeHtml(g.status) + '</span></div>';
-  // v2.4a: Model API status (read-only).
-  html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">Model API: <span class="unavailable">unavailable — use review-cli plan generation</span>; CriticModel: <span class="unavailable">advisory-only</span></div>';
+  html += '</div>';
+
+  html += '<div class="context-block" data-active-project-plan="true">';
+  html += '<div class="context-label">Active project plan</div>';
   if (activeGoal.plan) {
+    const steps = activeGoal.plan.steps || [];
+    const doneCount = steps.filter(s => s.status === 'done').length;
+    const blocked = steps.filter(s => s.status === 'blocked-needs-gate').length;
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    html += '<span class="pill">' + escapeHtml(activeGoal.plan.status) + '</span>';
+    html += '<span style="font-size:12px;color:var(--muted);">' + escapeHtml(String(doneCount)) + ' / ' + escapeHtml(String(steps.length)) + ' steps done</span>';
+    if (blocked) html += '<span class="pill gate">' + escapeHtml(String(blocked)) + ' blocked gate</span>';
+    html += '</div>';
     // v2.16 ADR-0021: per-step verification result indicator.
     var verRecords = (store.cache.verification && Array.isArray(store.cache.verification.records))
       ? store.cache.verification.records : [];
     var VALID_RESULTS = { passed: 1, failed: 1, skipped: 1, errored: 1, unknown: 1 };
-    html += '<div style="margin-top:12px;"><table><thead><tr><th>#</th><th>intent</th><th>kind</th><th>tier</th><th>status</th><th>verify</th><th></th></tr></thead><tbody>';
-    (activeGoal.plan.steps || []).forEach(function(s) {
+    html += '<div style="margin-top:10px;"><table><thead><tr><th>#</th><th>intent</th><th>status</th><th>verify</th><th></th></tr></thead><tbody>';
+    steps.slice(0, 12).forEach(function(s) {
       // Select best verification record for this step.
       var bestR = null; var bestCreated = -Infinity;
       (function(){var i; for (i=0; i<verRecords.length; i++) { var r = verRecords[i];
@@ -655,55 +863,44 @@ function renderGoalCard() {
       if (s.status === 'done') statusPill = '<span class="pill done">done</span>';
       if (s.status === 'failed') statusPill = '<span class="pill failed">failed</span>';
       if (s.status === 'blocked-needs-gate') statusPill = '<span class="pill gate">blocked-needs-gate</span>';
-      const gateBtn = s.status === 'blocked-needs-gate' ? '<button class="gate-btn" data-gate="' + escapeHtml(s.id) + '" data-goal="' + escapeHtml(g.id) + '">Approve gate</button>' : '';
-      html += '<tr><td>' + escapeHtml(s.index) + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + escapeHtml(s.kind) + '</td><td>' + escapeHtml(s.tier) + '</td><td>' + statusPill + '</td><td>' + verPill + '</td><td>' + gateBtn + '</td></tr>';
+      const commandHint = s.status === 'blocked-needs-gate' ? '<code>approve gate</code>' : '';
+      html += '<tr><td>' + escapeHtml(s.index) + '</td><td>' + escapeHtml(s.intent) + mut + '</td><td>' + statusPill + '</td><td>' + verPill + '</td><td>' + commandHint + '</td></tr>';
     });
     html += '</tbody></table></div>';
-    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">';
-    if (activeGoal.plan.status === 'awaiting-approval') html += '<button id="btn-approve">Approve plan</button>';
-    if (activeGoal.plan.status === 'approved' || activeGoal.plan.status === 'executing') html += '<button class="secondary" id="btn-step">Run next step</button>';
-    html += '<button class="danger" id="btn-cancel">Cancel</button>';
-    html += '</div>';
+    if (steps.length > 12) html += '<div style="font-size:11px;color:var(--muted);margin-top:6px;">showing first 12 of ' + escapeHtml(String(steps.length)) + ' steps</div>';
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--muted);">Use the composer: <code>' + escapeHtml(next.command) + '</code>. Use <code>cancel</code> to stop the active goal.</div>';
   } else if (g.status === 'draft') {
-    html += '<div style="margin-top:10px;"><button class="secondary" id="btn-gen-plan">Generate plan</button> <button class="danger" id="btn-cancel">Cancel</button></div>';
+    html += '<span class="unavailable">No active plan yet</span>';
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--muted);">Use the composer: <code>plan</code>. Use <code>cancel</code> to stop the active goal.</div>';
   }
+  html += '</div>';
+  html += '<div class="context-block next-action" data-next-action="true"><strong>Next action</strong><br><code>' + escapeHtml(next.command) + '</code> — ' + escapeHtml(next.label) + '</div>';
+  // v2.4a: Model API status (read-only).
+  html += '<div class="context-block" style="font-size:11px;color:var(--muted);">Model API: <span class="unavailable">unavailable — use review-cli plan generation</span>; CriticModel: <span class="unavailable">advisory-only</span></div>';
   html += '<div class="action-status" id="goal-action-status" aria-live="polite" role="status"></div>';
+  html += '</div>';
   $('goal-content').innerHTML = html;
-  bindGoalActions(g.id);
-}
-
-function bindGoalActions(goalId) {
-  const approve = document.getElementById('btn-approve');
-  const step = document.getElementById('btn-step');
-  const cancel = document.getElementById('btn-cancel');
-  const genPlan = document.getElementById('btn-gen-plan');
-
-  if (approve) approve.addEventListener('click', () => goalAction('/bridge/goals/approve', { goalId }, 'approving…'));
-  if (step) step.addEventListener('click', () => goalAction('/bridge/goals/step', { goalId }, 'advancing…'));
-  if (cancel) cancel.addEventListener('click', () => goalAction('/bridge/goals/cancel', { goalId }, 'cancelling…'));
-  if (genPlan) genPlan.addEventListener('click', () => goalAction('/bridge/goals/plan', { goalId }, 'generating plan (this may take a moment)…'));
-
-  document.querySelectorAll('[data-gate]').forEach(btn => {
-    btn.addEventListener('click', () => goalAction('/bridge/goals/gate', { goalId, stepId: btn.dataset.gate }, 'approving gate…'));
-  });
 }
 
 async function goalAction(path, body, msg) {
   const el = document.getElementById('goal-action-status');
   if (el) { el.textContent = msg; el.style.color = 'var(--muted)'; }
+  setCommandStatus(msg);
   const res = await api(path, 'POST', body);
   if (!res.ok) {
     if (el) { el.textContent = 'failed: ' + (res.data?.message || res.status); el.style.color = '#f87171'; }
+    setCommandStatus('failed: ' + (res.data?.message || res.status), true);
     return;
   }
   if (el) { el.textContent = 'done'; }
+  setCommandStatus('done');
   await refreshAll();
 }
 
 function renderTimeline() {
   const timeline = store.cache.timeline;
   if (!timeline || !timeline.entries) {
-    $('timeline').innerHTML = '<div class="loading">Connect to load activity timeline…</div>';
+    $('timeline').innerHTML = '<div class="loading">' + (store.connected ? 'No project activity loaded yet.' : 'Project history appears after connection.') + '</div>';
     return;
   }
   const entries = timeline.entries || [];
@@ -725,23 +922,38 @@ function renderTimeline() {
   }).join('');
 }
 
-function renderSectionView() {
+function appendCommandMessage(command, html, isError) {
+  store.commandMessages.push({ command, html, isError: !!isError });
+  if (store.commandMessages.length > 8) store.commandMessages.shift();
+  renderCommandLog();
+}
+
+function renderCommandLog() {
+  const el = $('command-log');
+  if (!el) return;
+  if (!store.commandMessages.length) {
+    el.innerHTML = store.connected
+      ? ''
+      : '<div class="command-message"><div class="prompt">&gt; help</div><div>Connect first. Then use <span class="command-chip">goal &lt;task&gt;</span><span class="command-chip">status</span><span class="command-chip">verify</span></div></div>';
+    return;
+  }
+  el.innerHTML = store.commandMessages.map(m =>
+    '<div class="command-message' + (m.isError ? ' error' : '') + '"><div class="prompt">&gt; ' + escapeHtml(m.command) + '</div><div>' + m.html + '</div></div>'
+  ).join('');
+}
+
+function renderCommandContext() {
+  const container = $('context-container');
+  if (!container) return;
+  if (!store.contextView) {
+    container.innerHTML = '';
+    return;
+  }
   const detail = store.cache.detail;
-  const main = $('workspace');
   let html = '';
-  if (store.view === 'reviews') {
-    html = '<div class="card"><h3>New Review (review-only)</h3>';
-    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">';
-    html += '<div><label for="review-target" style="font-size:11px;color:var(--muted);">Target</label><select id="review-target" style="font:inherit;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;">';
-    html += '<option value="claude-code-command">Claude Code (review)</option><option value="codex-command">Codex (review)</option></select></div>';
-    html += '<button class="secondary" id="btn-run-review" style="font-size:12px;padding:6px 12px;">Create → Confirm → Dispatch</button>';
-    html += '<span class="action-status" id="review-action-status" aria-live="polite" role="status"></span>';
-    html += '</div>';
-    html += '<textarea id="review-content" placeholder="Paste content to review…" style="width:100%;min-height:70px;resize:vertical;font:inherit;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:8px;font-size:12px;"></textarea>';
-    html += '<p style="font-size:11px;color:var(--muted);margin:6px 0 0;">Dispatch runs a review-only CLI server-side. Any next-prompt stays a draft requiring separate confirmation; nothing is auto-executed.</p>';
-    html += '<pre id="review-result" style="margin-top:8px;">—</pre>';
-    html += '</div>';
-    html += '<div class="card" style="margin-top:16px;"><h3>Reviews</h3>';
+  if (store.contextView === 'reviews') {
+    html = '<div class="card"><h3>Reviews</h3>';
+    html += '<p style="font-size:12px;color:var(--muted);margin:0 0 10px;">Use <span class="command-chip">review &lt;text&gt;</span> in the composer to create and dispatch a governed review.</p>';
     const reviews = detail ? (detail.reviews || []) : [];
     if (!reviews.length) html += '<span class="unavailable">No reviews in this project</span>';
     else {
@@ -750,7 +962,7 @@ function renderSectionView() {
       html += '</tbody></table>';
     }
     html += '</div>';
-  } else if (store.view === 'prompts') {
+  } else if (store.contextView === 'prompts') {
     html = '<div class="card"><h3>Pending Prompts</h3><p style="font-size:11px;color:var(--muted)">Drafts require explicit confirm — never auto-sent.</p>';
     const prompts = detail ? (detail.pendingPrompts || []) : [];
     if (!prompts.length) html += '<span class="unavailable">No pending prompts in this project</span>';
@@ -760,7 +972,7 @@ function renderSectionView() {
       html += '</tbody></table>';
     }
     html += '</div>';
-  } else if (store.view === 'audit') {
+  } else if (store.contextView === 'audit') {
     html = '<div class="card"><h3>Audit Log</h3>';
     const auditView = store.cache.audit;
     if (auditView && auditView.entries && auditView.entries.length) {
@@ -776,7 +988,7 @@ function renderSectionView() {
       html += '<span class="unavailable">No audit events recorded yet.</span><pre id="audit-pre">—</pre>';
     }
     html += '</div>';
-  } else if (store.view === 'memory') {
+  } else if (store.contextView === 'memory') {
     html = '<div class="card"><h3>Derived Memory</h3>';
     const memoryView = store.cache.memory;
     if (memoryView && memoryView.entries && memoryView.entries.length) {
@@ -790,46 +1002,36 @@ function renderSectionView() {
       html += '<span class="unavailable">No derived memory available — create goals and plans to populate.</span></div>';
     }
     html += '</div>';
-  } else if (store.view === 'verification') {
-    html = '<div class="card"><h3>Harness Verification (v2.1 placeholder baseline)</h3>';
-    html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
+  } else if (store.contextView === 'verification') {
+    html = '<div class="card"><h3>Verification</h3>';
+    html += '<p style="font-size:12px;color:var(--muted);margin:0 0 10px;">Commands: <span class="command-chip">refresh verification</span><span class="command-chip">confirm verification</span><span class="command-chip">fetch checks</span></p>';
 
     // ── v2.13 ADR-0018: live verification gate ───
-    html += '<div id="live-verify-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
-    html += '<div style="font-size:12px;font-weight:500;">Live Verification</div>';
+    html += '<div id="live-verify-section" style="margin-top:12px;padding:8px 0;border-top:1px solid var(--border);">';
+    html += '<div style="font-size:12px;font-weight:500;">live verification</div>';
     html += '<div id="live-verify-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">—</div>';
-    html += '<div style="margin-top:6px;">';
-    html += '<button id="btn-live-verify-confirm" class="secondary" disabled>Confirm</button>';
-    html += '<button id="btn-live-verify-refresh" class="secondary" style="margin-left:6px;">Refresh</button>';
-    html += '</div>';
     html += '<div id="live-verify-result" style="margin-top:6px;font-size:11px;"></div>';
     html += '</div>';
 
     // ── v2.14 ADR-0019-a: read-only local git status ───
-    html += '<div id="git-status-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
-    html += '<div style="font-size:12px;font-weight:500;">Git Status (read-only)</div>';
+    html += '<div id="git-status-section" style="margin-top:6px;padding:8px 0;border-top:1px solid var(--border);">';
+    html += '<div style="font-size:12px;font-weight:500;">git status</div>';
     html += '<div id="git-status-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">';
     html += '<span class="unavailable">not yet loaded</span>';
-    html += '</div>';
-    html += '<div style="margin-top:6px;">';
-    html += '<button id="btn-git-status-refresh" class="secondary" style="font-size:11px;padding:4px 8px;">Refresh</button>';
     html += '</div>';
     html += '</div>';
 
     // ── v2.14 ADR-0019-b: GitHub checks confirm gate ───
-    html += '<div id="github-checks-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
-    html += '<div style="font-size:12px;font-weight:500;">GitHub Checks (read-only, network)</div>';
+    html += '<div id="github-checks-section" style="margin-top:6px;padding:8px 0;border-top:1px solid var(--border);">';
+    html += '<div style="font-size:12px;font-weight:500;">github checks</div>';
     html += '<div id="github-checks-meta" style="font-size:11px;color:var(--muted);margin:4px 0;">';
     html += '<span class="unavailable">not yet fetched</span>';
     html += '</div>';
     html += '<div id="github-checks-disclosure" style="font-size:10px;color:var(--muted);margin:4px 0;"></div>';
-    html += '<div style="margin-top:6px;">';
-    html += '<button id="btn-github-checks-confirm" class="primary" style="font-size:11px;padding:4px 8px;">Fetch Checks</button>';
-    html += '</div>';
     html += '</div>';
 
-    html += '<div id="history-section" style="margin-top:16px;padding:10px;border:1px solid var(--border);border-radius:6px;">';
-    html += '<div style="font-size:12px;font-weight:500;">Verification History</div>';
+    html += '<div id="history-section" style="margin-top:6px;padding:8px 0;border-top:1px solid var(--border);">';
+    html += '<div style="font-size:12px;font-weight:500;">verification history</div>';
     (function() {
       var recs = (store.cache.verification && Array.isArray(store.cache.verification.liveRunRecords)) ? store.cache.verification.liveRunRecords : null;
       if (recs && recs.length) {
@@ -863,7 +1065,6 @@ function renderSectionView() {
     html += '</div>';
 
     const verView = store.cache.verification;
-    html += '<p style="font-size:11px;color:var(--muted);">Harness verification is a read-only placeholder. No real harness integration exists yet — all records show "unavailable".</p>';
     if (verView && verView.records && verView.records.length) {
       html += '<table><thead><tr><th>step #</th><th>intent</th><th>result</th><th>harness</th></tr></thead><tbody>';
       verView.records.forEach(r => {
@@ -875,7 +1076,7 @@ function renderSectionView() {
       html += '<span class="unavailable">No completed plan steps — nothing to verify.</span>';
     }
     html += '</div>';
-  } else if (store.view === 'teams') {
+  } else if (store.contextView === 'teams') {
     html = '<div class="card"><h3>AgentTeam (v2.3 − non-executing view)</h3>';
     html += '<p style="font-size:11px;color:var(--muted);">Teams are created and approved via the API. This console shows read-only team status, slot progress, artifacts, and conflict reports. No execute/dispatch/apply buttons.</p>';
     const teamsData = store.cache.teams;
@@ -921,20 +1122,15 @@ function renderSectionView() {
     // No apply/promote/commit/write affordance — keep/discard stays the
     // separate ADR-0008 gated controls, not exposed here.
     html += '<div class="card" style="margin-top:16px;"><h3>Apply Result (read-only)</h3>';
-    html += '<p style="font-size:11px;color:var(--muted);">Inspect what an existing isolated apply produced: manifest, file list, and a size-capped, secret-redacted preview. Read-only — no diff, no baseline, no apply/promote/commit. Requires workspace apply to be enabled.</p>';
-    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">';
-    html += '<div><label for="apply-view-team" style="font-size:11px;color:var(--muted);">Team id</label><br><input id="apply-view-team" type="text" placeholder="teamId" size="18" style="font:inherit;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;" /></div>';
-    html += '<div><label for="apply-view-id" style="font-size:11px;color:var(--muted);">Apply id</label><br><input id="apply-view-id" type="text" placeholder="applyId" size="26" style="font:inherit;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);padding:6px 8px;font-size:12px;" /></div>';
-    html += '<button class="secondary" id="btn-apply-view" style="font-size:12px;padding:6px 12px;">View result</button>';
+    html += '<p style="font-size:11px;color:var(--muted);">Read-only apply inspection. Use <span class="command-chip">apply view &lt;teamId&gt; &lt;applyId&gt;</span> and <span class="command-chip">apply preview &lt;path&gt;</span>. No diff, baseline body, apply, promote, commit, or write path is exposed.</p>';
     html += '<span class="action-status" id="apply-view-status" aria-live="polite" role="status"></span>';
-    html += '</div>';
     html += '<div id="apply-view-manifest" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-baseline" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-classification" style="margin-top:10px;"></div>';
     html += '<div id="apply-view-files" style="margin-top:10px;"></div>';
     html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
     html += '</div>';
-  } else if (store.view === 'workbuddy') {
+  } else if (store.contextView === 'workbuddy') {
     html = '<div class="card"><h3>WorkBuddy Tasks (non-executing)</h3>';
     html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records. All strictly non-executing — no dispatch, no confirm, no auto-send.</p>';
     const wb = store.cache.workbuddy;
@@ -971,25 +1167,18 @@ function renderSectionView() {
     }
     html += '</div>';
   }
-  const existing = document.getElementById('section-panel');
-  if (existing) existing.remove();
-  const div = document.createElement('div');
-  div.id = 'section-panel';
-  div.innerHTML = html;
-  main.appendChild(div);
-
-  // Bind review creation if in reviews view
-  if (store.view === 'reviews') {
-    const btn = document.getElementById('btn-run-review');
-    if (btn) btn.addEventListener('click', runReviewFlow);
+  if (!html) {
+    container.innerHTML = '';
+    return;
   }
+  container.innerHTML = '<div id="section-panel" class="context-block">' + html + '</div>';
+
   // Bind read-only apply-result viewer if in teams view (GET-only; no write).
-  if (store.view === 'teams') {
-    const btn = document.getElementById('btn-apply-view');
-    if (btn) btn.addEventListener('click', viewApplyResult);
+  if (store.contextView === 'teams') {
+    // Apply inspection is command-only.
   }
   // v2.13: Bind live verification gate if in verification view.
-  if (store.view === 'verification') {
+  if (store.contextView === 'verification') {
     initLiveVerificationGate();
     initGitStatusGate();
     initGithubChecksGate();
@@ -1000,9 +1189,6 @@ function renderSectionView() {
 
 async function initLiveVerificationGate() {
   const metaEl = document.getElementById('live-verify-meta');
-  const confirmBtn = document.getElementById('btn-live-verify-confirm');
-  const refreshBtn = document.getElementById('btn-live-verify-refresh');
-  const resultEl = document.getElementById('live-verify-result');
   const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification';
 
   // Fetch profiles
@@ -1020,7 +1206,6 @@ async function initLiveVerificationGate() {
             + ' <span style="color:var(--muted);">risk:</span> ' + escapeHtml(p.networkRisk)
             + ' mutation: ' + escapeHtml(p.mutationRisk);
         }
-        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.style.display = ''; }
       } else if (metaEl) {
         metaEl.innerHTML = '<span class="unavailable">'
           + (avail ? 'No profile selected' : 'No workspace root configured')
@@ -1033,38 +1218,6 @@ async function initLiveVerificationGate() {
     if (metaEl) metaEl.textContent = 'Error loading profiles';
   }
 
-  // Confirm button
-  if (confirmBtn) {
-    confirmBtn.addEventListener('click', async () => {
-      if (resultEl) resultEl.textContent = 'Running...';
-      if (confirmBtn) confirmBtn.disabled = true;
-      try {
-        const r = await api(base + '/confirm', 'POST', { confirm: true });
-        if (resultEl) {
-          if (r.ok) {
-            resultEl.innerHTML = '<span class="pill">' + escapeHtml(r.data.result) + '</span>'
-              + ' ' + escapeHtml(String(r.data.elapsedMs)) + 'ms'
-              + ' label: ' + escapeHtml(r.data.commandLabel);
-          } else {
-            resultEl.innerHTML = '<span class="unavailable">' + escapeHtml(r.data?.error || r.error || 'Failed') + '</span>';
-          }
-        }
-      } catch {
-        if (resultEl) resultEl.textContent = 'Request failed';
-      }
-      if (confirmBtn) confirmBtn.disabled = false;
-      // Refresh verification cache
-      refreshVerificationCache();
-    });
-  }
-
-  // Refresh button — re-fetch verification summary
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', () => {
-      refreshVerificationCache();
-      initLiveVerificationGate(); // re-init to get latest profile state
-    });
-  }
 }
 
 async function refreshVerificationCache() {
@@ -1079,7 +1232,6 @@ async function refreshVerificationCache() {
 
 async function initGitStatusGate() {
   const metaEl = document.getElementById('git-status-meta');
-  const refreshBtn = document.getElementById('btn-git-status-refresh');
   const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification/git-status';
 
   async function fetchGitStatus() {
@@ -1114,55 +1266,21 @@ async function initGitStatusGate() {
   // Initial fetch
   fetchGitStatus();
 
-  // Refresh button
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', fetchGitStatus);
-  }
 }
 
 // ─── v2.14 ADR-0019-b: GitHub Checks Gate ───
 
 async function initGithubChecksGate() {
   const metaEl = document.getElementById('github-checks-meta');
-  const confirmBtn = document.getElementById('btn-github-checks-confirm');
   const disclosureEl = document.getElementById('github-checks-disclosure');
-  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification/github-checks/confirm';
-
-  if (!metaEl || !confirmBtn) return;
-
-  confirmBtn.addEventListener('click', async () => {
-    confirmBtn.disabled = true;
-    metaEl.innerHTML = '<span class="unavailable">fetching...</span>';
-    try {
-      const res = await api(base, 'POST', { confirm: true });
-      if (res.ok && res.data) {
-        const d = res.data;
-        // Display inert typed result — no token/URL/payload.
-        var resultEmoji = d.result === 'passed' ? '&#x2705;' : d.result === 'failed' ? '&#x274C;' : d.result === 'errored' ? '&#x26A0;' : '&#x2753;';
-        metaEl.innerHTML = resultEmoji + ' <strong>' + escapeHtml(d.result) + '</strong> &middot; github-checks &middot; ' + d.elapsedMs + 'ms';
-        // Show host disclosure (inert text, not a URL).
-        if (disclosureEl && d.hostDisclosure) {
-          disclosureEl.innerHTML = escapeHtml(d.hostDisclosure);
-        }
-      } else {
-        const msg = res.data?.message || 'unavailable';
-        metaEl.innerHTML = '<span class="unavailable">' + escapeHtml(msg) + '</span>';
-      }
-    } catch {
-      metaEl.innerHTML = '<span class="unavailable">fetch failed</span>';
-    } finally {
-      confirmBtn.disabled = false;
-      // Refresh verification cache to include the new run record.
-      refreshVerificationCache();
-    }
-  });
+  if (metaEl && disclosureEl) disclosureEl.innerHTML = '';
 }
 
 // Uses ONLY GET endpoints: manifest, file list, and size-capped redacted
 // preview. Issues no write requests of any kind.
-async function viewApplyResult() {
-  const teamId = (document.getElementById('apply-view-team') || {}).value;
-  const applyId = (document.getElementById('apply-view-id') || {}).value;
+async function viewApplyResult(teamIdArg, applyIdArg) {
+  const teamId = teamIdArg;
+  const applyId = applyIdArg;
   const statusEl = document.getElementById('apply-view-status');
   const manifestEl = document.getElementById('apply-view-manifest');
   const baselineEl = document.getElementById('apply-view-baseline');
@@ -1181,6 +1299,7 @@ async function viewApplyResult() {
   const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey)
     + '/teams/' + encodeURIComponent(teamId.trim())
     + '/apply-requests/' + encodeURIComponent(applyId.trim());
+  store.lastApplyPreviewBase = base;
   if (statusEl) { statusEl.textContent = 'loading…'; statusEl.style.color = 'var(--muted)'; }
   const man = await api(base);
   if (!man.ok) {
@@ -1291,18 +1410,15 @@ async function viewApplyResult() {
       (classificationData.files || []).map(cf => [cf.path, cf.classification])
     ) : new Map();
     const hasClass = classificationData && classMap.size > 0;
-    let t = '<table><thead><tr><th>path</th><th>size</th>' + (hasClass ? '<th>class</th>' : '') + '<th></th></tr></thead><tbody>';
+    let t = '<table><thead><tr><th>path</th><th>size</th>' + (hasClass ? '<th>class</th>' : '') + '<th>preview command</th></tr></thead><tbody>';
     files.forEach(f => {
       const label = hasClass ? (classMap.get(f.path) || '—') : null;
       t += '<tr><td>' + escapeHtml(f.path) + '</td><td>' + escapeHtml(String(f.size)) + '</td>'
         + (hasClass ? '<td><span class="pill">' + escapeHtml(label) + '</span></td>' : '')
-        + '<td><button class="secondary apply-preview-btn" data-path="' + escapeHtml(f.path) + '" style="font-size:11px;padding:2px 8px;">Preview</button></td></tr>';
+        + '<td><code>apply preview ' + escapeHtml(f.path) + '</code></td></tr>';
     });
     t += '</tbody></table>';
     filesEl.innerHTML = t;
-    filesEl.querySelectorAll('.apply-preview-btn').forEach(b => {
-      b.addEventListener('click', () => loadApplyPreview(base, b.dataset.path));
-    });
   }
 }
 
@@ -1320,67 +1436,230 @@ async function loadApplyPreview(base, relPath) {
   previewEl.textContent = '# ' + d.path + '  (size ' + d.size + (d.truncated ? ', truncated' : '') + (d.redacted ? ', redacted' : '') + ')\\n\\n' + d.content;
 }
 
-async function runReviewFlow() {
-  const content = document.getElementById('review-content');
-  const target = document.getElementById('review-target');
-  const statusEl = document.getElementById('review-action-status');
-  const resultEl = document.getElementById('review-result');
-  if (!content || !content.value.trim()) { if (statusEl) { statusEl.textContent = 'Enter content to review'; statusEl.style.color = '#f87171'; } return; }
-  const btn = document.getElementById('btn-run-review');
-  if (btn) btn.disabled = true;
-  if (resultEl) resultEl.textContent = '';
-
+async function runReviewCommand(promptText) {
+  const text = promptText.trim();
+  if (!text) {
+    appendCommandMessage('review', 'Usage: <span class="command-chip">review &lt;text&gt;</span>', true);
+    setCommandStatus('review text required', true);
+    return;
+  }
+  setCommandStatus('creating review…');
   try {
-    if (statusEl) { statusEl.textContent = 'creating…'; statusEl.style.color = 'var(--muted)'; }
     const created = await api('/bridge/reviews', 'POST', {
       sessionId: 'project-console-' + Date.now(), sourceEndpointId: 'codex-command',
-      targetEndpointId: target.value, prompt: content.value.trim(),
+      targetEndpointId: 'claude-code-command', prompt: text,
       projectId: store.activeProjectKey,
     });
-    if (!created.ok) { if (statusEl) { statusEl.textContent = 'create failed: ' + (created.data?.message || created.status); statusEl.style.color = '#f87171'; } return; }
+    if (!created.ok) {
+      appendCommandMessage('review ' + text, 'Create failed: ' + escapeHtml(created.data?.message || created.status), true);
+      setCommandStatus('review create failed', true);
+      return;
+    }
     const reviewId = created.data.review.id;
 
-    if (statusEl) statusEl.textContent = 'confirming…';
+    setCommandStatus('confirming review…');
     const confirmed = await api('/bridge/reviews/confirm', 'POST', { reviewId });
-    if (!confirmed.ok) { if (statusEl) { statusEl.textContent = 'confirm failed: ' + (confirmed.data?.message || confirmed.status); statusEl.style.color = '#f87171'; } return; }
-
-    if (statusEl) statusEl.textContent = 'dispatching (running CLI)…';
-    const dispatched = await api('/bridge/reviews/dispatch', 'POST', { reviewId });
-    if (!dispatched.ok) { if (statusEl) { statusEl.textContent = 'dispatch failed: ' + (dispatched.data?.message || dispatched.status); statusEl.style.color = '#f87171'; } return; }
-
-    if (statusEl) { statusEl.textContent = 'returned'; statusEl.style.color = 'var(--muted)'; }
-    if (resultEl) {
-      resultEl.textContent = JSON.stringify(dispatched.data.result, null, 2)
-        + (dispatched.data.nextPrompt ? '\\n\\n[next-prompt draft ' + dispatched.data.nextPrompt.id.slice(0,8) + ' — status ' + dispatched.data.nextPrompt.status + ', requires confirm]' : '');
+    if (!confirmed.ok) {
+      appendCommandMessage('review ' + text, 'Confirm failed: ' + escapeHtml(confirmed.data?.message || confirmed.status), true);
+      setCommandStatus('review confirm failed', true);
+      return;
     }
-    content.value = '';
+
+    setCommandStatus('dispatching review…');
+    const dispatched = await api('/bridge/reviews/dispatch', 'POST', { reviewId });
+    if (!dispatched.ok) {
+      appendCommandMessage('review ' + text, 'Dispatch failed: ' + escapeHtml(dispatched.data?.message || dispatched.status), true);
+      setCommandStatus('review dispatch failed', true);
+      return;
+    }
+
+    appendCommandMessage('review ' + text, 'Review returned. ' + (dispatched.data.nextPrompt ? 'Next prompt draft: ' + escapeHtml(dispatched.data.nextPrompt.id.slice(0, 8)) + '.' : 'No next prompt draft.'));
+    setCommandStatus('review returned');
     await refreshAll();
   } catch (e) {
-    if (statusEl) { statusEl.textContent = 'error: ' + (e?.message || e); statusEl.style.color = '#f87171'; }
-  } finally {
-    if (btn) btn.disabled = false;
+    appendCommandMessage('review ' + text, 'Error: ' + escapeHtml(e?.message || e), true);
+    setCommandStatus('review error', true);
   }
 }
 
-// ─── Section Nav ───
-$('section-nav').addEventListener('click', (e) => {
-  const li = e.target.closest('[data-view]');
-  if (!li) return;
-  switchSection(li);
-});
-$('section-nav').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault();
-    const li = e.target.closest('[data-view]');
-    if (li) switchSection(li);
-  }
-});
-function switchSection(li) {
-  store.view = li.dataset.view;
-  document.querySelectorAll('#section-nav li').forEach(el => { el.classList.remove('active'); el.setAttribute('aria-selected', 'false'); });
-  li.classList.add('active');
-  li.setAttribute('aria-selected', 'true');
+// ─── Command Context ───
+function showCommandContext(view) {
+  store.contextView = view === 'workspace' ? '' : view;
   renderWorkspace();
+}
+
+function setCommandStatus(message, isError) {
+  const el = $('command-status');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.color = isError ? '#f87171' : 'var(--muted)';
+}
+
+async function confirmVerificationCommand(input) {
+  const resultEl = document.getElementById('live-verify-result');
+  if (resultEl) resultEl.textContent = 'Running...';
+  setCommandStatus('confirming verification…');
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification';
+  try {
+    const r = await api(base + '/confirm', 'POST', { confirm: true });
+    if (r.ok) {
+      const message = '<span class="pill">' + escapeHtml(r.data.result) + '</span> '
+        + escapeHtml(String(r.data.elapsedMs)) + 'ms · ' + escapeHtml(r.data.commandLabel);
+      if (resultEl) resultEl.innerHTML = message;
+      appendCommandMessage(input, message);
+      setCommandStatus('verification recorded');
+      await refreshVerificationCache();
+    } else {
+      const msg = escapeHtml(r.data?.error || r.data?.message || r.status);
+      if (resultEl) resultEl.innerHTML = '<span class="unavailable">' + msg + '</span>';
+      appendCommandMessage(input, 'Verification failed: ' + msg, true);
+      setCommandStatus('verification failed', true);
+    }
+  } catch (e) {
+    appendCommandMessage(input, 'Request failed: ' + escapeHtml(e?.message || e), true);
+    setCommandStatus('verification request failed', true);
+  }
+}
+
+async function fetchGithubChecksCommand(input) {
+  const metaEl = document.getElementById('github-checks-meta');
+  const disclosureEl = document.getElementById('github-checks-disclosure');
+  const base = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/verification/github-checks/confirm';
+  if (metaEl) metaEl.innerHTML = '<span class="unavailable">fetching...</span>';
+  setCommandStatus('fetching checks…');
+  try {
+    const res = await api(base, 'POST', { confirm: true });
+    if (res.ok && res.data) {
+      const d = res.data;
+      var resultEmoji = d.result === 'passed' ? '&#x2705;' : d.result === 'failed' ? '&#x274C;' : d.result === 'errored' ? '&#x26A0;' : '&#x2753;';
+      const msg = resultEmoji + ' <strong>' + escapeHtml(d.result) + '</strong> &middot; github-checks &middot; ' + escapeHtml(String(d.elapsedMs)) + 'ms';
+      if (metaEl) metaEl.innerHTML = msg;
+      if (disclosureEl && d.hostDisclosure) disclosureEl.innerHTML = escapeHtml(d.hostDisclosure);
+      appendCommandMessage(input, msg);
+      setCommandStatus('checks fetched');
+      await refreshVerificationCache();
+    } else {
+      const msg = escapeHtml(res.data?.message || 'unavailable');
+      if (metaEl) metaEl.innerHTML = '<span class="unavailable">' + msg + '</span>';
+      appendCommandMessage(input, 'Checks unavailable: ' + msg, true);
+      setCommandStatus('checks unavailable', true);
+    }
+  } catch {
+    if (metaEl) metaEl.innerHTML = '<span class="unavailable">fetch failed</span>';
+    appendCommandMessage(input, 'Checks request failed', true);
+    setCommandStatus('checks request failed', true);
+  }
+}
+
+function connectRequired(input) {
+  appendCommandMessage(input, 'Connect first with the pairing token printed by the local server. Then retry <span class="command-chip">' + escapeHtml(input) + '</span>.', true);
+  setCommandStatus('connect required', true);
+}
+
+function showHelp(input) {
+  appendCommandMessage(input, 'Commands: <span class="command-chip">goal &lt;task&gt;</span><span class="command-chip">status</span><span class="command-chip">history</span><span class="command-chip">plan</span><span class="command-chip">continue</span><span class="command-chip">verify</span><span class="command-chip">review &lt;text&gt;</span><span class="command-chip">project create &lt;key&gt;</span><span class="command-chip">project archive &lt;key&gt;</span>');
+  setCommandStatus('showing commands');
+}
+
+async function createProjectCommand(input, key) {
+  if (!key) {
+    appendCommandMessage(input, 'Usage: <span class="command-chip">project create &lt;key&gt;</span>', true);
+    setCommandStatus('project key required', true);
+    return;
+  }
+  setCommandStatus('creating project…');
+  const res = await api('/bridge/projects', 'POST', { key });
+  if (!res.ok) {
+    const msg = escapeHtml(res.data?.message || res.data?.error || res.status);
+    appendCommandMessage(input, 'Project create failed: ' + msg, true);
+    setCommandStatus('project create failed', true);
+    return;
+  }
+  store.activeProjectKey = res.data.project.key;
+  localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
+  store.cache.detail = null;
+  store.cache.timeline = null;
+  store.cache.audit = null;
+  store.cache.memory = null;
+  store.cache.verification = null;
+  store.cache.workbuddy = null;
+  store.cache.teams = null;
+  await refreshAll();
+  appendCommandMessage(input, 'Project created: <code>' + escapeHtml(store.activeProjectKey) + '</code>');
+  setCommandStatus('project created');
+}
+
+async function archiveProjectCommand(input, key, action) {
+  if (!key) {
+    appendCommandMessage(input, 'Usage: <span class="command-chip">project ' + escapeHtml(action) + ' &lt;key&gt;</span>', true);
+    setCommandStatus('project key required', true);
+    return;
+  }
+  const path = '/bridge/projects/' + encodeURIComponent(key) + '/' + action;
+  setCommandStatus(action + ' project…');
+  const res = await api(path, 'POST');
+  if (!res.ok) {
+    const msg = escapeHtml(res.data?.message || res.data?.error || res.status);
+    appendCommandMessage(input, 'Project ' + escapeHtml(action) + ' failed: ' + msg, true);
+    setCommandStatus('project ' + action + ' failed', true);
+    return;
+  }
+  await refreshAll();
+  appendCommandMessage(input, 'Project ' + escapeHtml(action) + 'd: <code>' + escapeHtml(key) + '</code>');
+  setCommandStatus('project ' + action + 'd');
+}
+
+async function renameProjectCommand(input, rest) {
+  const parts = rest.trim().split(/\\s+/);
+  const key = parts.shift();
+  const label = parts.join(' ').trim();
+  if (!key || !label) {
+    appendCommandMessage(input, 'Usage: <span class="command-chip">project rename &lt;key&gt; &lt;label&gt;</span>', true);
+    setCommandStatus('project rename needs key and label', true);
+    return;
+  }
+  const res = await api('/bridge/projects/' + encodeURIComponent(key), 'PATCH', { label });
+  if (!res.ok) {
+    const msg = escapeHtml(res.data?.message || res.data?.error || res.status);
+    appendCommandMessage(input, 'Project rename failed: ' + msg, true);
+    setCommandStatus('project rename failed', true);
+    return;
+  }
+  await refreshAll();
+  appendCommandMessage(input, 'Project renamed: <code>' + escapeHtml(key) + '</code>');
+  setCommandStatus('project renamed');
+}
+
+async function applyViewCommand(input, rest) {
+  const parts = rest.trim().split(/\\s+/);
+  const teamId = parts[0];
+  const applyId = parts[1];
+  if (!teamId || !applyId) {
+    appendCommandMessage(input, 'Usage: <span class="command-chip">apply view &lt;teamId&gt; &lt;applyId&gt;</span>', true);
+    setCommandStatus('apply view needs team and apply id', true);
+    return;
+  }
+  showCommandContext('teams');
+  await viewApplyResult(teamId, applyId);
+  appendCommandMessage(input, 'Apply result loaded. Preview files with <span class="command-chip">apply preview &lt;path&gt;</span>.');
+  setCommandStatus('apply result loaded');
+}
+
+async function applyPreviewCommand(input, relPath) {
+  const path = relPath.trim();
+  if (!path) {
+    appendCommandMessage(input, 'Usage: <span class="command-chip">apply preview &lt;path&gt;</span>', true);
+    setCommandStatus('apply preview needs path', true);
+    return;
+  }
+  if (!store.lastApplyPreviewBase) {
+    appendCommandMessage(input, 'Run <span class="command-chip">apply view &lt;teamId&gt; &lt;applyId&gt;</span> first.', true);
+    setCommandStatus('apply view required', true);
+    return;
+  }
+  await loadApplyPreview(store.lastApplyPreviewBase, path);
+  appendCommandMessage(input, 'Preview loaded: <code>' + escapeHtml(path) + '</code>');
+  setCommandStatus('preview loaded');
 }
 
 // ─── Command Bar ───
@@ -1388,69 +1667,70 @@ $('command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') h
 $('command-send').addEventListener('click', handleCommand);
 
 async function handleCommand() {
-  if (!store.connected) { $('command-input').placeholder = 'Connect first (enter pairing token above)'; return; }
   const input = $('command-input').value.trim();
   if (!input) return;
   $('command-input').value = '';
-  // Simple intent detection
-  if (input.toLowerCase().startsWith('generate plan') || input.toLowerCase().startsWith('生成 plan') || input.toLowerCase().startsWith('生成plan')) {
-    const detail = store.cache.detail;
-    const activeGoal = detail ? (detail.goals || []).find(g => g.goal.status === 'draft') : null;
-    if (activeGoal) {
-      await goalAction('/bridge/goals/plan', { goalId: activeGoal.goal.id }, 'generating plan…');
-    }
+  const lc = input.toLowerCase();
+  const activeGoal = getActiveGoalEntry();
+
+  if (lc === 'help' || lc === '?' || lc === 'commands') {
+    showHelp(input);
     return;
   }
-  if (input.toLowerCase() === 'continue' || input === '继续') {
-    const detail = store.cache.detail;
-    const activeGoal = detail ? (detail.goals || []).find(g => g.plan && (g.plan.status === 'approved' || g.plan.status === 'executing')) : null;
-    if (activeGoal) {
-      await goalAction('/bridge/goals/step', { goalId: activeGoal.goal.id }, 'advancing…');
-    }
+  if (!store.connected) {
+    connectRequired(input);
     return;
   }
-  // Default: create a new goal
-  await goalAction('/bridge/goals', { sessionId: 'project-console-' + Date.now(), description: input, projectId: store.activeProjectKey }, 'creating goal…');
-}
 
-// ─── Utilities ───
-function beginInlineEdit(key, label, description, onSave) {
-  const el = document.getElementById('top-project');
-  if (!el) return;
-  const oldText = el.textContent;
-  el.innerHTML = '<input id="inline-edit-input" value="' + escapeHtml(label) + '" style="width:200px" />'
-    + '<button class="secondary" id="inline-edit-save" style="margin-left:4px">Save</button>'
-    + '<button id="inline-edit-cancel" style="margin-left:2px">Cancel</button>';
-  const input = document.getElementById('inline-edit-input');
-  const save = document.getElementById('inline-edit-save');
-  const cancel = document.getElementById('inline-edit-cancel');
-  save.onclick = () => {
-    const newLabel = input.value.trim();
-    if (newLabel && newLabel !== label) onSave(newLabel);
-    el.textContent = oldText;
-    renderTopBar();
-  };
-  cancel.onclick = () => { el.textContent = oldText; renderTopBar(); };
-  input.focus();
-  input.select();
-}
+  if (lc === 'status') {
+    showCommandContext('workspace');
+    setCommandStatus('showing project status');
+    return;
+  }
+  if (lc === 'recent' || input === '最近会话') {
+    showCommandContext('workspace');
+    setCommandStatus('showing recent project conversation');
+    return;
+  }
+  if (lc === 'history' || input === '历史') {
+    showCommandContext('workspace');
+    setCommandStatus('showing project-owned history');
+    return;
+  }
+  if (lc === 'plan history' || input === '规划历史') {
+    showCommandContext('workspace');
+    setCommandStatus('showing historical plan context from project data');
+    return;
+  }
+  if (lc === 'audit') { showCommandContext('audit'); setCommandStatus('showing audit context'); return; }
+  if (lc === 'memory') { showCommandContext('memory'); setCommandStatus('showing derived memory'); return; }
+  if (lc === 'verify' || lc === 'verification') { showCommandContext('verification'); setCommandStatus('showing verification context'); return; }
+  if (lc === 'review' || lc === 'reviews') { showCommandContext('reviews'); setCommandStatus('showing review context'); return; }
+  if (lc === 'prompts') { showCommandContext('prompts'); setCommandStatus('showing prompt context'); return; }
+  if (lc === 'teams' || lc === 'team') { showCommandContext('teams'); setCommandStatus('showing team context'); return; }
+  if (lc === 'tasks' || lc === 'workbuddy') { showCommandContext('workbuddy'); setCommandStatus('showing task context'); return; }
+  if (lc === 'apply') { showCommandContext('teams'); setCommandStatus('showing apply-result context'); return; }
+  if (lc === 'refresh verification') { await refreshVerificationCache(); showCommandContext('verification'); appendCommandMessage(input, 'Verification context refreshed.'); setCommandStatus('verification refreshed'); return; }
+  if (lc === 'confirm verification') { await confirmVerificationCommand(input); return; }
+  if (lc === 'fetch checks') { await fetchGithubChecksCommand(input); return; }
+  if (lc.startsWith('review ')) { await runReviewCommand(input.slice('review '.length)); return; }
+  if (lc.startsWith('project create ')) { await createProjectCommand(input, input.slice('project create '.length).trim()); return; }
+  if (lc.startsWith('project archive ')) { await archiveProjectCommand(input, input.slice('project archive '.length).trim(), 'archive'); return; }
+  if (lc.startsWith('project unarchive ')) { await archiveProjectCommand(input, input.slice('project unarchive '.length).trim(), 'unarchive'); return; }
+  if (lc.startsWith('project rename ')) { await renameProjectCommand(input, input.slice('project rename '.length)); return; }
+  if (lc.startsWith('apply view ')) { await applyViewCommand(input, input.slice('apply view '.length)); return; }
+  if (lc.startsWith('apply preview ')) { await applyPreviewCommand(input, input.slice('apply preview '.length)); return; }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-}
-
-// ─── New Project ───
-$('btn-new-proj').addEventListener('click', async () => {
-  const key = $('new-proj-key').value.trim();
-  if (!key) { $('new-proj-status').textContent = 'enter a key'; return; }
-  $('new-proj-status').textContent = 'creating…';
-  const res = await api('/bridge/projects', 'POST', { key });
-  if (res.ok) {
-    $('new-proj-key').value = '';
-    $('new-proj-status').textContent = 'created';
-    store.activeProjectKey = res.data.project.key;
+  if (lc.startsWith('switch project ')) {
+    const key = input.slice('switch project '.length).trim();
+    const match = (store.cache.projects || []).find(p => p.project && p.project.key === key);
+    if (!match) {
+      setCommandStatus('unknown project: ' + key, true);
+      return;
+    }
+    store.activeProjectKey = key;
     localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
-    // Clear old project-scoped cache so a partial refresh failure does not display stale data.
+    store.switchingProject = true;
     store.cache.detail = null;
     store.cache.timeline = null;
     store.cache.audit = null;
@@ -1458,11 +1738,82 @@ $('btn-new-proj').addEventListener('click', async () => {
     store.cache.verification = null;
     store.cache.workbuddy = null;
     store.cache.teams = null;
-    await refreshAll();
-  } else {
-    $('new-proj-status').textContent = res.data?.message || 'failed';
+    renderWorkspace();
+    try {
+      await refreshAll();
+      setCommandStatus('switched project: ' + key);
+    } finally {
+      store.switchingProject = false;
+      renderAll();
+    }
+    return;
   }
-});
+
+  // Simple intent detection
+  if (lc === 'plan' || lc.startsWith('generate plan') || lc.startsWith('生成 plan') || lc.startsWith('生成plan')) {
+    const draftGoal = getDraftGoalEntry();
+    if (draftGoal) {
+      await goalAction('/bridge/goals/plan', { goalId: draftGoal.goal.id }, 'generating plan…');
+    } else {
+      setCommandStatus('no draft goal to plan', true);
+    }
+    return;
+  }
+  if (lc === 'approve plan') {
+    const approvalGoal = getApprovalGoalEntry();
+    if (approvalGoal) {
+      await goalAction('/bridge/goals/approve', { goalId: approvalGoal.goal.id }, 'approving…');
+    } else {
+      setCommandStatus('no plan awaiting approval', true);
+    }
+    return;
+  }
+  if (lc === 'approve gate') {
+    const gate = getBlockedGateTarget(activeGoal);
+    if (activeGoal && gate) {
+      await goalAction('/bridge/goals/gate', { goalId: activeGoal.goal.id, stepId: gate.id }, 'approving gate…');
+    } else {
+      setCommandStatus('no single blocked gate to approve', true);
+    }
+    return;
+  }
+  if (lc === 'cancel') {
+    if (activeGoal) {
+      await goalAction('/bridge/goals/cancel', { goalId: activeGoal.goal.id }, 'cancelling…');
+    } else {
+      setCommandStatus('no active goal to cancel', true);
+    }
+    return;
+  }
+  if (lc === 'continue' || input === '继续') {
+    const runnableGoal = getRunnableGoalEntry();
+    if (runnableGoal) {
+      await goalAction('/bridge/goals/step', { goalId: runnableGoal.goal.id }, 'advancing…');
+    } else {
+      setCommandStatus('no approved step to continue', true);
+    }
+    return;
+  }
+  if (lc.startsWith('goal ') || lc.startsWith('/goal ') || lc.startsWith('目标 ')) {
+    let description = '';
+    if (lc.startsWith('/goal ')) description = input.slice(6).trim();
+    else if (lc.startsWith('goal ')) description = input.slice(5).trim();
+    else description = input.slice(3).trim();
+    if (!description) {
+      appendCommandMessage(input, 'Usage: <span class="command-chip">goal &lt;task&gt;</span>', true);
+      setCommandStatus('goal text required', true);
+      return;
+    }
+    await goalAction('/bridge/goals', { sessionId: 'project-console-' + Date.now(), description, projectId: store.activeProjectKey }, 'creating goal…');
+    return;
+  }
+  appendCommandMessage(input, 'Unknown command. Use <span class="command-chip">help</span> or create work with <span class="command-chip">goal &lt;task&gt;</span>.', true);
+  setCommandStatus('unknown command', true);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
 </script>
 </body>
 </html>`;

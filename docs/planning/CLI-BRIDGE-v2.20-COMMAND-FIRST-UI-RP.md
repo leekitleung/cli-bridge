@@ -9,6 +9,9 @@ explicit human trigger; returns to `REVIEW-2.20-1` before any closeout/commit/pu
 **User signal**: the current middle-layer UI is too far from the desired
 minimal, Codex-like experience. The desired interaction should be command-first,
 not "click a feature button to enter that feature."
+Follow-up clarification: the left side should not become a feature navigation
+rail. It should have at most one "recent session" affordance, while conversation
+history primarily belongs under each corresponding project.
 **Reuses (no new boundary)**: existing `/console/project`, existing extension
 panel hooks, existing pairing-token auth, existing goal/review/verification
 endpoints, and the existing no-generic-command-endpoint invariant.
@@ -45,6 +48,9 @@ The current UI has accumulated a "control room" shape:
 - The command bar exists, but it is secondary. It routes only a small subset of
   goal actions while the surrounding interface still teaches the operator to
   click sections and action buttons.
+- The left rail currently mixes project selection and feature-section
+  navigation. The desired model is different: left-side structure should orient
+  the operator around recent/project conversations, not around feature modules.
 - The extension panel exposes direct feature buttons (`fill`, `extract`,
   `copy`) instead of acting as a small bridge composer/status surface.
 
@@ -104,6 +110,100 @@ The first viewport should contain:
 The user should not need to click into "Reviews", "Prompts", "Audit", "Memory",
 "Verification", "Tasks", or "Team" just to understand what to do next.
 
+### Product / UX layout specification
+
+The interface should optimize for an operator who returns repeatedly to a
+project and wants to understand "where am I, what is the plan, what is next?"
+within seconds. The design language should be quiet, utilitarian, and
+text-first. Avoid marketing-style cards, oversized hero areas, decorative
+gradients, and feature dashboards.
+
+The default desktop layout:
+
+```text
++------------------------------------------------------------------------+
+| project/status strip: active project, branch/status, auth indicator    |
++----------------+---------------------------------------+---------------+
+| recent         | current project context               | compact facts |
+| projects       | - current goal                        | - gates       |
+| project        | - project plan summary                | - verify      |
+| history        | - current/next step                   | - audit count |
+|                | - transcript / timeline               | - last event  |
++----------------+---------------------------------------+---------------+
+| command composer                                                       |
++------------------------------------------------------------------------+
+```
+
+Information hierarchy:
+
+1. **Current project**: the operator must always know which project commands
+   will affect.
+2. **Current goal**: one sentence, status, and whether it is draft/planned/
+   executing/blocked/done.
+3. **Project plan**: placed directly below the current goal in the main
+   workspace. Show plan status, next step, completed/total steps, and blocked
+   gate if any. This is not a left-nav item and not a separate feature page.
+4. **Next action**: one clear suggestion derived from current state, such as
+   `plan`, `approve plan`, `continue`, `approve gate`, `verify`, or `status`.
+5. **Transcript / timeline**: recent project conversation and bridge events,
+   newest useful context near the command composer.
+6. **Secondary facts**: verification, audit, memory, teams, apply result, and
+   review details are compact facts or command-addressable context, not default
+   workflow destinations.
+
+Planner placement:
+
+- The active project plan belongs in the main workspace, fixed near the top of
+  the current project context, immediately under the current goal.
+- The plan should be summarized first, with step details expandable inline.
+- Historical plans belong to the corresponding project's conversation history
+  and are reached via `history`, `plan history`, or project history selection.
+- The right context column may repeat plan progress or blocked-gate facts, but
+  it must not become the primary plan surface.
+
+Interaction rules:
+
+- The command composer is the primary action entry. It should accept natural
+  task text plus short commands.
+- The interface should always show what a command will target before a
+  state-changing action runs. If target ambiguity exists, ask for selection
+  instead of guessing.
+- Safety gates remain explicit controls. They may appear inline inside the
+  transcript/plan summary, but not as a large button grid.
+- Empty states should be operational, not instructional: show the next valid
+  command, not prose explaining the product.
+- The UI should preserve density: compact rows, predictable alignment, no nested
+  cards, no card-inside-card surfaces, and no large decorative panels.
+
+Responsive behavior:
+
+- Desktop: three zones are allowed, but the center command/transcript workspace
+  must dominate visual weight.
+- Medium width: right facts collapse into inline facts under the plan summary.
+- Mobile/narrow: left rail collapses behind a project/history switcher; the
+  main flow remains current goal -> plan -> next action -> transcript ->
+  composer.
+
+### Left rail: recent session + project-owned history
+
+The left side should be conversation/project oriented, not feature oriented:
+
+1. A single recent-session affordance at the top for fast resume of the last
+   active bridge conversation/session.
+2. A project list where each project owns its relevant conversation history.
+   Existing project timeline entries should be rendered as the first source of
+   project history.
+3. Feature areas (`reviews`, `prompts`, `audit`, `memory`, `verification`,
+   `tasks`, `team`) must not appear as primary left navigation. They may be
+   surfaced only as command-addressable context or compact facets inside the
+   active project conversation.
+
+This aligns with `PLAN-PROJECT-CONVERSATION-TIMELINE.md`: conversation history
+is project-scoped observability. `EX-2.20-1` may only present history derived
+from existing project timeline/project detail data. It must not introduce
+private Codex/Claude session-file reads, shell-history reads, automatic terminal
+attachment, or a new transcript persistence model.
+
 ### Commands
 
 The UI parser remains deterministic and allowlisted. Initial command families:
@@ -127,6 +227,12 @@ The UI parser remains deterministic and allowlisted. Initial command families:
 - `audit`, `memory`, `teams`, `apply` -> show compact read-only context in the
   transcript or context pane.
 - `switch project <key>` -> switch active project if present.
+- `recent` / `最近会话` -> focus the recent-session affordance if a recent
+  session exists; otherwise show the active project conversation.
+- `history` / `历史` -> show the active project's conversation history from
+  existing timeline data.
+- `plan history` / `规划历史` -> show historical plan entries from the active
+  project's existing timeline/detail data when available.
 
 Unknown commands should fail closed with a short explanation and suggested
 known commands. They must not be forwarded to any backend as arbitrary text
@@ -173,15 +279,23 @@ Allowed:
 1. Reframe `/console/project` so the command composer and transcript/status
    stream are the primary center of the interface.
 2. Keep existing data fetches, endpoint calls, and controlled workflow actions.
-3. Move current section content behind command-addressable rendering or compact
-   collapsed context surfaces.
-4. Expand the existing deterministic `handleCommand()` to the allowlisted
+3. Move current section content behind command-addressable rendering or inline
+   conversation context surfaces; do not keep a persistent right-side feature
+   panel as the default workflow.
+4. Replace the current feature-section left nav with a conversation/project
+   rail: recent session first, then projects with project-owned history
+   summaries derived from existing timeline/detail data.
+5. Place the active project plan in the main workspace directly below the
+   current goal, with compact progress and next-step summary.
+6. Add a derived "next action" line in the main workspace from existing
+   goal/plan/gate/verification state.
+7. Expand the existing deterministic `handleCommand()` to the allowlisted
    command families in §3.
-5. Keep safety buttons for plan approval, gate approval, cancel confirmation,
+8. Keep safety buttons for plan approval, gate approval, cancel confirmation,
    and verification confirmation.
-6. Simplify the extension panel into a compact bridge composer/status surface
+9. Simplify the extension panel into a compact bridge composer/status surface
    only if it can be done without new content-script capability.
-7. Update UI tests to assert command-first structure and preserved safety
+10. Update UI tests to assert command-first structure and preserved safety
    boundaries.
 
 Forbidden:
@@ -195,6 +309,8 @@ Forbidden:
 - Any feature expansion beyond existing controlled actions.
 - Any visual redesign that leaves the old feature-navigation model as the main
   workflow.
+- Any new conversation/thread storage, private session-file import, shell-history
+  import, or automatic terminal transcript capture.
 
 ## 6. Allowed files for EX-2.20-1
 
@@ -215,9 +331,16 @@ Minimum tests for `EX-2.20-1`:
 
 1. Project console HTML exposes one primary command composer and transcript-like
    workspace as first-class elements.
-2. Old section names may exist as context labels, but tests must prove they are
-   not the primary workflow path.
-3. `handleCommand()` remains allowlisted and deterministic:
+2. Left rail exposes recent session + project-owned history affordances, not
+   feature-section navigation as the primary workflow.
+3. Active project plan appears in the main workspace below the current goal;
+   plan is not represented as a primary left-nav destination.
+4. A derived next-action affordance appears from existing state and does not
+   introduce new backend behavior.
+5. Old section navigation (`#section-nav`, `data-view`, click/keydown tab
+   routing) must be absent; context is reached through composer commands and
+   rendered inline without hiding goal/plan/timeline.
+6. `handleCommand()` remains allowlisted and deterministic:
    - goal creation passes `projectId: store.activeProjectKey`;
    - `plan` routes to `/bridge/goals/plan`;
    - `continue` routes to `/bridge/goals/step`;
@@ -225,14 +348,19 @@ Minimum tests for `EX-2.20-1`:
    - `approve gate` routes to `/bridge/goals/gate` only for an existing blocked
      gate;
    - `status` is read-only;
+   - `recent` / `history` / `plan history` are read-only UI focus/context
+     commands;
    - unknown command shows help/fail-closed behavior.
-4. The no-generic-command invariant remains green:
+7. History rendering is derived only from existing project timeline/detail data;
+   no private session-file, shell-history, automatic terminal transcript, or new
+   transcript persistence path appears.
+8. The no-generic-command invariant remains green:
    `/exec`, `/shell`, `/run`, generic `/command`, `spawn(`, `execFile(`,
    `child_process`, `requestSubmit`, and raw CLI strings are absent from the
    client HTML.
-5. Existing pairing-token discipline remains green.
-6. Extension build test remains green if the extension panel is touched.
-7. No new endpoint strings appear outside the existing allowlist.
+9. Existing pairing-token discipline remains green.
+10. Extension build test remains green if the extension panel is touched.
+11. No new endpoint strings appear outside the existing allowlist.
 
 ## 8. Verification commands
 
@@ -250,16 +378,23 @@ Minimum tests for `EX-2.20-1`:
 
 1. The main console workflow is command-first: composer + transcript/status are
    primary, feature sections are context surfaces rather than the main path.
-2. The first slice is still a thin client over existing server state and gates.
-3. No new backend capability, endpoint, execution path, auth behavior, or model
+2. The left rail is recent-session + project-owned conversation history, not a
+   feature navigation rail.
+3. Active project plan is visible in the main workspace directly below the
+   current goal, with compact progress and next-step summary.
+4. The UI exposes one derived next action without hiding explicit safety gates.
+5. The first slice is still a thin client over existing server state and gates.
+6. No new backend capability, endpoint, execution path, auth behavior, or model
    parser is introduced.
-4. All safety-critical gates remain explicit and discoverable.
-5. Deterministic command routing covers the required command families and fails
+7. All safety-critical gates remain explicit and discoverable.
+8. Deterministic command routing covers the required command families and fails
    closed on unknown/ambiguous commands.
-6. Existing project isolation and pairing-token discipline remain unchanged.
-7. Tests in §7 are present and passing; full verification suite green;
+9. Conversation history is project-scoped and derived from existing timeline
+   data only; no private session or terminal history capture is introduced.
+10. Existing project isolation and pairing-token discipline remain unchanged.
+11. Tests in §7 are present and passing; full verification suite green;
    `git diff --check` clean.
-8. One dedicated `EX-2.20-1` diff; no commit/push until `REVIEW-2.20-1`
+12. One dedicated `EX-2.20-1` diff; no commit/push until `REVIEW-2.20-1`
    authorizes.
 
 ## 10. Handoff prompt for EX-2.20-1
@@ -270,8 +405,15 @@ Minimum tests for `EX-2.20-1`:
 >
 > The goal is to make `/console/project` feel command-first: one primary
 > composer, transcript/status as the main workspace, and feature sections moved
-> into compact context surfaces. Keep the UI as a thin client over the existing
-> bridge endpoints and server-owned gates.
+> into inline or command-addressable context surfaces rather than a persistent
+> right-side feature panel. The left rail must be recent-session +
+> project-owned conversation history, not feature-section navigation. Keep the
+> UI as a thin client over the existing bridge endpoints and server-owned gates.
+> Use a quiet, utilitarian, text-first layout. The main workspace order is:
+> current project/goal, active project plan summary, current/next step, derived
+> next action, transcript/timeline, command composer. The plan must live in the
+> main workspace under the current goal, not in left navigation or a separate
+> feature page.
 >
 > Required command handling is deterministic and allowlisted: plain text creates
 > a project-scoped goal; `plan` generates a plan for the active draft goal;
@@ -279,12 +421,16 @@ Minimum tests for `EX-2.20-1`:
 > active awaiting-approval plan; `approve gate` approves the single current
 > blocked gate if present; `cancel` uses explicit confirmation; `status`,
 > `audit`, `memory`, `teams`, `apply`, and `verify` render read-only or existing
-> controlled context; `switch project <key>` switches to an existing project.
-> Unknown or ambiguous commands fail closed with short guidance.
+> controlled context; `recent` focuses the recent-session affordance; `history`
+> shows the active project's existing timeline-derived conversation history;
+> `plan history` shows historical plan entries from existing project data;
+> `switch project <key>` switches to an existing project. Unknown or ambiguous
+> commands fail closed with short guidance.
 >
 > Keep buttons only for Connect/auth, safety gates, cancel confirmation,
 > verification confirmation, and disambiguation. Do not leave section-clicking
-> as the primary workflow.
+> as the primary workflow. Do not use decorative dashboard cards, nested cards,
+> oversized hero areas, or feature-button grids.
 >
 > Allowed files: `apps/local-server/src/routes/project-console.ts`,
 > `apps/extension/src/ui/bridge-panel.tsx`, `apps/extension/src/ui/state.ts`
@@ -294,12 +440,18 @@ Minimum tests for `EX-2.20-1`:
 > stopping and reporting.
 >
 > Tests must prove command-first structure, deterministic allowlisted routing,
-> no generic command/shell/exec/run path, unchanged pairing-token discipline,
-> and no new endpoint strings outside the existing allowlist. Run typecheck,
-> lint, the touched console/extension suites, `npm test`, and `git diff --check`.
+> left rail as recent-session + project-owned history rather than feature nav,
+> active plan placement under current goal, derived next-action display,
+> no private session/shell-history/terminal transcript capture, no generic
+> command/shell/exec/run path, unchanged pairing-token discipline, and no new
+> endpoint strings outside the existing allowlist. Run typecheck, lint, the
+> touched console/extension suites, `npm test`, and `git diff --check`.
 
 ## 11. Status / next
 
-RP-2.20 records the UI direction and an executable first slice. It does not
-dispatch implementation by itself. The next action is an explicit human trigger
-for `EX-2.20-1`, followed by `REVIEW-2.20-1`.
+RP-2.20 records the UI direction and an executable first slice. The
+pre-implementation UX validation gate is recorded in
+`docs/reviews/CLI-BRIDGE-v2.20-UX-VALIDATION-GATE.md`; `EX-2.20-1` should treat
+that file and this RP plan as the UX contract. This document does not dispatch
+implementation by itself. The next action is an explicit human trigger for
+`EX-2.20-1`, followed by `REVIEW-2.20-1`.
