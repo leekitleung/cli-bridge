@@ -34,6 +34,8 @@ test('project console HTML renders the command-first project shell', () => {
   assert.match(html, /Project workspace/);
   assert.match(html, /Compact project facts/);
   assert.match(html, /id="command-input"/);
+  assert.match(html, /id="composer-new-project"/);
+  assert.match(html, /id="access-pill"/);
 
   assert.match(html, /Recent session/);
   assert.match(html, /Project history/);
@@ -50,12 +52,16 @@ test('project console HTML renders the command-first project shell', () => {
   assert.equal(html.includes('role="tablist"'), false);
   assert.equal(html.includes('Context Commands'), false);
   assert.equal(html.includes('"nav workspace status"'), false);
+  assert.match(html, /"nav commandbar \."/);
+  assert.equal(html.includes('"nav commandbar commandbar"'), false);
   assert.equal(html.includes('"commandbar commandbar commandbar"'), false);
   assert.equal(html.includes('cockpit'), false);
   assert.equal(html.includes('id="btn-approve"'), false);
   assert.equal(html.includes('id="btn-step"'), false);
   assert.equal(html.includes('id="btn-gen-plan"'), false);
   assert.equal(html.includes('gate-btn'), false);
+  assert.equal(html.includes('Voice input'), false);
+  assert.equal(html.includes('composer-mic'), false);
 
   assert.equal(html.includes('Review console'), false);
   assert.equal(html.includes('Goal console'), false);

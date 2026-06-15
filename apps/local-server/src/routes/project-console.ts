@@ -58,7 +58,7 @@ body {
   grid-template-areas:
     "nav topbar topbar"
     "nav workspace facts"
-    "nav commandbar commandbar";
+    "nav commandbar .";
   height: 100vh;
   overflow: hidden;
 }
@@ -214,51 +214,127 @@ main .timeline-entry .body { white-space: pre-wrap; }
 /* ─── Bottom Command Bar ─── */
 footer {
   grid-area: commandbar;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "hints status"
-    "input send";
-  align-items: center;
-  column-gap: 12px;
-  row-gap: 8px;
-  padding: 14px min(8vw, 96px) 18px;
+  display: block;
+  padding: 12px min(8vw, 96px) 18px;
   background: transparent;
   border-top: 0;
-  max-width: 1120px;
+  max-width: 1180px;
   width: 100%;
   justify-self: center;
 }
-footer input {
-  grid-area: input;
+.composer-shell {
   width: 100%;
-  min-width: 0;
-  font: inherit;
+  min-height: 100px;
+  display: grid;
+  grid-template-rows: minmax(42px, 1fr) 34px;
+  gap: 8px;
   border-radius: 18px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: #2b2b2b;
+  padding: 12px 10px 8px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+}
+footer input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  font: inherit;
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: var(--text);
-  padding: 18px 20px;
+  padding: 0 2px;
   font-size: 15px;
   line-height: 1.35;
-  min-height: 58px;
-  box-shadow: 0 14px 48px rgba(0, 0, 0, 0.32);
 }
-footer button {
-  grid-area: send;
+footer input::placeholder { color: #8e8e8e; }
+.composer-toolbar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+}
+.composer-icon,
+.composer-pill,
+.composer-mode,
+footer #command-send {
   font: inherit;
-  border-radius: 16px;
-  border: 1px solid rgba(16, 163, 127, 0.5);
-  background: var(--accent);
-  color: #fff;
-  padding: 17px 22px;
-  cursor: pointer;
-  font-size: 14px;
-  min-height: 58px;
+  border: 0;
+  background: transparent;
 }
-footer button:disabled { opacity: 0.5; cursor: not-allowed; }
-footer .command-status { grid-area: status; justify-self: end; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
-footer .command-hints { grid-area: hints; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.composer-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  color: #a3a3a3;
+  border-radius: 8px;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.composer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 4px;
+  color: #ff7a1a;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.composer-pill.pending { color: #a3a3a3; }
+.composer-pill.error { color: #f87171; }
+.composer-pill .shield {
+  width: 13px;
+  height: 15px;
+  display: inline-block;
+  border: 1.5px solid currentColor;
+  border-radius: 8px 8px 10px 10px;
+  position: relative;
+}
+.composer-pill .shield::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  width: 2px;
+  height: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+.composer-spacer { min-width: 0; }
+.composer-mode {
+  color: #e5e5e5;
+  font-size: 13px;
+  white-space: nowrap;
+}
+footer #command-send {
+  width: 29px;
+  height: 29px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #a3a3a3;
+  color: #222;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+}
+footer #command-send:disabled { opacity: 0.45; cursor: not-allowed; }
+footer .command-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+footer .command-hints { display: none; }
 .command-log { display: grid; gap: 10px; max-width: 780px; }
 .command-message { background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
 .command-message .prompt { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-bottom: 6px; }
@@ -288,7 +364,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   main, footer { padding-left: 32px; padding-right: 32px; }
 }
 @media (max-width: 760px) {
-  body { grid-template-columns: 1fr; grid-template-rows: 56px 1fr 122px; grid-template-areas: "topbar" "workspace" "commandbar"; }
+  body { grid-template-columns: 1fr; grid-template-rows: 56px 1fr 126px; grid-template-areas: "topbar" "workspace" "commandbar"; }
   nav { display: none; }
   header { padding: 0 16px; gap: 12px; }
   header h1 { font-size: 13px; }
@@ -299,19 +375,14 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   header .spacer { display: none; }
   main, footer { padding-left: 16px; padding-right: 16px; }
   footer {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "hints hints"
-      "input send";
-    column-gap: 12px;
-    row-gap: 10px;
     padding-top: 10px;
     padding-bottom: 10px;
   }
-  footer input { min-width: 0; padding: 16px 18px; min-height: 58px; font-size: 15px; }
-  footer button { padding: 16px 20px; min-height: 58px; }
-  footer .command-status { display: none; }
-  footer .command-hints { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .composer-shell { min-height: 106px; border-radius: 17px; }
+  .composer-toolbar { grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 7px; }
+  .composer-icon { width: 24px; font-size: 22px; }
+  .composer-pill { font-size: 11px; }
+  .composer-mode { font-size: 12px; }
 }
 </style>
 </head>
@@ -405,8 +476,16 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 
 <!-- Bottom Command Bar -->
 <footer>
-  <input id="command-input" type="text" placeholder="goal <任务> / status / verify" aria-label="Project command" />
-  <button id="command-send" disabled>Send</button>
+  <div class="composer-shell" aria-label="Project command composer">
+    <input id="command-input" type="text" placeholder="要求后续变更" aria-label="Project command" />
+    <div class="composer-toolbar">
+      <button type="button" class="composer-icon" id="composer-new-project" aria-label="Insert project create command" title="Insert project create command">+</button>
+      <span class="composer-pill pending" id="access-pill" title="Local bridge access. Commands route through governed project endpoints."><span class="shield" aria-hidden="true"></span><span id="access-pill-label">未连接</span></span>
+      <span class="composer-spacer"></span>
+      <span class="composer-mode" title="Project-scoped command mode">Project</span>
+      <button id="command-send" aria-label="Send project command" disabled>↑</button>
+    </div>
+  </div>
   <span class="command-hints">help · status · history · plan · continue · verify</span>
   <output class="command-status" id="command-status" aria-live="polite" role="status"></output>
 </footer>
@@ -451,6 +530,8 @@ $('connect').addEventListener('click', async () => {
   if (res.ok) {
     store.connected = true;
     $('conn-dot').classList.add('ok');
+    $('access-pill').classList.remove('pending', 'error');
+    $('access-pill-label').textContent = '本地访问';
     $('connect').setAttribute('aria-label', 'Connect: connected');
     $('connect').setAttribute('title', 'Connected');
     $('conn-status').textContent = '';
@@ -461,6 +542,9 @@ $('connect').addEventListener('click', async () => {
   } else {
     store.connected = false;
     $('conn-dot').classList.remove('ok');
+    $('access-pill').classList.remove('pending');
+    $('access-pill').classList.add('error');
+    $('access-pill-label').textContent = '访问失败';
     $('connect').setAttribute('aria-label', 'Connect: auth failed');
     $('connect').setAttribute('title', 'Auth failed (' + res.status + ')');
     $('conn-status').textContent = '';
@@ -1663,6 +1747,16 @@ async function applyPreviewCommand(input, relPath) {
 }
 
 // ─── Command Bar ───
+$('composer-new-project').addEventListener('click', () => {
+  const input = $('command-input');
+  input.value = 'project create <key>';
+  input.focus();
+  const start = input.value.indexOf('<key>');
+  if (typeof input.setSelectionRange === 'function' && start >= 0) {
+    input.setSelectionRange(start, start + 5);
+  }
+  setCommandStatus('edit project key, then send');
+});
 $('command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCommand(); });
 $('command-send').addEventListener('click', handleCommand);
 

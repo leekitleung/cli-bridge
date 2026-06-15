@@ -80,6 +80,19 @@ async function runCommand(document, command, waitMs = 200) {
   await new Promise(r => setTimeout(r, waitMs));
 }
 
+test('composer plus inserts project-create command template without mutating state', () => {
+  const { document, fetchCalls } = setupConsole();
+  document.getElementById('composer-new-project').click();
+
+  assert.equal(document.getElementById('command-input').value, 'project create <key>');
+  assert.equal(document.getElementById('command-status').textContent, 'edit project key, then send');
+  assert.equal(
+    fetchCalls.some((call) => call.path === '/bridge/projects' && call.method === 'POST'),
+    false,
+    'plus shortcut must not create a project until the operator sends the command',
+  );
+});
+
 /** Default project list fixture. */
 function defaultProjectsFixture() {
   return {
