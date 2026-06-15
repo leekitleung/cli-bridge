@@ -31,6 +31,7 @@ import {
   isBridgePath,
   writeBridgeResult,
   type BridgeRuntime,
+  type BridgeRuntimeOptions,
 } from './routes/bridge-api.ts';
 import {
   assertAllowedOrigin,
@@ -75,9 +76,10 @@ function isTestEnvironment(): boolean {
 
 export async function startLocalServer(
   port: number = DEFAULT_LOCAL_SERVER_PORT,
+  runtimeOptions?: BridgeRuntimeOptions,
 ): Promise<LocalServerHandle> {
   const pairingToken = createPairingToken();
-  const bridgeRuntime: BridgeRuntime = createBridgeRuntime();
+  const bridgeRuntime: BridgeRuntime = createBridgeRuntime(runtimeOptions);
   let boundPort = port;
 
   function checkAuth(

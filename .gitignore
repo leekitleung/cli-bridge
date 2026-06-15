@@ -9,3 +9,8 @@ apps/extension/dist/
 
 # Local reference docs — not part of the codebase
 docs/参考/
+
+# Local operator launcher config (may reference real workspace roots; tokens via env only)
+scripts/local-config.json
+scripts/local-config.*.json
+!scripts/local-config.example.json

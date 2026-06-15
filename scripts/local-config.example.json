@@ -1,0 +1,47 @@
+{
+  "port": 31337,
+  "projectWorkspaceRoots": {
+    "cli-bridge": "H:\\02-Areas\\cli-bridge"
+  },
+  "verifyProfiles": [
+    {
+      "id": "node-version",
+      "label": "node --version (runnable on every OS)",
+      "argv": ["node", "--version"],
+      "cwdPolicy": { "kind": "project-root" },
+      "env": [],
+      "timeoutMs": 120000,
+      "outputCapBytes": 65536,
+      "networkRisk": "declared-offline",
+      "mutationRisk": "read-only"
+    },
+    {
+      "id": "typecheck-posix",
+      "label": "npm run typecheck (macOS/Linux only)",
+      "argv": ["npm", "run", "typecheck"],
+      "cwdPolicy": { "kind": "project-root" },
+      "env": [],
+      "timeoutMs": 120000,
+      "outputCapBytes": 65536,
+      "networkRisk": "declared-offline",
+      "mutationRisk": "read-only"
+    }
+  ],
+  "githubChecksConfig": {
+    "cli-bridge": {
+      "kind": "github",
+      "apiBaseUrl": "https://api.github.com",
+      "owner": "your-org-or-user",
+      "repo": "cli-bridge"
+    }
+  },
+  "projects": [
+    {
+      "key": "cli-bridge",
+      "label": "CLI Bridge",
+      "gitStatusEnabled": true,
+      "verifyProfileId": "node-version",
+      "githubChecksEnabled": false
+    }
+  ]
+}

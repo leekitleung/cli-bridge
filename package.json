@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test",
     "start:local-server": "node --experimental-strip-types apps/local-server/src/server.ts",
+    "start:local-server:configured": "node --experimental-strip-types scripts/start-local-configured.ts",
     "review": "node --experimental-strip-types apps/local-server/src/cli/review.ts"
   },
   "devDependencies": {
