@@ -82,12 +82,13 @@ function scriptsDir(): string {
  */
 export function resolveConfigPath(
   env: NodeJS.ProcessEnv = process.env,
+  defaultDir: string = scriptsDir(),
 ): { path: string; fromEnv: boolean } {
   const fromEnvValue = env.CLI_BRIDGE_LOCAL_CONFIG;
   if (typeof fromEnvValue === 'string' && fromEnvValue.trim().length > 0) {
     return { path: resolve(fromEnvValue.trim()), fromEnv: true };
   }
-  return { path: resolve(scriptsDir(), DEFAULT_CONFIG_FILENAME), fromEnv: false };
+  return { path: resolve(defaultDir, DEFAULT_CONFIG_FILENAME), fromEnv: false };
 }
 
 /** Whether the launcher should best-effort open the console in a browser. */
@@ -133,8 +134,11 @@ export function parseConfig(raw: string): LocalConfig {
 }
 
 /** Read + parse the config file (env path, else the default scripts path). */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): LocalConfig {
-  const { path: abs, fromEnv } = resolveConfigPath(env);
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  defaultDir: string = scriptsDir(),
+): LocalConfig {
+  const { path: abs, fromEnv } = resolveConfigPath(env, defaultDir);
   let raw: string;
   try {
     raw = readFileSync(abs, 'utf8');

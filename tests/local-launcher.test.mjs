@@ -5,9 +5,10 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { startLocalServer } from '../apps/local-server/src/server.ts';
 import {
@@ -275,14 +276,54 @@ test('resolveConfigPath honors env override and falls back to the default file',
 });
 
 test('loadConfig with neither env nor default file throws an example-pointing error', () => {
-  // No scripts/local-config.json exists in the repo, so missing-both holds.
-  assert.throws(
-    () => loadConfig({}),
-    (err) => {
-      assert.match(err.message, /local-config\.example\.json/);
-      return true;
-    },
-  );
+  // Use an isolated empty dir so the result never depends on whether a real
+  // scripts/local-config.json happens to exist in the developer's working tree.
+  const emptyDir = mkdtempSync(join(tmpdir(), 'cli-bridge-cfg-missing-'));
+  try {
+    assert.throws(
+      () => loadConfig({}, emptyDir),
+      (err) => {
+        assert.match(err.message, /local-config\.example\.json/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(emptyDir, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig loads the default file from the resolved dir when present', () => {
+  // Default-exists semantics, exercised in isolation rather than against repo root.
+  const dir = mkdtempSync(join(tmpdir(), 'cli-bridge-cfg-default-'));
+  try {
+    writeFileSync(
+      join(dir, 'local-config.json'),
+      JSON.stringify({ port: 41337, projects: [{ key: 'demo', label: 'Demo' }] }),
+    );
+    const config = loadConfig({}, dir);
+    assert.equal(config.port, 41337);
+    assert.equal(config.projects?.[0]?.key, 'demo');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig prefers the env-specified path over the default dir', () => {
+  // Env-priority semantics, in isolation: env file wins even if the default dir has one.
+  const dir = mkdtempSync(join(tmpdir(), 'cli-bridge-cfg-env-'));
+  try {
+    const envPath = join(dir, 'custom-config.json');
+    writeFileSync(envPath, JSON.stringify({ port: 51337, projects: [{ key: 'env', label: 'Env' }] }));
+    writeFileSync(
+      join(dir, 'local-config.json'),
+      JSON.stringify({ port: 41337, projects: [{ key: 'default', label: 'Default' }] }),
+    );
+    const config = loadConfig({ CLI_BRIDGE_LOCAL_CONFIG: envPath }, dir);
+    assert.equal(config.port, 51337);
+    assert.equal(config.projects?.[0]?.key, 'env');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── RP-2.19 §5.2 auto-open is suppressible / inert ──
