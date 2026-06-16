@@ -169,6 +169,83 @@ export function buildExtensionOriginHeaders(pairingToken: string): HeadersInit {
 }
 
 
+// --- Local server fetch proxy (MV3) ---
+// Content scripts on chatgpt.com cannot reach the loopback local server
+// directly: MV3 subjects content-script requests to page CORS, and the local
+// server intentionally sends no CORS headers. The service worker holds
+// host_permissions for the local server and is exempt, so it relays the
+// request on the content script's behalf. This is a thin, validated relay; it
+// does not widen the local server's surface.
+
+export interface ProxyFetchRequest {
+  path: string;
+  method: string;
+  body?: unknown;
+  token?: string | null;
+}
+
+export interface ProxyFetchResult {
+  ok: boolean;
+  status: number;
+  data?: unknown;
+  error?: string;
+}
+
+function isAllowedProxyPath(path: unknown): path is string {
+  if (typeof path !== 'string' || path.length === 0) {
+    return false;
+  }
+  if (!path.startsWith('/') || path.startsWith('//')) {
+    return false;
+  }
+  if (path.includes('://') || /[\r\n]/.test(path)) {
+    return false;
+  }
+  return path === PROTECTED_HEALTH_PATH || path.startsWith('/bridge/');
+}
+
+export async function handleProxyFetch(
+  request: ProxyFetchRequest,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ProxyFetchResult> {
+  const method = typeof request?.method === 'string' ? request.method.toUpperCase() : '';
+  if (method !== 'GET' && method !== 'POST') {
+    return { ok: false, status: 0, error: 'invalid-method' };
+  }
+  if (!isAllowedProxyPath(request?.path)) {
+    return { ok: false, status: 0, error: 'invalid-path' };
+  }
+
+  const hasBody = method === 'POST' && request.body !== undefined && request.body !== null;
+  const headers: Record<string, string> = {};
+  if (typeof request.token === 'string' && request.token.length > 0) {
+    headers[PAIRING_TOKEN_HEADER] = request.token;
+  }
+  if (hasBody) {
+    headers['content-type'] = 'application/json';
+  }
+
+  try {
+    const response = await fetchImpl(`${LOCAL_SERVER_BASE_URL}${request.path}`, {
+      method,
+      headers,
+      body: hasBody ? JSON.stringify(request.body) : undefined,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = data && typeof data === 'object'
+        && typeof (data as { message?: unknown }).message === 'string'
+        ? (data as { message: string }).message
+        : `HTTP ${response.status}`;
+      return { ok: false, status: response.status, error: message };
+    }
+    return { ok: true, status: response.status, data };
+  } catch {
+    return { ok: false, status: 0, error: 'network-error' };
+  }
+}
+
+
 // --- Pairing token management ---
 // The background script provides a message-based API for the content script
 // and popup to set/get the pairing token stored in chrome.storage.local.
@@ -181,6 +258,14 @@ interface PairingMessage {
 if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener(
     (msg: unknown, _sender, sendResponse) => {
+      const proxyMessage = msg as { type?: string } & ProxyFetchRequest;
+      if (proxyMessage?.type === 'cli-bridge-proxy-fetch') {
+        handleProxyFetch(proxyMessage)
+          .then((result) => sendResponse(result))
+          .catch(() => sendResponse({ ok: false, status: 0, error: 'network-error' }));
+        return true; // async response
+      }
+
       const message = msg as PairingMessage;
       if (message.type === 'cli-bridge-set-token' && typeof message.token === 'string') {
         chrome.storage.local.set({ cliBridgePairingToken: message.token }).then(() => {

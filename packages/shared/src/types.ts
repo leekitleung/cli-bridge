@@ -78,6 +78,20 @@ export const AUDIT_EVENT_TYPES = [
   // v2.5 Workspace apply
   'workspace_apply_request',
   'workspace_apply_result',
+  // Phase 3 multi-executor relay (foundation): endpoint/session routing context.
+  'relay_context_bound',
+  'relay_context_conflict',
+  'relay_context_delivered',
+  // Phase 3 multi-executor relay (inbound queue core): return-queue lifecycle.
+  'inbound_created',
+  'inbound_claimed',
+  'inbound_consumed',
+  'inbound_failed',
+  'inbound_cancelled',
+  'inbound_rejected',
+  // Phase 3 extract→inbound routing decision (extract-return policy).
+  'extract_return_routed_inbound',
+  'extract_return_fallback_pending',
 ] as const;
 
 export const AUDIT_RISK_LEVELS = [
@@ -243,10 +257,66 @@ export interface OutboundPrompt {
   prompt: string;
   status: OutboundPromptStatus;
   target: 'chatgpt-web';
+  /**
+   * Phase 3 multi-executor relay (foundation): optional originating executor
+   * endpoint. Absent for the legacy single-executor / manual flow. When present
+   * it must reference a registered endpoint and binds the session for routing.
+   */
+  endpointId?: string;
   createdAt: number;
   updatedAt: number;
   claimedAt?: number;
   deliveredAt?: number;
+  failedAt?: number;
+  cancelledAt?: number;
+  failureReason?: string;
+}
+
+/**
+ * Phase 3 multi-executor relay (foundation): the server-resolved routing context
+ * for a session, established only when an outbound prompt carrying an
+ * `endpointId` is delivered. Used by a later phase to route an extracted reply
+ * back to the originating executor. Memory-only in this foundation phase.
+ */
+export interface RelayContext {
+  sessionId: string;
+  endpointId: string;
+  lastOutboundPromptId: string;
+  updatedAt: number;
+}
+
+// Phase 3 multi-executor relay (inbound queue core): a reviewed reply routed
+// back to the originating executor, pulled by that executor. Distinct from
+// OutboundPrompt (executor→ChatGPT) and PendingPrompt (draft→confirm→send).
+export const INBOUND_STATUSES = [
+  'queued',
+  'claimed',
+  'consumed',
+  'failed',
+  'cancelled',
+] as const;
+
+export type InboundStatus = typeof INBOUND_STATUSES[number];
+
+export const INBOUND_SOURCES = ['chatgpt-web-extract'] as const;
+
+export type InboundSource = typeof INBOUND_SOURCES[number];
+
+export interface InboundMessage {
+  id: string;
+  endpointId: string;
+  sessionId: string;
+  packetId: string;
+  /** Redacted (processed) content only; raw content is never stored here. */
+  content: string;
+  source: InboundSource;
+  /** Provenance: which outbound prompt this reply answers, when known. */
+  sourceOutboundPromptId?: string;
+  status: InboundStatus;
+  createdAt: number;
+  updatedAt: number;
+  claimedAt?: number;
+  consumedAt?: number;
   failedAt?: number;
   cancelledAt?: number;
   failureReason?: string;
@@ -405,6 +475,8 @@ export const ENDPOINT_ACTIONS = [
   'review',
   'execute',
   'summarize',
+  // Phase 3 multi-executor relay (foundation): may pull inbound reviewed results.
+  'receive-inbound',
 ] as const;
 
 export type AgentEndpointTransport = typeof AGENT_ENDPOINT_TRANSPORTS[number];
@@ -419,6 +491,17 @@ export type AgentEndpointCapabilities = {
   canReview: boolean;
   canExecute: boolean;
   canSummarize: boolean;
+  /**
+   * Phase 3 multi-executor relay (foundation): the endpoint may receive inbound
+   * (pulled) reviewed results routed back to it. Optional; absent ⇒ false, so
+   * existing endpoints stay backward compatible.
+   */
+  canReceiveInbound?: boolean;
+  /**
+   * Reserved (ADR-gated, NOT implemented): managed-session writeback. Optional;
+   * absent ⇒ false.
+   */
+  canUseManagedWriteback?: boolean;
 };
 
 export type AgentEndpoint = {

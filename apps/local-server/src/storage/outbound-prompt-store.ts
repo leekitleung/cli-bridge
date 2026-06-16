@@ -17,6 +17,8 @@ export interface CreateOutboundPromptInput {
   id?: string;
   sessionId: string;
   prompt: string;
+  /** Phase 3 relay (foundation): optional originating executor endpoint. */
+  endpointId?: string;
   now?: number;
 }
 
@@ -53,6 +55,7 @@ function isOutboundPromptShape(value: unknown): value is OutboundPrompt {
     typeof record.status === 'string' &&
     OUTBOUND_PROMPT_STATUS_VALUES.has(record.status) &&
     record.target === 'chatgpt-web' &&
+    (record.endpointId === undefined || typeof record.endpointId === 'string') &&
     typeof record.createdAt === 'number' &&
     typeof record.updatedAt === 'number'
   );
@@ -92,6 +95,7 @@ export class InMemoryOutboundPromptStore {
       prompt: packet.processedContent,
       status: 'queued',
       target: 'chatgpt-web',
+      ...(input.endpointId ? { endpointId: input.endpointId } : {}),
       createdAt: now,
       updatedAt: now,
     };

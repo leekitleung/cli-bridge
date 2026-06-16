@@ -15,6 +15,7 @@ import {
   CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
   CODEX_REVIEW_COMMAND_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
+  MOCK_INBOUND_AGENT_ENDPOINT,
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
@@ -54,6 +55,8 @@ import {
 } from '../storage/json-snapshot-store.ts';
 import { createMetricsSummary } from '../storage/metrics-summary.ts';
 import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts';
+import { InMemoryRelayContextStore } from '../storage/relay-context-store.ts';
+import { InMemoryInboundMessageStore } from '../storage/inbound-message-store.ts';
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
 import { InMemoryPendingPromptStore } from '../storage/pending-prompt-store.ts';
 import { InMemoryPendingReviewStore } from '../storage/pending-review-store.ts';
@@ -100,6 +103,10 @@ export interface BridgeRuntime {
   auditLog: InMemoryAuditLog;
   pendingPromptStore: InMemoryPendingPromptStore;
   outboundPromptStore: InMemoryOutboundPromptStore;
+  /** Phase 3 multi-executor relay (foundation): endpoint/session routing context. */
+  relayContextStore: InMemoryRelayContextStore;
+  /** Phase 3 multi-executor relay (inbound queue core): server-side return queue. */
+  inboundMessageStore: InMemoryInboundMessageStore;
   endpointRegistry: InMemoryEndpointRegistry;
   pendingReviewStore: InMemoryPendingReviewStore;
   // Resolves a review target endpoint id to its command adapter. Tests inject a
@@ -1360,10 +1367,13 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const auditLog = new InMemoryAuditLog();
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
   const outboundPromptStore = new InMemoryOutboundPromptStore(packetStore, auditLog);
+  const relayContextStore = new InMemoryRelayContextStore(auditLog);
+  const inboundMessageStore = new InMemoryInboundMessageStore(packetStore, auditLog);
   const endpointRegistry = new InMemoryEndpointRegistry([
     ...DEFAULT_AGENT_ENDPOINTS,
     CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
     CODEX_REVIEW_COMMAND_ENDPOINT,
+    MOCK_INBOUND_AGENT_ENDPOINT,
   ]);
   const pendingReviewStore = new InMemoryPendingReviewStore(
     endpointRegistry,
@@ -1465,6 +1475,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     auditLog,
     pendingPromptStore,
     outboundPromptStore,
+    relayContextStore,
+    inboundMessageStore,
     endpointRegistry,
     pendingReviewStore,
     reviewAdapterFor: options.reviewAdapterFor
@@ -1836,6 +1848,13 @@ export const BRIDGE_PENDING_PROMPTS_CANCEL_PATH = '/bridge/pending-prompts/cance
 export const BRIDGE_OUTBOUND_PATH = '/bridge/outbound';
 export const BRIDGE_OUTBOUND_NEXT_PATH = '/bridge/outbound/next';
 export const BRIDGE_OUTBOUND_ACK_PATH = '/bridge/outbound/ack';
+// Phase 3 multi-executor relay (inbound queue core).
+export const BRIDGE_INBOUND_PATH = '/bridge/inbound';
+export const BRIDGE_INBOUND_NEXT_PATH = '/bridge/inbound/next';
+export const BRIDGE_INBOUND_ACK_PATH = '/bridge/inbound/ack';
+export const BRIDGE_INBOUND_CANCEL_PATH = '/bridge/inbound/cancel';
+// Phase 3 extract→inbound routing policy (extract-return).
+export const BRIDGE_EXTRACT_RETURN_PATH = '/bridge/extract-return';
 export const BRIDGE_REVIEWS_PATH = '/bridge/reviews';
 export const BRIDGE_REVIEWS_CONFIRM_PATH = '/bridge/reviews/confirm';
 export const BRIDGE_REVIEWS_RUN_PATH = '/bridge/reviews/dispatch';
@@ -1905,6 +1924,11 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_OUTBOUND_PATH ||
     pathname === BRIDGE_OUTBOUND_NEXT_PATH ||
     pathname === BRIDGE_OUTBOUND_ACK_PATH ||
+    pathname === BRIDGE_INBOUND_PATH ||
+    pathname === BRIDGE_INBOUND_NEXT_PATH ||
+    pathname === BRIDGE_INBOUND_ACK_PATH ||
+    pathname === BRIDGE_INBOUND_CANCEL_PATH ||
+    pathname === BRIDGE_EXTRACT_RETURN_PATH ||
     pathname === BRIDGE_REVIEWS_PATH ||
     pathname === BRIDGE_REVIEWS_CONFIRM_PATH ||
     pathname === BRIDGE_REVIEWS_RUN_PATH ||
@@ -1970,9 +1994,27 @@ export async function handleBridgeRequest(
     if (!sessionId || !prompt) {
       return error(400, 'sessionId and prompt are required');
     }
+    // Phase 3 relay (foundation): optional endpointId. When present it must
+    // reference a registered endpoint and binds the session to that endpoint.
+    let endpointId: string | undefined;
+    const endpointIdRaw = parsed.body.endpointId;
+    if (endpointIdRaw !== undefined) {
+      if (typeof endpointIdRaw !== 'string' || endpointIdRaw.trim().length === 0) {
+        return error(400, 'endpointId must be a non-empty string');
+      }
+      endpointId = endpointIdRaw;
+      if (!runtime.endpointRegistry.get(endpointId)) {
+        return error(400, 'unknown endpointId');
+      }
+      const bind = runtime.relayContextStore.bind(sessionId, endpointId);
+      if (!bind.ok) {
+        return error(409, 'sessionId is already bound to a different endpointId');
+      }
+    }
     const outboundPrompt = runtime.outboundPromptStore.createOutboundPrompt({
       sessionId,
       prompt,
+      endpointId,
     });
     runtime.persist();
     return created({ outboundPrompt });
@@ -2005,8 +2047,191 @@ export async function handleBridgeRequest(
     if (!outboundPrompt) {
       return error(409, 'Outbound prompt cannot be acknowledged');
     }
+    // Phase 3 relay (foundation): only a delivered outbound carrying an
+    // endpointId establishes a routing context. ack failures and
+    // endpointId-less outbounds never write a relay context.
+    if (outboundPrompt.status === 'delivered' && outboundPrompt.endpointId) {
+      runtime.relayContextStore.recordDelivered(
+        outboundPrompt.sessionId,
+        outboundPrompt.endpointId,
+        outboundPrompt.id,
+      );
+    }
     runtime.persist();
     return ok({ outboundPrompt });
+  }
+
+  // ── Phase 3 multi-executor relay: inbound return queue ──
+
+  if (pathname === BRIDGE_INBOUND_PATH && method === 'GET') {
+    const endpointId = query?.get('endpointId') ?? '';
+    if (!endpointId) {
+      return error(400, 'endpointId is required');
+    }
+    const sessionId = query?.get('sessionId') || undefined;
+    return ok({
+      inboundMessages: runtime.inboundMessageStore.list({ endpointId, sessionId }),
+    });
+  }
+
+  if (pathname === BRIDGE_INBOUND_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const content = requireString(parsed.body, 'content');
+    if (!sessionId || !content) {
+      return error(400, 'sessionId and content are required');
+    }
+    // endpointId is NEVER trusted from the request body; it is resolved from the
+    // server-side relay context for this session.
+    const endpointId = runtime.relayContextStore.resolveInboundEndpointForSession(sessionId);
+    if (!endpointId) {
+      return error(409, 'no relay context for session; cannot route inbound');
+    }
+    if (!runtime.endpointRegistry.can(endpointId, 'receive-inbound')) {
+      return error(403, 'resolved endpoint cannot receive inbound');
+    }
+    const sourceOutboundPromptId = typeof parsed.body.sourceOutboundPromptId === 'string'
+      ? parsed.body.sourceOutboundPromptId
+      : undefined;
+    const inboundMessage = runtime.inboundMessageStore.create({
+      endpointId,
+      sessionId,
+      content,
+      source: 'chatgpt-web-extract',
+      sourceOutboundPromptId,
+    });
+    runtime.persist();
+    return created({ inboundMessage });
+  }
+
+  if (pathname === BRIDGE_INBOUND_NEXT_PATH && method === 'GET') {
+    const endpointId = query?.get('endpointId') ?? '';
+    if (!endpointId) {
+      return error(400, 'endpointId is required');
+    }
+    const sessionId = query?.get('sessionId') || undefined;
+    const inboundMessage = runtime.inboundMessageStore.claimNext({ endpointId, sessionId });
+    runtime.persist();
+    return ok({ inboundMessage: inboundMessage ?? null });
+  }
+
+  if (pathname === BRIDGE_INBOUND_ACK_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const inboundMessageId = requireString(parsed.body, 'inboundMessageId');
+    const endpointId = requireString(parsed.body, 'endpointId');
+    const okValue = parsed.body.ok;
+    if (!inboundMessageId || !endpointId || typeof okValue !== 'boolean') {
+      return error(400, 'inboundMessageId, endpointId and ok are required');
+    }
+    const failureReason = typeof parsed.body.failureReason === 'string'
+      ? parsed.body.failureReason
+      : undefined;
+    const result = runtime.inboundMessageStore.ack({
+      inboundMessageId,
+      endpointId,
+      ok: okValue,
+      failureReason,
+    });
+    if (!result.ok) {
+      if (result.failureReason === 'not-found') {
+        return error(404, 'inbound message not found');
+      }
+      if (result.failureReason === 'endpoint-mismatch') {
+        return error(403, 'endpoint does not own this inbound message');
+      }
+      return error(409, 'inbound message cannot be acknowledged');
+    }
+    runtime.persist();
+    return ok({ inboundMessage: result.message });
+  }
+
+  if (pathname === BRIDGE_INBOUND_CANCEL_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const inboundMessageId = requireString(parsed.body, 'inboundMessageId');
+    const endpointId = requireString(parsed.body, 'endpointId');
+    if (!inboundMessageId || !endpointId) {
+      return error(400, 'inboundMessageId and endpointId are required');
+    }
+    const result = runtime.inboundMessageStore.cancel({ inboundMessageId, endpointId });
+    if (!result.ok) {
+      if (result.failureReason === 'not-found') {
+        return error(404, 'inbound message not found');
+      }
+      if (result.failureReason === 'endpoint-mismatch') {
+        return error(403, 'endpoint does not own this inbound message');
+      }
+      return error(409, 'inbound message cannot be cancelled');
+    }
+    runtime.persist();
+    return ok({ inboundMessage: result.message });
+  }
+
+  // ── Phase 3 extract→inbound routing policy ──
+  // The extension's "extract" result is routed here. The server resolves the
+  // target endpoint from the session's relay context (never from the request
+  // body). When it cannot safely route to an inbound-capable endpoint, it
+  // degrades to the existing pending-prompt path so the v0.2 manual loop never
+  // regresses.
+  if (pathname === BRIDGE_EXTRACT_RETURN_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const content = requireString(parsed.body, 'content');
+    if (!sessionId || !content) {
+      return error(400, 'sessionId and content are required');
+    }
+
+    const endpointId = runtime.relayContextStore.resolveInboundEndpointForSession(sessionId);
+    if (endpointId && runtime.endpointRegistry.can(endpointId, 'receive-inbound')) {
+      const inboundMessage = runtime.inboundMessageStore.create({
+        endpointId,
+        sessionId,
+        content,
+        source: 'chatgpt-web-extract',
+      });
+      runtime.auditLog.createAndAppend({
+        sessionId,
+        packetId: inboundMessage.packetId,
+        approvalId: inboundMessage.id,
+        type: 'extract_return_routed_inbound',
+        source: 'chatgpt-web',
+        target: endpointId,
+        result: { ok: true },
+      });
+      runtime.persist();
+      return created({ routedTo: 'inbound', inboundMessage });
+    }
+
+    const fallbackReason = endpointId
+      ? 'endpoint-cannot-receive-inbound'
+      : 'no-relay-context';
+    const pendingPrompt = runtime.pendingPromptStore.createPendingPrompt({
+      sessionId,
+      prompt: content,
+      source: 'chatgpt-web',
+    });
+    runtime.auditLog.createAndAppend({
+      sessionId,
+      packetId: pendingPrompt.packetId,
+      approvalId: pendingPrompt.id,
+      type: 'extract_return_fallback_pending',
+      source: 'chatgpt-web',
+      target: 'codex',
+      result: { ok: true, metadata: { fallbackReason } },
+    });
+    runtime.persist();
+    return created({ routedTo: 'pending-prompt', pendingPrompt, fallbackReason });
   }
 
   if (pathname === BRIDGE_PENDING_PROMPTS_PATH && method === 'POST') {

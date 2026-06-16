@@ -27,6 +27,8 @@ function capabilityForAction(endpoint: AgentEndpoint, action: EndpointAction): b
       return endpoint.capabilities.canExecute;
     case 'summarize':
       return endpoint.capabilities.canSummarize;
+    case 'receive-inbound':
+      return endpoint.capabilities.canReceiveInbound === true;
   }
 }
 

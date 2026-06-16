@@ -77,6 +77,33 @@ export const CODEX_REVIEW_COMMAND_ENDPOINT: AgentEndpoint = {
   adapterName: 'codex-review-command',
 };
 
+// Manual / local E2E only. This endpoint exists so a real-browser inbound
+// routing E2E can be exercised without making any REAL executor inbound-capable.
+// It is deliberately NOT part of DEFAULT_AGENT_ENDPOINTS: codex-cli / clipboard /
+// chatgpt-web stay inbound-incapable by default (ADR-gated capability). It is
+// registered into the runtime registry alongside the review-only endpoints so
+// that POST /bridge/outbound can target it and extract-return can route the
+// reviewed reply into the inbound queue for manual verification.
+//
+// It does not enable auto-send, terminal injection, or managed PTY writeback;
+// it only marks the endpoint as able to receive an inbound return message that
+// an executor pull client (not implemented here) would later consume.
+export const MOCK_INBOUND_AGENT_ENDPOINT: AgentEndpoint = {
+  id: 'mock-inbound-agent',
+  label: 'Mock Inbound Agent (manual E2E)',
+  transport: 'mock',
+  risk: 'low',
+  capabilities: {
+    canAcceptPrompt: true,
+    canReturnOutput: true,
+    canReview: false,
+    canExecute: false,
+    canSummarize: false,
+    canReceiveInbound: true,
+  },
+  adapterName: 'mock-agent',
+};
+
 export const DEFAULT_AGENT_ENDPOINTS: AgentEndpoint[] = [
   {
     id: 'mock-agent',

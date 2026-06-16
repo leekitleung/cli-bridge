@@ -6,6 +6,7 @@ declare namespace chrome {
     interface StorageArea {
       get(keys: string | string[]): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove(keys: string | string[]): Promise<void>;
     }
     const local: StorageArea;
   }
@@ -27,5 +28,10 @@ declare namespace chrome {
     }
 
     const onMessage: OnMessageEvent;
+    const lastError: { message?: string } | undefined;
+    function sendMessage(
+      message: unknown,
+      responseCallback?: (response: unknown) => void,
+    ): void;
   }
 }

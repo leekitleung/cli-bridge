@@ -7,6 +7,10 @@ import {
 import {
   startOutboundPromptPoller,
 } from '../apps/extension/src/content/outbound-poller.ts';
+import {
+  clearActiveRelaySession,
+  getActiveRelaySession,
+} from '../apps/extension/src/content/active-relay-session.ts';
 
 class FakeElement extends EventTarget {
   constructor(tagName, attributes = {}) {
@@ -111,5 +115,132 @@ test('outbound poller fills composer and acknowledges delivery without submittin
     assert.equal(timers.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('outbound poller skips claiming and filling while ChatGPT is streaming', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  const composer = new FakeElement('textarea', {
+    'data-testid': 'prompt-textarea',
+  });
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ outboundPrompt: null }),
+    };
+  };
+
+  try {
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      isStreaming: () => true,
+      setIntervalFn() {
+        return 1;
+      },
+      clearIntervalFn() {},
+    });
+
+    const result = await poller.tick();
+    poller.stop();
+
+    assert.equal(result, null);
+    assert.equal(calls.length, 0, 'must not hit the bridge while streaming');
+    assert.equal(composer.value, '', 'must not fill the composer while streaming');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function outboundFetchStub(prompt) {
+  return async (url) => {
+    if (String(url).endsWith('/bridge/outbound/next')) {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: prompt }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ outboundPrompt: { id: prompt.id, status: 'delivered' } }) };
+  };
+}
+
+test('outbound poller records the active relay session after successful fill + ack', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  clearActiveRelaySession();
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = outboundFetchStub({
+    id: 'out-rel', sessionId: 's-rel', packetId: 'pk-rel',
+    prompt: 'review this', status: 'claimed', target: 'chatgpt-web',
+  });
+  try {
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    await poller.tick();
+    poller.stop();
+
+    const active = getActiveRelaySession();
+    assert.equal(active.sessionId, 's-rel');
+    assert.equal(active.outboundPromptId, 'out-rel');
+    assert.equal(active.packetId, 'pk-rel');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearActiveRelaySession();
+  }
+});
+
+test('outbound poller does not record an active relay session while streaming', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  clearActiveRelaySession();
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = outboundFetchStub({
+    id: 'out-x', sessionId: 's-x', packetId: 'pk-x',
+    prompt: 'p', status: 'claimed', target: 'chatgpt-web',
+  });
+  try {
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      isStreaming: () => true,
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    await poller.tick();
+    poller.stop();
+    assert.equal(getActiveRelaySession(), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearActiveRelaySession();
+  }
+});
+
+test('outbound poller does not record an active relay session when the fill fails', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  clearActiveRelaySession();
+  // Composer present but focus throws → fill fails fast (no slow locate wait).
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  composer.focus = () => { throw new Error('focus denied'); };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = outboundFetchStub({
+    id: 'out-f', sessionId: 's-f', packetId: 'pk-f',
+    prompt: 'p', status: 'claimed', target: 'chatgpt-web',
+  });
+  try {
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      clipboard: { async writeText() { throw new Error('no clipboard'); } },
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    const result = await poller.tick();
+    poller.stop();
+    assert.equal(result.ok, false);
+    assert.equal(getActiveRelaySession(), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearActiveRelaySession();
   }
 });

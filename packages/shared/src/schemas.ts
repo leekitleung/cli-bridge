@@ -9,6 +9,8 @@ import {
   BRIDGE_PACKET_STATUSES,
   BRIDGE_PACKET_TARGETS,
   OUTBOUND_PROMPT_STATUSES,
+  INBOUND_SOURCES,
+  INBOUND_STATUSES,
   RAW_CONTENT_REF_STORAGE,
   GOAL_STATUSES,
   PLAN_STATUSES,
@@ -22,6 +24,7 @@ import {
   type AuditEvent,
   type BridgePacket,
   type OutboundPrompt,
+  type InboundMessage,
   type Goal,
   type Plan,
   type PlanStep,
@@ -304,6 +307,13 @@ export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
     errors.push('failureReason must be a string');
   }
 
+  if (
+    value.endpointId !== undefined &&
+    (typeof value.endpointId !== 'string' || value.endpointId.trim().length === 0)
+  ) {
+    errors.push('endpointId must be a non-empty string when present');
+  }
+
   return {
     ok: errors.length === 0,
     errors,
@@ -314,6 +324,64 @@ export function assertOutboundPrompt(value: unknown): asserts value is OutboundP
   const result = validateOutboundPrompt(value);
   if (!result.ok) {
     throw new Error(`Invalid OutboundPrompt: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateInboundMessage(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['inbound message must be an object'] };
+  }
+
+  if ('rawContent' in value) {
+    errors.push('rawContent must not be stored on InboundMessage');
+  }
+
+  for (const key of ['id', 'endpointId', 'sessionId', 'packetId', 'content']) {
+    if (typeof value[key] !== 'string' || (value[key] as string).trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isOneOf(value.source, INBOUND_SOURCES)) {
+    errors.push('source is invalid');
+  }
+
+  if (!isOneOf(value.status, INBOUND_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  if (
+    value.sourceOutboundPromptId !== undefined &&
+    typeof value.sourceOutboundPromptId !== 'string'
+  ) {
+    errors.push('sourceOutboundPromptId must be a string when present');
+  }
+
+  requireNumber(value, 'createdAt', errors);
+  requireNumber(value, 'updatedAt', errors);
+
+  for (const key of ['claimedAt', 'consumedAt', 'failedAt', 'cancelledAt']) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+    ) {
+      errors.push(`${key} must be a finite number`);
+    }
+  }
+
+  if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
+    errors.push('failureReason must be a string');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertInboundMessage(value: unknown): asserts value is InboundMessage {
+  const result = validateInboundMessage(value);
+  if (!result.ok) {
+    throw new Error(`Invalid InboundMessage: ${result.errors.join(', ')}`);
   }
 }
 
@@ -351,6 +419,13 @@ export function validateAgentEndpoint(value: unknown): SchemaValidationResult {
     requireBoolean(value.capabilities, 'canReview', errors);
     requireBoolean(value.capabilities, 'canExecute', errors);
     requireBoolean(value.capabilities, 'canSummarize', errors);
+    const caps = value.capabilities as Record<string, unknown>;
+    if (caps.canReceiveInbound !== undefined && typeof caps.canReceiveInbound !== 'boolean') {
+      errors.push('capabilities.canReceiveInbound must be a boolean when present');
+    }
+    if (caps.canUseManagedWriteback !== undefined && typeof caps.canUseManagedWriteback !== 'boolean') {
+      errors.push('capabilities.canUseManagedWriteback must be a boolean when present');
+    }
   }
 
   if (value.adapterName !== undefined && typeof value.adapterName !== 'string') {

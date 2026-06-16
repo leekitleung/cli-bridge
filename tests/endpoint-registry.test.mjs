@@ -6,6 +6,7 @@ import {
 } from '../apps/local-server/src/endpoints/endpoint-registry.ts';
 import {
   DEFAULT_AGENT_ENDPOINTS,
+  MOCK_INBOUND_AGENT_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
 
 test('registry register/list/get works', () => {
@@ -55,4 +56,30 @@ test('default registry metadata preserves v0.4 endpoint boundaries', () => {
   assert.equal(registry.can('chatgpt-web', 'accept-prompt'), true);
   assert.equal(registry.can('chatgpt-web', 'return-output'), true);
   assert.equal(registry.can('mock-review-agent', 'review'), false);
+});
+
+test('mock-inbound-agent can receive inbound while default executors cannot', () => {
+  // The manual/local E2E endpoint is the only inbound-capable one, and it is NOT
+  // part of the default executor set.
+  assert.equal(MOCK_INBOUND_AGENT_ENDPOINT.id, 'mock-inbound-agent');
+  assert.equal(MOCK_INBOUND_AGENT_ENDPOINT.capabilities.canReceiveInbound, true);
+  assert.equal(
+    DEFAULT_AGENT_ENDPOINTS.some((endpoint) => endpoint.id === 'mock-inbound-agent'),
+    false,
+    'manual E2E endpoint must not leak into DEFAULT_AGENT_ENDPOINTS',
+  );
+
+  const registry = new InMemoryEndpointRegistry([
+    ...DEFAULT_AGENT_ENDPOINTS,
+    MOCK_INBOUND_AGENT_ENDPOINT,
+  ]);
+  assert.equal(registry.can('mock-inbound-agent', 'receive-inbound'), true);
+  // No real/default executor was made inbound-capable.
+  for (const endpoint of DEFAULT_AGENT_ENDPOINTS) {
+    assert.equal(
+      registry.can(endpoint.id, 'receive-inbound'),
+      false,
+      `${endpoint.id} must not be inbound-capable`,
+    );
+  }
 });
