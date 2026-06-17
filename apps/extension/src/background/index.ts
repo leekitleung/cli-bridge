@@ -191,6 +191,8 @@ export interface ProxyFetchResult {
   error?: string;
 }
 
+export const PROXY_FETCH_TIMEOUT_MS = 10_000;
+
 function isAllowedProxyPath(path: unknown): path is string {
   if (typeof path !== 'string' || path.length === 0) {
     return false;
@@ -204,6 +206,25 @@ function isAllowedProxyPath(path: unknown): path is string {
   return path === PROTECTED_HEALTH_PATH || path.startsWith('/bridge/');
 }
 
+function isAllowedProxyRoute(path: string, method: string): boolean {
+  const allowed = new Set([
+    `GET ${PROTECTED_HEALTH_PATH}`,
+    'POST /bridge/packets',
+    'GET /bridge/packets',
+    'POST /bridge/pending-prompts',
+    'GET /bridge/pending-prompts',
+    'POST /bridge/pending-prompts/confirm',
+    'POST /bridge/pending-prompts/send',
+    'POST /bridge/pending-prompts/cancel',
+    'GET /bridge/metrics',
+    'POST /bridge/extract-return',
+    'POST /bridge/outbound',
+    'GET /bridge/outbound/next',
+    'POST /bridge/outbound/ack',
+  ]);
+  return allowed.has(`${method} ${path}`);
+}
+
 export async function handleProxyFetch(
   request: ProxyFetchRequest,
   fetchImpl: typeof fetch = fetch,
@@ -213,6 +234,9 @@ export async function handleProxyFetch(
     return { ok: false, status: 0, error: 'invalid-method' };
   }
   if (!isAllowedProxyPath(request?.path)) {
+    return { ok: false, status: 0, error: 'invalid-path' };
+  }
+  if (!isAllowedProxyRoute(request.path, method)) {
     return { ok: false, status: 0, error: 'invalid-path' };
   }
 
@@ -226,12 +250,22 @@ export async function handleProxyFetch(
   }
 
   try {
+    const controller = typeof AbortController === 'function'
+      ? new AbortController()
+      : null;
+    const timeout = controller
+      ? globalThis.setTimeout?.(() => controller.abort(), PROXY_FETCH_TIMEOUT_MS)
+      : null;
     const response = await fetchImpl(`${LOCAL_SERVER_BASE_URL}${request.path}`, {
       method,
       headers,
       body: hasBody ? JSON.stringify(request.body) : undefined,
+      signal: controller?.signal,
     });
     const data = await response.json().catch(() => null);
+    if (timeout) {
+      globalThis.clearTimeout?.(timeout);
+    }
     if (!response.ok) {
       const message = data && typeof data === 'object'
         && typeof (data as { message?: unknown }).message === 'string'

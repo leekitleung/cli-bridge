@@ -9,10 +9,8 @@ import {
   clearPairingTokenFromStorage,
   createExtractReturn,
   createPacket,
-  getMetrics,
   hasPairingToken,
   loadPairingTokenFromStorage,
-  savePairingTokenToStorage,
   testPrivateHealth,
 } from '../content/bridge-client.ts';
 import {
@@ -22,6 +20,7 @@ import {
 import {
   clearActiveRelaySession,
   getActiveRelaySession,
+  submitExtractReturn,
 } from '../content/active-relay-session.ts';
 import {
   createConnectionPanelStatus,
@@ -65,6 +64,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     bottom: '16px',
     zIndex: '2147483647',
     width: '320px',
+    maxWidth: 'calc(100vw - 32px)',
     boxSizing: 'border-box',
     padding: '12px',
     display: 'grid',
@@ -78,9 +78,24 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     fontSize: '13px',
   });
 
+  const title = root.createElement('div');
+  title.textContent = 'CLI Bridge';
+  Object.assign(title.style, {
+    fontWeight: '700',
+    color: '#111827',
+  });
+
+  const scope = root.createElement('div');
+  scope.textContent = 'ChatGPT 交接工具 · 配对请点浏览器扩展图标';
+  Object.assign(scope.style, {
+    color: '#4b5563',
+    fontSize: '12px',
+  });
+
   const input = root.createElement('textarea');
   input.setAttribute('aria-label', 'CLI Bridge text');
   input.rows = 4;
+  input.placeholder = '粘贴要交给 ChatGPT 的下一步内容';
   Object.assign(input.style, {
     width: '100%',
     minHeight: '80px',
@@ -94,35 +109,20 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     font: 'inherit',
   });
 
-  const pairingInput = root.createElement('input');
-  pairingInput.type = 'password';
-  pairingInput.setAttribute('aria-label', 'Pairing token');
-  pairingInput.setAttribute('data-cli-bridge-pairing-input', 'true');
-  const PAIRING_TOKEN_PLACEHOLDER = '粘贴 local server 的 pairing token';
-  const PAIRED_TOKEN_PLACEHOLDER = '已配对（点清除可更换 token）';
-  pairingInput.placeholder = PAIRING_TOKEN_PLACEHOLDER;
-  Object.assign(pairingInput.style, {
-    width: '100%',
-    boxSizing: 'border-box',
-    color: '#111827',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    padding: '6px 8px',
-    font: 'inherit',
-  });
-
-  const saveTokenButton = root.createElement('button');
-  saveTokenButton.type = 'button';
-  saveTokenButton.textContent = '保存';
-
   const testTokenButton = root.createElement('button');
   testTokenButton.type = 'button';
-  testTokenButton.textContent = '测试';
+  testTokenButton.textContent = '刷新连接';
 
   const clearTokenButton = root.createElement('button');
   clearTokenButton.type = 'button';
-  clearTokenButton.textContent = '清除';
+  clearTokenButton.textContent = '清除配对';
+
+  const connectionActions = root.createElement('div');
+  Object.assign(connectionActions.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '8px',
+  });
 
   const connectionStatus = root.createElement('output');
   connectionStatus.setAttribute('data-cli-bridge-connection-status', 'true');
@@ -134,17 +134,28 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const fillButton = root.createElement('button');
   fillButton.type = 'button';
-  fillButton.textContent = '填入';
+  fillButton.textContent = '填入下一步';
 
   const extractButton = root.createElement('button');
   extractButton.type = 'button';
-  extractButton.textContent = '提取';
+  extractButton.textContent = '预览回传';
+
+  const returnButton = root.createElement('button');
+  returnButton.type = 'button';
+  returnButton.textContent = '确认回传';
 
   const copyButton = root.createElement('button');
   copyButton.type = 'button';
-  copyButton.textContent = '复制';
+  copyButton.textContent = '复制预览';
 
-  for (const button of [saveTokenButton, testTokenButton, clearTokenButton, fillButton, extractButton, copyButton]) {
+  const returnActions = root.createElement('div');
+  Object.assign(returnActions.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gap: '8px',
+  });
+
+  for (const button of [testTokenButton, clearTokenButton, fillButton, extractButton, returnButton, copyButton]) {
     Object.assign(button.style, {
       minHeight: '32px',
       color: '#111827',
@@ -155,6 +166,12 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       font: 'inherit',
     });
   }
+  Object.assign(fillButton.style, {
+    color: '#ffffff',
+    background: '#0f766e',
+    border: '1px solid #0f766e',
+    fontWeight: '700',
+  });
 
   const status = root.createElement('output');
   status.textContent = latestPanelStatus.label;
@@ -217,8 +234,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   const renderRelayStatus = () => {
     const active = getActiveRelaySession();
     relayStatus.textContent = active
-      ? `active relay session: ${active.sessionId}`
-      : 'no active relay session';
+      ? '回程上下文可用'
+      : '暂无回程上下文';
   };
 
   renderRelayStatus();
@@ -228,9 +245,6 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     connectionStatus.textContent = `${next.label}: ${next.detail}`;
     connectionStatus.style.color = getPanelStatusColor(next.kind);
     connectionStatus.style.fontWeight = '600';
-    pairingInput.placeholder = state === 'connected'
-      ? PAIRED_TOKEN_PLACEHOLDER
-      : PAIRING_TOKEN_PLACEHOLDER;
   };
 
   // Show an explicit initial state so the pairing area never looks inert.
@@ -258,23 +272,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     .then(() => refreshConnection())
     .catch(() => renderConnection('unpaired'));
 
-  saveTokenButton.addEventListener('click', async () => {
-    if (pairingInput.value.trim().length === 0) {
-      renderConnection('unpaired');
-      return;
-    }
-    // Immediate feedback so the click is never silent.
-    renderConnection('checking');
-    const saved = await savePairingTokenToStorage(pairingInput.value);
-    pairingInput.value = '';
-    if (!saved) {
-      renderConnection('unpaired');
-      return;
-    }
-    await refreshConnection();
-  });
-
   testTokenButton.addEventListener('click', async () => {
+    await loadPairingTokenFromStorage();
     await refreshConnection();
   });
 
@@ -287,6 +286,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   });
 
   const sessionId = `panel-${Date.now()}`;
+  let pendingExtractText = '';
 
   fillButton.addEventListener('click', async () => {
     if (detectStreamingState(root)) {
@@ -297,7 +297,6 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     renderStatus(createLocatingPanelStatus());
     latestFillStatus = await fillComposerText(input.value, {
       root,
-      clipboard: globalThis.navigator?.clipboard,
     });
     renderStatus(createFillPanelStatus(latestFillStatus));
     if (latestFillStatus.ok) {
@@ -321,26 +320,41 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     // Reflect the session that will be used for routing before we send it.
     renderRelayStatus();
     if (latestExtractStatus.ok) {
+      pendingExtractText = latestExtractStatus.text;
       renderLoopStatus('pending-prompt-ready');
-      // Route the extracted reply server-side: inbound when a relay context
-      // resolves, else fall back to a pending prompt. The panel never supplies
-      // a routing target; the server decides from the session context.
-      if (hasPairingToken()) {
-        // Prefer the session of the most recent successfully-filled outbound so
-        // the server can resolve a relay context; otherwise use the panel's own
-        // session, which falls back to a pending prompt (v0.2 behavior).
-        const relaySession = getActiveRelaySession();
-        const extractSessionId = relaySession?.sessionId ?? sessionId;
-        const routed = await createExtractReturn(extractSessionId, latestExtractStatus.text);
-        if (!routed.ok) {
-          if (routed.error === 'network-error') {
-            renderStatus(createNetworkErrorPanelStatus());
-          }
-        } else {
-          renderStatus(createExtractRoutePanelStatus(routed.data?.routedTo, routed.data?.fallbackReason));
-        }
-      }
+    } else {
+      pendingExtractText = '';
     }
+  });
+
+  returnButton.addEventListener('click', async () => {
+    if (!pendingExtractText) {
+      renderStatus({
+        kind: 'blocked',
+        label: '没有待回传内容',
+        detail: '请先预览回传内容',
+      });
+      return;
+    }
+    if (!hasPairingToken()) {
+      renderConnection('unpaired');
+      return;
+    }
+
+    const routed = await submitExtractReturn(
+      pendingExtractText,
+      sessionId,
+      createExtractReturn,
+    );
+    if (!routed.ok) {
+      if (routed.error === 'network-error') {
+        renderStatus(createNetworkErrorPanelStatus());
+      }
+      return;
+    }
+    pendingExtractText = '';
+    renderStatus(createExtractRoutePanelStatus(routed.data?.routedTo, routed.data?.fallbackReason));
+    renderRelayStatus();
   });
 
   copyButton.addEventListener('click', async () => {
@@ -349,16 +363,17 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     renderStatus(createCopyPanelStatus(latestCopyStatus));
   });
 
+  connectionActions.append(testTokenButton, clearTokenButton);
+  returnActions.append(extractButton, returnButton, copyButton);
+
   panel.append(
-    pairingInput,
-    saveTokenButton,
-    testTokenButton,
-    clearTokenButton,
+    title,
+    scope,
     connectionStatus,
+    connectionActions,
     input,
     fillButton,
-    extractButton,
-    copyButton,
+    returnActions,
     loopStatus,
     relayStatus,
     status,

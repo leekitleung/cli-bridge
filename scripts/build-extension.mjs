@@ -10,6 +10,7 @@ const distRoot = resolve(extensionRoot, 'dist');
 await rm(distRoot, { recursive: true, force: true });
 await mkdir(resolve(distRoot, 'background'), { recursive: true });
 await mkdir(resolve(distRoot, 'content'), { recursive: true });
+await mkdir(resolve(distRoot, 'popup'), { recursive: true });
 
 await build({
   entryPoints: [resolve(extensionRoot, 'src/background/index.ts')],
@@ -31,6 +32,16 @@ await build({
   logLevel: 'silent',
 });
 
+await build({
+  entryPoints: [resolve(extensionRoot, 'src/popup/index.ts')],
+  outfile: resolve(distRoot, 'popup/index.js'),
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: 'chrome120',
+  logLevel: 'silent',
+});
+
 const sourceManifest = JSON.parse(
   await readFile(resolve(extensionRoot, 'manifest.json'), 'utf8'),
 );
@@ -41,6 +52,10 @@ const distManifest = {
     ...sourceManifest.background,
     service_worker: 'background/index.js',
   },
+  action: {
+    ...sourceManifest.action,
+    default_popup: 'popup/index.html',
+  },
   content_scripts: sourceManifest.content_scripts.map((contentScript) => ({
     ...contentScript,
     js: ['content/index.js'],
@@ -50,4 +65,22 @@ const distManifest = {
 await writeFile(
   resolve(distRoot, 'manifest.json'),
   `${JSON.stringify(distManifest, null, 2)}\n`,
+);
+
+await writeFile(
+  resolve(distRoot, 'popup/index.html'),
+  [
+    '<!doctype html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<title>CLI Bridge</title>',
+    '</head>',
+    '<body style="margin:0">',
+    '<script src="./index.js"></script>',
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n'),
 );

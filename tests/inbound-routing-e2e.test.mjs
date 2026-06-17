@@ -69,7 +69,7 @@ test('full outbound→deliver→extract-return chain routes the reply into the i
     runtime,
     'POST',
     '/bridge/outbound/ack',
-    jsonRequest({ outboundPromptId, ok: true }),
+    jsonRequest({ outboundPromptId, claimToken: claim.payload.outboundPrompt.claimToken, ok: true }),
   );
   assert.equal(ack.statusCode, 200);
   assert.equal(ack.payload.outboundPrompt.status, 'delivered');
@@ -158,12 +158,12 @@ test('extract-return falls back when the delivered endpoint cannot receive inbou
     jsonRequest({ sessionId, prompt: 'p', endpointId }),
   );
   const outboundPromptId = outboundCreate.payload.outboundPrompt.id;
-  await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
+  const claim = await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
   await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/outbound/ack',
-    jsonRequest({ outboundPromptId, ok: true }),
+    jsonRequest({ outboundPromptId, claimToken: claim.payload.outboundPrompt.claimToken, ok: true }),
   );
 
   const extract = await handleBridgeRequest(
@@ -190,13 +190,18 @@ test('a failed outbound ack does NOT write a relay context, so extract-return fa
     jsonRequest({ sessionId, prompt: 'p', endpointId }),
   );
   const outboundPromptId = outboundCreate.payload.outboundPrompt.id;
-  await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
+  const claim = await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
   // Ack with ok=false (fill failed): no relay context should be recorded.
   await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/outbound/ack',
-    jsonRequest({ outboundPromptId, ok: false, failureReason: 'composer-not-found' }),
+    jsonRequest({
+      outboundPromptId,
+      claimToken: claim.payload.outboundPrompt.claimToken,
+      ok: false,
+      failureReason: 'composer-not-found',
+    }),
   );
   assert.equal(runtime.relayContextStore.getRelayContext(sessionId), undefined);
 

@@ -16,6 +16,8 @@ export interface BridgeClientResult<T = unknown> {
   error?: string;
 }
 
+export const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
+
 let cachedConfig: BridgeClientConfig = {
   baseUrl: LOCAL_SERVER_BASE_URL,
   pairingToken: null,
@@ -50,10 +52,16 @@ function sendProxyFetch<T>(
   token: string,
 ): Promise<BridgeClientResult<T>> {
   return new Promise((resolve) => {
+    const timeout = globalThis.setTimeout?.(() => {
+      resolve({ ok: false, status: 0, error: 'network-error' });
+    }, BRIDGE_FETCH_TIMEOUT_MS);
     try {
       chrome.runtime.sendMessage(
         { type: 'cli-bridge-proxy-fetch', path, method, body, token },
         (response: unknown) => {
+          if (timeout) {
+            globalThis.clearTimeout?.(timeout);
+          }
           if (chrome.runtime?.lastError || !response) {
             resolve({ ok: false, status: 0, error: 'network-error' });
             return;
@@ -62,6 +70,9 @@ function sendProxyFetch<T>(
         },
       );
     } catch {
+      if (timeout) {
+        globalThis.clearTimeout?.(timeout);
+      }
       resolve({ ok: false, status: 0, error: 'network-error' });
     }
   });
@@ -89,13 +100,23 @@ async function bridgeFetch<T>(
   };
 
   try {
+    const controller = typeof AbortController === 'function'
+      ? new AbortController()
+      : null;
+    const timeout = controller
+      ? globalThis.setTimeout?.(() => controller.abort(), BRIDGE_FETCH_TIMEOUT_MS)
+      : null;
     const response = await fetch(`${cachedConfig.baseUrl}${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
+      signal: controller?.signal,
     });
 
     const data = await response.json().catch(() => null);
+    if (timeout) {
+      globalThis.clearTimeout?.(timeout);
+    }
 
     if (!response.ok) {
       return {
@@ -152,6 +173,7 @@ export interface OutboundPromptPayload {
   prompt: string;
   status: string;
   target: 'chatgpt-web';
+  claimToken: string;
 }
 
 export function createOutboundPrompt(sessionId: string, prompt: string) {
@@ -167,11 +189,13 @@ export function claimNextOutboundPrompt() {
 
 export function acknowledgeOutboundPrompt(
   outboundPromptId: string,
+  claimToken: string,
   ok: boolean,
   failureReason?: string | null,
 ) {
   return bridgeFetch('/bridge/outbound/ack', 'POST', {
     outboundPromptId,
+    claimToken,
     ok,
     ...(failureReason ? { failureReason } : {}),
   });
@@ -198,6 +222,7 @@ export async function loadPairingTokenFromStorage(): Promise<string | null> {
         cachedConfig.pairingToken = token;
         return token;
       }
+      cachedConfig.pairingToken = null;
     }
   } catch {
     // storage unavailable — test or non-extension environment
@@ -270,10 +295,20 @@ export async function testPrivateHealth(): Promise<ConnectionProbeResult> {
   }
 
   try {
+    const controller = typeof AbortController === 'function'
+      ? new AbortController()
+      : null;
+    const timeout = controller
+      ? globalThis.setTimeout?.(() => controller.abort(), BRIDGE_FETCH_TIMEOUT_MS)
+      : null;
     const response = await fetch(`${cachedConfig.baseUrl}${PROTECTED_HEALTH_PATH}`, {
       method: 'GET',
       headers: { [PAIRING_TOKEN_HEADER]: token },
+      signal: controller?.signal,
     });
+    if (timeout) {
+      globalThis.clearTimeout?.(timeout);
+    }
 
     if (response.ok) {
       return 'connected';

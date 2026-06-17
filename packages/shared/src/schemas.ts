@@ -303,6 +303,13 @@ export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
     }
   }
 
+  if (
+    value.claimToken !== undefined &&
+    (typeof value.claimToken !== 'string' || value.claimToken.trim().length === 0)
+  ) {
+    errors.push('claimToken must be a non-empty string when present');
+  }
+
   if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
     errors.push('failureReason must be a string');
   }

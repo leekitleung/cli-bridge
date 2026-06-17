@@ -8,7 +8,8 @@
     "type": "module"
   },
   "action": {
-    "default_title": "CLI Bridge"
+    "default_title": "CLI Bridge",
+    "default_popup": "dist/popup/index.html"
   },
   "permissions": [
     "clipboardWrite",

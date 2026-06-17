@@ -2032,15 +2032,17 @@ export async function handleBridgeRequest(
       return error(400, parsed.message);
     }
     const outboundPromptId = requireString(parsed.body, 'outboundPromptId');
+    const claimToken = requireString(parsed.body, 'claimToken');
     const okValue = parsed.body.ok;
-    if (!outboundPromptId || typeof okValue !== 'boolean') {
-      return error(400, 'outboundPromptId and ok are required');
+    if (!outboundPromptId || !claimToken || typeof okValue !== 'boolean') {
+      return error(400, 'outboundPromptId, claimToken and ok are required');
     }
     const failureReason = typeof parsed.body.failureReason === 'string'
       ? parsed.body.failureReason
       : undefined;
     const outboundPrompt = runtime.outboundPromptStore.acknowledge({
       id: outboundPromptId,
+      claimToken,
       ok: okValue,
       failureReason,
     });

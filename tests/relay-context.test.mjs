@@ -186,12 +186,13 @@ test('outbound with endpointId round-trips through claim and delivered ack', asy
   const id = created.outboundPrompt.id;
 
   const claim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
-  assert.equal((await claim.json()).outboundPrompt.id, id);
+  const claimed = (await claim.json()).outboundPrompt;
+  assert.equal(claimed.id, id);
 
   const ack = await fetch(`${handle.url}/bridge/outbound/ack`, {
     method: 'POST',
     headers: authHeaders(handle),
-    body: JSON.stringify({ outboundPromptId: id, ok: true }),
+    body: JSON.stringify({ outboundPromptId: id, claimToken: claimed.claimToken, ok: true }),
   });
   const acked = await ack.json();
   assert.equal(acked.outboundPrompt.status, 'delivered');

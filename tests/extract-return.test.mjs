@@ -163,11 +163,21 @@ test('bridge-client exposes createExtractReturn and keeps createPendingPrompt', 
   assert.equal(source.includes('export function createPendingPrompt'), true);
 });
 
-test('Bridge Panel extract routes via createExtractReturn, not a direct pending prompt', async () => {
+test('Bridge Panel routes only confirmed extracts via submitExtractReturn', async () => {
   const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
-  // The extract path resolves its session from the active relay session (or the
-  // panel session fallback) before routing via createExtractReturn.
-  assert.equal(source.includes('createExtractReturn(extractSessionId'), true);
+  const extractHandlerIndex = source.indexOf("extractButton.addEventListener('click'");
+  const returnHandlerIndex = source.indexOf("returnButton.addEventListener('click'");
+  const copyHandlerIndex = source.indexOf("copyButton.addEventListener('click'");
+
+  assert.ok(extractHandlerIndex >= 0);
+  assert.ok(returnHandlerIndex > extractHandlerIndex);
+  assert.ok(copyHandlerIndex > returnHandlerIndex);
+
+  const extractHandler = source.slice(extractHandlerIndex, returnHandlerIndex);
+  const returnHandler = source.slice(returnHandlerIndex, copyHandlerIndex);
+  assert.equal(extractHandler.includes('createExtractReturn'), false);
+  assert.equal(returnHandler.includes('submitExtractReturn('), true);
+  assert.equal(returnHandler.includes('createExtractReturn,'), true);
   assert.equal(source.includes('createExtractRoutePanelStatus'), true);
   // The panel no longer calls createPendingPrompt directly on the extract path.
   assert.equal(source.includes('createPendingPrompt('), false);

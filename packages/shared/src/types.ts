@@ -266,6 +266,8 @@ export interface OutboundPrompt {
   createdAt: number;
   updatedAt: number;
   claimedAt?: number;
+  /** Opaque fencing token for the currently active claim lease. */
+  claimToken?: string;
   deliveredAt?: number;
   failedAt?: number;
   cancelledAt?: number;

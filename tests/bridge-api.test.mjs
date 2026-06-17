@@ -182,6 +182,7 @@ test('bridge outbound queue claims redacted prompts and records fill acknowledge
     headers: authHeaders(handle),
     body: JSON.stringify({
       outboundPromptId: createBody.outboundPrompt.id,
+      claimToken: claimedBody.outboundPrompt.claimToken,
       ok: true,
     }),
   });

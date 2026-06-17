@@ -117,11 +117,12 @@ async function bindSession(handle, sessionId, endpointId) {
     body: JSON.stringify({ sessionId, prompt: 'p', endpointId }),
   });
   const id = (await create.json()).outboundPrompt.id;
-  await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
+  const claim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
+  const claimToken = (await claim.json()).outboundPrompt.claimToken;
   await fetch(`${handle.url}/bridge/outbound/ack`, {
     method: 'POST',
     headers: authHeaders(handle),
-    body: JSON.stringify({ outboundPromptId: id, ok: true }),
+    body: JSON.stringify({ outboundPromptId: id, claimToken, ok: true }),
   });
 }
 

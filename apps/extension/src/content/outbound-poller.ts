@@ -8,7 +8,7 @@ import {
   type FillComposerResult,
 } from './chatgpt-dom.ts';
 import { detectStreamingState } from './extraction.ts';
-import { setActiveRelaySession } from './active-relay-session.ts';
+import { getActiveRelaySession, setActiveRelaySession } from './active-relay-session.ts';
 
 export interface OutboundPollerOptions {
   root?: ParentNode;
@@ -42,7 +42,7 @@ export function startOutboundPromptPoller(
     ?? ((root?: ParentNode) => detectStreamingState(root ?? null));
 
   const tick = async (): Promise<FillComposerResult | null> => {
-    if (stopped || inFlight || !hasPairingToken()) {
+    if (stopped || inFlight || !hasPairingToken() || getActiveRelaySession()) {
       return null;
     }
 
@@ -67,6 +67,7 @@ export function startOutboundPromptPoller(
       });
       const ackResult = await acknowledgeOutboundPrompt(
         outboundPrompt.id,
+        outboundPrompt.claimToken,
         fillResult.ok,
         fillResult.reason,
       );

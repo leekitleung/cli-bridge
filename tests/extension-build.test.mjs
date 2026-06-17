@@ -17,10 +17,14 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
   const distManifestPath = resolve(root, 'apps/extension/dist/manifest.json');
   const backgroundPath = resolve(root, 'apps/extension/dist/background/index.js');
   const contentPath = resolve(root, 'apps/extension/dist/content/index.js');
+  const popupHtmlPath = resolve(root, 'apps/extension/dist/popup/index.html');
+  const popupScriptPath = resolve(root, 'apps/extension/dist/popup/index.js');
 
   assert.equal(existsSync(distManifestPath), true);
   assert.equal(existsSync(backgroundPath), true);
   assert.equal(existsSync(contentPath), true);
+  assert.equal(existsSync(popupHtmlPath), true);
+  assert.equal(existsSync(popupScriptPath), true);
 
   const manifestText = await readFile(distManifestPath, 'utf8');
   const manifest = JSON.parse(manifestText);
@@ -29,6 +33,7 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
     service_worker: 'background/index.js',
     type: 'module',
   });
+  assert.equal(manifest.action.default_popup, 'popup/index.html');
   assert.deepEqual(manifest.content_scripts, [
     {
       matches: ['https://chatgpt.com/*'],
@@ -44,8 +49,10 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
   const contentSource = await readFile(contentPath, 'utf8');
   assert.equal(contentSource.includes('cli-bridge-panel-root'), true);
   assert.equal(contentSource.includes('data-cli-bridge-panel'), true);
+  assert.equal(contentSource.includes('data-cli-bridge-pairing-input'), false);
   assert.equal(contentSource.includes('\\u586B\\u5165'), true);
-  assert.equal(contentSource.includes('\\u63D0\\u53D6'), true);
+  assert.equal(contentSource.includes('\\u9884\\u89C8\\u56DE\\u4F20'), true);
+  assert.equal(contentSource.includes('\\u786E\\u8BA4\\u56DE\\u4F20'), true);
   assert.equal(contentSource.includes('\\u590D\\u5236'), true);
   assert.equal(contentSource.includes('Pending Prompt'), false);
   assert.equal(contentSource.includes('BridgePacket'), false);

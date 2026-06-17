@@ -24,6 +24,7 @@ export interface CreateOutboundPromptInput {
 
 export interface AcknowledgeOutboundPromptInput {
   id: string;
+  claimToken: string;
   ok: boolean;
   failureReason?: string;
   now?: number;
@@ -36,6 +37,8 @@ const OUTBOUND_PROMPT_STATUS_VALUES = new Set([
   'failed',
   'cancelled',
 ]);
+
+export const CLAIMED_OUTBOUND_PROMPT_TTL_MS = 60_000;
 
 function clonePrompt(prompt: OutboundPrompt): OutboundPrompt {
   return structuredClone(prompt);
@@ -56,6 +59,7 @@ function isOutboundPromptShape(value: unknown): value is OutboundPrompt {
     OUTBOUND_PROMPT_STATUS_VALUES.has(record.status) &&
     record.target === 'chatgpt-web' &&
     (record.endpointId === undefined || typeof record.endpointId === 'string') &&
+    (record.claimToken === undefined || typeof record.claimToken === 'string') &&
     typeof record.createdAt === 'number' &&
     typeof record.updatedAt === 'number'
   );
@@ -123,7 +127,25 @@ export class InMemoryOutboundPromptStore {
     return clonePrompt(prompt);
   }
 
+  private recoverStaleClaims(now: number): void {
+    for (const prompt of this.prompts.values()) {
+      if (
+        prompt.status === 'claimed' &&
+        typeof prompt.claimedAt === 'number' &&
+        now - prompt.claimedAt > CLAIMED_OUTBOUND_PROMPT_TTL_MS
+      ) {
+        prompt.status = 'failed';
+        prompt.failedAt = now;
+        prompt.failureReason = 'claim-lease-expired';
+        prompt.claimToken = undefined;
+        prompt.updatedAt = now;
+        this.prompts.set(prompt.id, clonePrompt(prompt));
+      }
+    }
+  }
+
   claimNext(now: number = Date.now()): OutboundPrompt | undefined {
+    this.recoverStaleClaims(now);
     const prompt = Array.from(this.prompts.values())
       .filter((candidate) => candidate.status === 'queued')
       .sort((left, right) => left.createdAt - right.createdAt)[0];
@@ -134,6 +156,7 @@ export class InMemoryOutboundPromptStore {
 
     prompt.status = 'claimed';
     prompt.claimedAt = now;
+    prompt.claimToken = randomUUID();
     prompt.updatedAt = now;
     this.prompts.set(prompt.id, clonePrompt(prompt));
     this.auditLog.createAndAppend({
@@ -154,9 +177,15 @@ export class InMemoryOutboundPromptStore {
 
   acknowledge(input: AcknowledgeOutboundPromptInput): OutboundPrompt | undefined {
     const prompt = this.prompts.get(input.id);
-    if (!prompt || prompt.status === 'cancelled' || prompt.status === 'delivered') {
+    if (
+      !prompt ||
+      prompt.status !== 'claimed' ||
+      !prompt.claimToken ||
+      prompt.claimToken !== input.claimToken
+    ) {
       return undefined;
     }
+    prompt.claimToken = undefined;
 
     const now = input.now ?? Date.now();
     if (input.ok) {

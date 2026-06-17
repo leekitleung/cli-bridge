@@ -70,6 +70,13 @@ test('handleProxyFetch rejects an unsupported path outside /health/private and /
   assert.equal(calls.length, 0);
 });
 
+test('handleProxyFetch rejects unlisted /bridge paths even though they share the prefix', async () => {
+  const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, {}));
+  const result = await handleProxyFetch({ path: '/bridge/projects', method: 'GET', token: 'tok' }, fetchImpl);
+  assert.deepEqual(result, { ok: false, status: 0, error: 'invalid-path' });
+  assert.equal(calls.length, 0);
+});
+
 test('handleProxyFetch rejects an unsupported method', async () => {
   const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, {}));
   const result = await handleProxyFetch({ path: '/bridge/outbound', method: 'DELETE', token: 'tok' }, fetchImpl);

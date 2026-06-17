@@ -6,7 +6,7 @@ import {
 
 export type ComposerInput = HTMLTextAreaElement | HTMLElement;
 
-export type FillComposerStatus = 'filled' | 'clipboard-fallback';
+export type FillComposerStatus = 'filled' | 'clipboard-fallback' | 'failed';
 
 export type FillComposerReason =
   | 'input-not-found'
@@ -20,7 +20,7 @@ export interface FillComposerResult {
   ok: boolean;
   status: FillComposerStatus;
   reason: FillComposerReason;
-  method: 'textarea' | 'contenteditable' | 'clipboard';
+  method: 'textarea' | 'contenteditable' | 'clipboard' | 'none';
   clipboard?: ClipboardFallbackResult;
 }
 
@@ -41,6 +41,8 @@ export interface FillComposerOptions {
   now?: () => number;
   /** Injectable delay for deterministic tests. Defaults to setTimeout. */
   delay?: (ms: number) => Promise<void>;
+  /** Clipboard writes are only allowed for explicit user copy/fallback actions. */
+  allowClipboardFallback?: boolean;
 }
 
 export const DEFAULT_COMPOSER_LOCATE_TIMEOUT_MS = 3000;
@@ -253,7 +255,17 @@ async function fallbackToClipboard(
   text: string,
   reason: Exclude<FillComposerReason, null>,
   clipboard?: ClipboardWriter,
+  allowClipboardFallback = false,
 ): Promise<FillComposerResult> {
+  if (!allowClipboardFallback) {
+    return {
+      ok: false,
+      status: 'failed',
+      reason,
+      method: 'none',
+    };
+  }
+
   const clipboardResult = await copyTextToClipboard(text, clipboard);
 
   return {
@@ -276,7 +288,12 @@ export async function fillComposerText(
     delay: options.delay,
   });
   if (!input) {
-    return fallbackToClipboard(text, 'input-not-found', options.clipboard);
+    return fallbackToClipboard(
+      text,
+      'input-not-found',
+      options.clipboard,
+      options.allowClipboardFallback,
+    );
   }
 
   const method = getInputMethod(input);
@@ -291,14 +308,24 @@ export async function fillComposerText(
     dispatchComposerEvent(input, 'input');
     dispatchComposerEvent(input, 'change');
   } catch {
-    return fallbackToClipboard(text, 'input-fill-failed', options.clipboard);
+    return fallbackToClipboard(
+      text,
+      'input-fill-failed',
+      options.clipboard,
+      options.allowClipboardFallback,
+    );
   }
 
   // Verify the text actually landed in the composer rather than trusting that
   // the write path ran. If the DOM rejected or transformed our input, fall
   // back to the clipboard so the content is never silently lost.
   if (normalizeComposerText(readComposerText(input, method)) !== normalizeComposerText(text)) {
-    return fallbackToClipboard(text, 'input-verify-failed', options.clipboard);
+    return fallbackToClipboard(
+      text,
+      'input-verify-failed',
+      options.clipboard,
+      options.allowClipboardFallback,
+    );
   }
 
   return {

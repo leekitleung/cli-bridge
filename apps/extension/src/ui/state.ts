@@ -26,56 +26,50 @@ export interface BridgePanelStatus {
 
 export const IDLE_PANEL_STATUS: BridgePanelStatus = {
   kind: 'idle',
-  label: 'idle',
-  detail: '',
+  label: '待处理',
+  detail: '可以填入下一条交接内容',
 };
 
 export function createFillPanelStatus(result: FillComposerResult): BridgePanelStatus {
   if (result.ok) {
-    return {
-      kind: 'success',
-      label: '已填入',
-      detail: '内容已写入 ChatGPT 输入框，请手动点击发送',
+      return {
+        kind: 'success',
+        label: '已填入',
+        detail: '内容已写入 ChatGPT 输入框，请手动点击发送',
     };
   }
-
-  const clipboardOk = result.clipboard?.ok === true;
 
   switch (result.reason) {
     case 'input-not-found':
       return {
-        kind: clipboardOk ? 'fallback' : 'failed',
+        kind: 'failed',
         label: '未找到输入框',
-        detail: clipboardOk
-          ? '请打开一个 ChatGPT 对话页后重试；内容已复制到剪贴板，可手动粘贴'
-          : '请打开一个 ChatGPT 对话页后重试',
+        detail: '请打开一个 ChatGPT 对话页后重试；不会自动写入剪贴板',
       };
     case 'input-fill-failed':
     case 'input-verify-failed':
       return {
-        kind: clipboardOk ? 'fallback' : 'failed',
+        kind: 'failed',
         label: '写入未生效',
-        detail: clipboardOk
-          ? '已复制到剪贴板，请手动粘贴到输入框'
-          : '写入输入框失败，请重试',
+        detail: '写入输入框失败；不会自动写入剪贴板',
       };
     case 'clipboard-unavailable':
       return {
         kind: 'failed',
         label: '剪贴板不可用',
-        detail: '无法自动写入，请手动复制目标内容',
+        detail: '请使用明确的复制按钮，或手动选择内容复制',
       };
     case 'clipboard-write-failed':
       return {
         kind: 'failed',
         label: '复制失败',
-        detail: '写入输入框与剪贴板均失败，请重试',
+        detail: '剪贴板写入失败，请手动选择内容复制',
       };
     default:
       return {
-        kind: 'fallback',
-        label: '回退',
-        detail: result.reason ?? 'clipboard-fallback',
+        kind: 'failed',
+        label: '写入失败',
+        detail: '请检查 ChatGPT 输入框后重试',
       };
   }
 }
@@ -109,19 +103,19 @@ export function createExtractRoutePanelStatus(
   fallbackReason?: string,
 ): BridgePanelStatus {
   if (routedTo === 'inbound') {
-    return {
-      kind: 'success',
-      label: '已回传执行端',
-      detail: '评审结果已作为 inbound 投递给对应执行端',
-    };
+      return {
+        kind: 'success',
+        label: '已回传执行端',
+        detail: '评审结果已交回对应任务',
+      };
   }
   if (routedTo === 'pending-prompt') {
     return {
-      kind: 'success',
-      label: '已存入待确认队列',
-      detail: fallbackReason === 'endpoint-cannot-receive-inbound'
-        ? '该执行端暂不支持回程，已存为待确认提示'
-        : '暂无回程上下文，已存为待确认提示',
+        kind: 'success',
+        label: '已存入待确认队列',
+        detail: fallbackReason === 'endpoint-cannot-receive-inbound'
+          ? '当前任务暂不能直接接收，已等待人工确认'
+          : '没有可用回程上下文，已等待人工确认',
     };
   }
   return {
@@ -144,7 +138,7 @@ export function createConnectionPanelStatus(state: BridgePanelConnectionState): 
       return {
         kind: 'idle',
         label: '未配对',
-        detail: '请粘贴 local server 打印的 pairing token 并点击保存',
+        detail: '请点击浏览器扩展图标，在扩展弹窗中完成配对',
       };
     case 'checking':
       return {
@@ -192,23 +186,25 @@ export function createExtractPanelStatus(result: ExtractPromptResult): BridgePan
   if (result.ok) {
     return {
       kind: 'success',
-      label: 'success',
-      detail: result.source ?? 'extracted',
+      label: '待确认',
+      detail: result.source === 'selection'
+        ? '已从选中文本提取，确认后回传'
+        : '已从标记块提取，确认后回传',
     };
   }
 
   if (result.status === 'blocked') {
     return {
       kind: 'blocked',
-      label: 'blocked',
-      detail: result.reason ?? 'blocked',
+      label: '暂不可提取',
+      detail: 'ChatGPT 仍在生成，请等待完成后重试',
     };
   }
 
   return {
     kind: 'failed',
-    label: 'failed',
-    detail: 'Select text and retry, or copy the target content manually.',
+    label: '未找到可回传内容',
+    detail: '请选择文本，或使用标记块后重试',
   };
 }
 
@@ -216,15 +212,15 @@ export function createCopyPanelStatus(result: ClipboardFallbackResult): BridgePa
   if (result.ok) {
     return {
       kind: 'success',
-      label: 'success',
-      detail: 'copied',
+      label: '已复制',
+      detail: '内容已复制到剪贴板',
     };
   }
 
   return {
     kind: 'failed',
-    label: 'failed',
-    detail: result.reason ?? 'copy-failed',
+    label: '复制失败',
+    detail: '剪贴板不可用，请手动选择内容复制',
   };
 }
 
@@ -233,44 +229,44 @@ export function createLoopPanelStatus(stage: BridgePanelLoopStage): BridgePanelS
     case 'codex-output-ready':
       return {
         kind: 'idle',
-        label: 'loop',
-        detail: 'ready-to-fill',
+        label: '待处理',
+        detail: '可以填入下一条交接内容',
       };
     case 'chatgpt-awaiting-user-send':
       return {
         kind: 'blocked',
-        label: 'loop',
-        detail: 'awaiting-user-send',
+        label: '等待发送',
+        detail: '内容已填入，请在 ChatGPT 中手动发送',
       };
     case 'pending-prompt-ready':
       return {
         kind: 'success',
-        label: 'loop',
-        detail: 'pending-confirmation',
+        label: '待确认',
+        detail: '已提取结果，请确认后回传',
       };
     case 'pending-prompt-confirmed':
       return {
         kind: 'success',
-        label: 'loop',
-        detail: 'confirmed',
+        label: '已确认',
+        detail: '结果已通过人工确认',
       };
     case 'codex-delivered':
       return {
         kind: 'success',
-        label: 'loop',
-        detail: 'delivered',
+        label: '已交回',
+        detail: '结果已交回本地任务',
       };
     case 'cancelled':
       return {
         kind: 'blocked',
-        label: 'loop',
-        detail: 'cancelled',
+        label: '已取消',
+        detail: '本次交接已取消',
       };
     case 'failed':
       return {
         kind: 'failed',
-        label: 'loop',
-        detail: 'failed',
+        label: '交接失败',
+        detail: '请检查连接后重试',
       };
   }
 }

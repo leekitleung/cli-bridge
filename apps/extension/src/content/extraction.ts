@@ -23,10 +23,7 @@ export interface ExtractPromptOptions {
 
 const VISIBLE_TEXT_SELECTORS = [
   '[data-message-author-role="assistant"]',
-  '[data-testid^="conversation-turn"]',
-  'article',
-  'main',
-  'body',
+  '[data-testid^="conversation-turn"] [data-message-author-role="assistant"]',
 ] as const;
 
 const ASSISTANT_MESSAGE_SELECTORS = [
@@ -267,5 +264,11 @@ export function extractPromptText(
     };
   }
 
-  return extractLastCompleteAssistantMessage(root);
+  return {
+    ok: false,
+    status: 'failed',
+    source: null,
+    text: '',
+    reason: 'no-selection-or-marker',
+  };
 }

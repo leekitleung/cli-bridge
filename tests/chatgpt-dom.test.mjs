@@ -208,7 +208,7 @@ test('fillComposerText falls back to contenteditable composer', async () => {
   assert.deepEqual(composer.dispatchedEvents, ['input', 'change']);
 });
 
-test('fillComposerText returns explicit clipboard fallback when composer is absent', async () => {
+test('fillComposerText does not write clipboard by default when composer is absent', async () => {
   let copiedText = '';
   const clipboard = {
     async writeText(text) {
@@ -224,16 +224,11 @@ test('fillComposerText returns explicit clipboard fallback when composer is abse
 
   assert.deepEqual(result, {
     ok: false,
-    status: 'clipboard-fallback',
+    status: 'failed',
     reason: 'input-not-found',
-    method: 'clipboard',
-    clipboard: {
-      ok: true,
-      status: 'success',
-      reason: null,
-    },
+    method: 'none',
   });
-  assert.equal(copiedText, 'copy fallback text');
+  assert.equal(copiedText, '');
 });
 
 test('fillComposerText with timeout=0 reports composer-not-found immediately without waiting', async () => {
@@ -256,9 +251,9 @@ test('fillComposerText with timeout=0 reports composer-not-found immediately wit
   });
 
   assert.equal(delayCalls, 0, 'must not wait when timeout is 0');
-  assert.equal(result.status, 'clipboard-fallback');
+  assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'input-not-found');
-  assert.equal(copied, 'immediate miss');
+  assert.equal(copied, '');
 });
 
 test('fillComposerText waits across the timeout window before reporting composer-not-found', async () => {
@@ -266,7 +261,6 @@ test('fillComposerText waits across the timeout window before reporting composer
   let delayCalls = 0;
   const result = await fillComposerText('waited miss', {
     root: createFakeRoot([]),
-    clipboard: { async writeText() {} },
     timeoutMs: 1000,
     pollIntervalMs: 200,
     now: () => clock,
@@ -277,7 +271,7 @@ test('fillComposerText waits across the timeout window before reporting composer
   });
 
   assert.ok(delayCalls > 0, 'must retry while waiting for the composer to mount');
-  assert.equal(result.status, 'clipboard-fallback');
+  assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'input-not-found');
 });
 
@@ -310,7 +304,7 @@ test('fillComposerText fills a composer that mounts after a few retries', async 
   assert.equal(composer.value, 'late composer');
 });
 
-test('fillComposerText falls back to clipboard when direct fill throws', async () => {
+test('fillComposerText does not write clipboard by default when direct fill throws', async () => {
   let copied = '';
   const composer = new FakeElement('textarea', {
     'data-testid': 'prompt-textarea',
@@ -330,12 +324,12 @@ test('fillComposerText falls back to clipboard when direct fill throws', async (
     timeoutMs: 0,
   });
 
-  assert.equal(result.status, 'clipboard-fallback');
+  assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'input-fill-failed');
-  assert.equal(copied, 'explodes');
+  assert.equal(copied, '');
 });
 
-test('fillComposerText falls back to clipboard when post-fill verification mismatches', async () => {
+test('fillComposerText does not write clipboard by default when post-fill verification mismatches', async () => {
   let copied = '';
   const composer = new FakeElement('textarea', {
     'data-testid': 'prompt-textarea',
@@ -359,9 +353,28 @@ test('fillComposerText falls back to clipboard when post-fill verification misma
     timeoutMs: 0,
   });
 
-  assert.equal(result.status, 'clipboard-fallback');
+  assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'input-verify-failed');
-  assert.equal(copied, 'fresh target text');
+  assert.equal(copied, '');
+});
+
+test('fillComposerText writes clipboard only when explicit fallback is enabled', async () => {
+  let copied = '';
+  const result = await fillComposerText('explicit copy fallback', {
+    root: createFakeRoot([]),
+    clipboard: {
+      async writeText(text) {
+        copied = text;
+      },
+    },
+    allowClipboardFallback: true,
+    timeoutMs: 0,
+  });
+
+  assert.equal(result.status, 'clipboard-fallback');
+  assert.equal(result.reason, 'input-not-found');
+  assert.equal(result.method, 'clipboard');
+  assert.equal(copied, 'explicit copy fallback');
 });
 
 test('copyTextToClipboard returns structured success and failure states', async () => {
@@ -479,7 +492,7 @@ test('extractMarkedBlock ignores hidden marker text', () => {
   });
 });
 
-test('extractPromptText falls back to last assistant without selection or marker', () => {
+test('extractPromptText fails without explicit selection or marker', () => {
   const assistant = new FakeElement('article', {
     'data-message-author-role': 'assistant',
   });
@@ -495,11 +508,11 @@ test('extractPromptText falls back to last assistant without selection or marker
   });
 
   assert.deepEqual(result, {
-    ok: true,
-    status: 'extracted',
-    source: 'assistant-fallback',
-    text: 'visible text without marker',
-    reason: null,
+    ok: false,
+    status: 'failed',
+    source: null,
+    text: '',
+    reason: 'no-selection-or-marker',
   });
 });
 
@@ -609,6 +622,24 @@ test('extractPromptText keeps marker priority over last assistant fallback', () 
   });
 });
 
+test('extractMarkedBlock does not scan broad main or body containers', () => {
+  const body = new FakeElement('body');
+  body.textContent = [
+    DEFAULT_EXTRACTION_MARKER,
+    'page-level text must not be extracted',
+  ].join('\n');
+
+  const result = extractMarkedBlock(createFakeRoot([body]));
+
+  assert.deepEqual(result, {
+    ok: false,
+    status: 'failed',
+    source: null,
+    text: '',
+    reason: 'no-selection-or-marker',
+  });
+});
+
 test('extractLastCompleteAssistantMessage returns only the last visible assistant message', () => {
   const firstAssistant = new FakeElement('article', {
     'data-message-author-role': 'assistant',
@@ -704,23 +735,19 @@ test('W2 extension source does not send, read browser secrets, or implement late
   }
 });
 
-test('Bridge Panel automation actions remain only fill, extract, and copy', async () => {
-  // NOTE: this test guards the ChatGPT *automation loop* actions only — it must
-  // stay exactly 填入 / 提取 / 复制. The panel may legitimately contain other
-  // controls (e.g. pairing setup: 保存 / 测试 / 清除), which are connection
-  // setup, NOT ChatGPT automation actions, and are intentionally not counted
-  // here. The filter below isolates automation labels, so adding pairing
-  // controls is not a security-boundary regression.
+test('Bridge Panel keeps automation actions manual and confirmation-gated', async () => {
   const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
   const automationActionLabels = Array.from(source.matchAll(/textContent = '([^']+)'/g))
     .map((match) => match[1])
-    .filter((label) => ['填入', '提取', '复制'].includes(label));
+    .filter((label) => ['填入下一步', '预览回传', '确认回传', '复制预览'].includes(label));
 
-  assert.deepEqual(automationActionLabels, ['填入', '提取', '复制']);
+  assert.deepEqual(automationActionLabels, ['填入下一步', '预览回传', '确认回传', '复制预览']);
   // The panel must not present any auto-send / agent-control affordance.
   assert.equal(source.includes('send-button'), false);
   assert.equal(source.includes('requestSubmit'), false);
   assert.equal(source.includes('KeyboardEvent'), false);
+  const returnHandlerIndex = source.indexOf("returnButton.addEventListener('click'");
+  assert.ok(source.lastIndexOf('createExtractReturn') > returnHandlerIndex);
 });
 
 test('extension manifest adds ChatGPT content script, clipboard and storage permissions', async () => {
@@ -741,5 +768,6 @@ test('extension manifest adds ChatGPT content script, clipboard and storage perm
     service_worker: 'dist/background/index.js',
     type: 'module',
   });
+  assert.equal(manifest.action.default_popup, 'dist/popup/index.html');
   assert.equal(JSON.stringify(manifest).includes('.ts'), false);
 });

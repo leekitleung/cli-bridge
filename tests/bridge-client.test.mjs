@@ -9,6 +9,7 @@ import {
   getBridgeClientConfig,
   getMetrics,
   hasPairingToken,
+  loadPairingTokenFromStorage,
   savePairingTokenToStorage,
   setBridgeClientConfig,
   testPrivateHealth,
@@ -167,6 +168,17 @@ test('clearPairingTokenFromStorage removes storage and clears cached config', as
     await clearPairingTokenFromStorage();
     assert.equal(getBridgeClientConfig().pairingToken, null);
     assert.equal('cliBridgePairingToken' in fake.store, false);
+    assert.equal(hasPairingToken(), false);
+  } finally {
+    fake.restore();
+  }
+});
+
+test('loadPairingTokenFromStorage clears a stale cached token when storage is empty', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'stale-token' });
+  const fake = withFakeChromeStorage();
+  try {
+    assert.equal(await loadPairingTokenFromStorage(), null);
     assert.equal(hasPairingToken(), false);
   } finally {
     fake.restore();

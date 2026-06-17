@@ -8,7 +8,9 @@ import {
 } from '../packages/shared/src/schemas.ts';
 import {
   CLAUDE_CODE_REVIEW_ENDPOINT,
+  CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
   CODEX_FEASIBILITY_REVIEW_ENDPOINT,
+  CODEX_REVIEW_COMMAND_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_REVIEW_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
@@ -136,6 +138,16 @@ test('codex feasibility review endpoint uses clipboard review-only capabilities'
   assert.equal(CODEX_FEASIBILITY_REVIEW_ENDPOINT.capabilities.canSummarize, false);
 });
 
+test('review command endpoints are review-only and cannot execute arbitrary prompts', () => {
+  for (const endpoint of [CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT, CODEX_REVIEW_COMMAND_ENDPOINT]) {
+    assert.equal(endpoint.transport, 'command');
+    assert.equal(endpoint.capabilities.canReview, true);
+    assert.equal(endpoint.capabilities.canExecute, false);
+    assert.equal(endpoint.capabilities.canAcceptPrompt, false);
+    assert.equal(endpoint.capabilities.canReturnOutput, true);
+  }
+});
+
 test('templates remain manual previews with autoSend false', () => {
   assert.equal(createTemplatePreview('review-cli-output', {
     content: 'review this',
@@ -145,7 +157,7 @@ test('templates remain manual previews with autoSend false', () => {
   }).autoSend, false);
 });
 
-test('v0.8 does not introduce unsupported TUI agent, command transport, or shell route files', async () => {
+test('v0.8 does not introduce unsupported TUI agents or shell-style route files', async () => {
   const forbiddenPathPatterns = [
     /opencode/i,
     /deepseek/i,
@@ -168,12 +180,8 @@ test('v0.8 does not introduce unsupported TUI agent, command transport, or shell
     }
   }
 
-  const implementationFiles = files.filter((file) => (
-    file.includes('/apps/local-server/src/endpoints/') ||
-    file.includes('/apps/local-server/src/review/')
-  ));
+  const implementationFiles = files.filter((file) => file.includes('/apps/local-server/src/endpoints/'));
   const sourceText = await Promise.all(implementationFiles.map((file) => readFile(file, 'utf8')));
-  assert.equal(sourceText.join('\n').includes("transport: 'command'"), false);
   assert.equal(sourceText.join('\n').includes("targetEndpointId: 'workbuddy'"), false);
 
   const routeFiles = await listProjectFiles([resolve(root, 'apps/local-server/src/routes')]);

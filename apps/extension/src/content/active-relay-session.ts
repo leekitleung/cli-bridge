@@ -14,13 +14,67 @@ export interface ActiveRelaySession {
 }
 
 let activeRelaySession: ActiveRelaySession | null = null;
+export const ACTIVE_RELAY_SESSION_TTL_MS = 10 * 60 * 1000;
+
+export interface ActiveRelaySessionReadOptions {
+  now?: () => number;
+  ttlMs?: number;
+}
+
+export interface ExtractReturnResult {
+  ok: boolean;
+  status: number;
+  data?: {
+    routedTo: 'inbound' | 'pending-prompt';
+    fallbackReason?: string;
+  };
+  error?: string;
+}
+
+export type ExtractReturnSender = (
+  sessionId: string,
+  content: string,
+) => Promise<ExtractReturnResult>;
 
 export function setActiveRelaySession(session: ActiveRelaySession): void {
   activeRelaySession = { ...session };
 }
 
-export function getActiveRelaySession(): ActiveRelaySession | null {
+function isFresh(session: ActiveRelaySession, options: ActiveRelaySessionReadOptions = {}): boolean {
+  const now = options.now ?? (() => Date.now());
+  const ttlMs = options.ttlMs ?? ACTIVE_RELAY_SESSION_TTL_MS;
+  return now() - session.updatedAt <= ttlMs;
+}
+
+export function getActiveRelaySession(options: ActiveRelaySessionReadOptions = {}): ActiveRelaySession | null {
+  if (activeRelaySession && !isFresh(activeRelaySession, options)) {
+    activeRelaySession = null;
+  }
   return activeRelaySession ? { ...activeRelaySession } : null;
+}
+
+export function consumeActiveRelaySession(
+  options: ActiveRelaySessionReadOptions = {},
+): ActiveRelaySession | null {
+  const session = getActiveRelaySession(options);
+  activeRelaySession = null;
+  return session;
+}
+
+export async function submitExtractReturn(
+  content: string,
+  fallbackSessionId: string,
+  send: ExtractReturnSender,
+): Promise<ExtractReturnResult> {
+  const active = getActiveRelaySession();
+  const result = await send(active?.sessionId ?? fallbackSessionId, content);
+  if (result.ok && active) {
+    const current = getActiveRelaySession();
+    if (current?.outboundPromptId === active.outboundPromptId) {
+      clearActiveRelaySession();
+    }
+  }
+  return result;
 }
 
 export function clearActiveRelaySession(): void {
