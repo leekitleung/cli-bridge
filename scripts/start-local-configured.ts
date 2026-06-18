@@ -362,17 +362,27 @@ function isMainModule(): boolean {
   return import.meta.url === pathToFileURL(entryPoint).href;
 }
 
+export interface BrowserOpenOptions {
+  platform?: NodeJS.Platform;
+  spawnFn?: typeof spawn;
+}
+
 /** Best-effort, non-fatal browser open. Never throws; never carries a token. */
-function openInBrowser(target: string): void {
+export function openInBrowser(target: string, options: BrowserOpenOptions = {}): void {
   try {
-    if (process.platform === 'win32') {
+    const spawnFn = options.spawnFn ?? spawn;
+    const platform = options.platform ?? process.platform;
+    let child;
+    if (platform === 'win32') {
       // `start` is a cmd builtin; empty title arg avoids quoting issues.
-      spawn('cmd', ['/c', 'start', '', target], { detached: true, stdio: 'ignore' }).unref();
-    } else if (process.platform === 'darwin') {
-      spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+      child = spawnFn('cmd', ['/c', 'start', '', target], { detached: true, stdio: 'ignore' });
+    } else if (platform === 'darwin') {
+      child = spawnFn('open', [target], { detached: true, stdio: 'ignore' });
     } else {
-      spawn('xdg-open', [target], { detached: true, stdio: 'ignore' }).unref();
+      child = spawnFn('xdg-open', [target], { detached: true, stdio: 'ignore' });
     }
+    child.once('error', () => {});
+    child.unref();
   } catch {
     // Opening is a convenience only; ignore any failure.
   }

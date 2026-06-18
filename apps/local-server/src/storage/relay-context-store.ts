@@ -121,4 +121,15 @@ export class InMemoryRelayContextStore {
   getBoundEndpoint(sessionId: string): string | undefined {
     return this.bindings.get(sessionId);
   }
+
+  exportContexts(): RelayContext[] {
+    return Array.from(this.contexts.values()).map((context) => ({ ...context }));
+  }
+
+  hydrateContexts(contexts: RelayContext[]): void {
+    for (const context of contexts) {
+      this.bindings.set(context.sessionId, context.endpointId);
+      this.contexts.set(context.sessionId, { ...context });
+    }
+  }
 }

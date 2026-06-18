@@ -98,6 +98,8 @@ header .conn-status {
 }
 header .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: inline-block; flex: 0 0 auto; }
 header .conn-dot.ok { background: #22c55e; }
+.mobile-nav-toggle { display: none; min-height: 40px; }
+.mobile-facts { display: none; }
 
 /* ─── Left Rail ─── */
 nav {
@@ -366,6 +368,17 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 @media (max-width: 760px) {
   body { grid-template-columns: 1fr; grid-template-rows: 56px 1fr 126px; grid-template-areas: "topbar" "workspace" "commandbar"; }
   nav { display: none; }
+  .mobile-nav-toggle { display: inline-flex; align-items: center; }
+  body.mobile-nav-open nav {
+    display: flex;
+    position: fixed;
+    inset: 56px 0 126px 0;
+    z-index: 30;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+  }
+  .mobile-facts { display: grid; gap: 8px; margin: 14px 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .mobile-facts div { font-size: 12px; color: var(--muted); }
   header { padding: 0 16px; gap: 12px; }
   header h1 { font-size: 13px; }
   header .project-name, header .branch { display: none; }
@@ -391,6 +404,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 <!-- Top Bar -->
 <header>
   <h1>CLI Bridge</h1>
+  <button type="button" class="mobile-nav-toggle" id="mobile-nav-toggle" aria-controls="project-nav" aria-expanded="false">Projects</button>
   <span class="project-name" id="top-project" title="Click to edit label" style="cursor:pointer">Project: —</span>
   <span class="branch" id="top-branch"></span>
   <span class="spacer"></span>
@@ -402,7 +416,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 </header>
 
 <!-- Left Nav -->
-<nav aria-label="Project navigation">
+<nav id="project-nav" aria-label="Project navigation">
   <div class="recent-session" id="recent-session">
     <span class="label">Recent session</span>
     <span id="recent-session-label">Active project conversation</span>
@@ -418,6 +432,14 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <ul class="project-history-list" id="project-history-list">
       <li class="empty-state">Connect to load project history</li>
     </ul>
+  </div>
+  <div class="mobile-facts" id="mobile-facts" aria-label="Compact mobile project facts">
+    <div data-fact-source="fact-project">Project: not connected</div>
+    <div data-fact-source="fact-next">Next: connect</div>
+    <div data-fact-source="fact-plan">Plan: not available</div>
+    <div data-fact-source="fact-verify">Verification: not available</div>
+    <div data-fact-source="fact-audit">Audit: not available</div>
+    <div data-fact-source="fact-last-event">Last event: none</div>
   </div>
 </nav>
 
@@ -506,6 +528,21 @@ const store = {
 
 const $ = (id) => document.getElementById(id);
 
+function syncMobileFacts() {
+  const mobile = $('mobile-facts');
+  if (!mobile) return;
+  mobile.querySelectorAll('[data-fact-source]').forEach((target) => {
+    const source = $(target.getAttribute('data-fact-source'));
+    if (source) target.innerHTML = source.innerHTML;
+  });
+}
+
+$('mobile-nav-toggle').addEventListener('click', () => {
+  const open = document.body.classList.toggle('mobile-nav-open');
+  $('mobile-nav-toggle').setAttribute('aria-expanded', String(open));
+  syncMobileFacts();
+});
+
 // ─── API ───
 async function api(path, method, body) {
   if (method === undefined) method = 'GET';
@@ -589,6 +626,7 @@ function renderAll() {
   renderStatusPanel();
   renderWorkspace();
   renderFactsRail();
+  syncMobileFacts();
 }
 
 function renderProjectList() {

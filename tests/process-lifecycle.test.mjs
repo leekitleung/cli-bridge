@@ -35,10 +35,10 @@ test('timeout escalates after grace when SIGTERM is ignored', async () => {
   const result = await runContainedProcess(
     process.execPath,
     ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
-    { timeoutMs: 80, killGraceMs: 80, outputCapBytes: 1024 },
+    { timeoutMs: 300, killGraceMs: 80, outputCapBytes: 1024 },
   );
   assert.equal(result.timedOut, true);
-  assert.ok(Date.now() - started >= 140);
+  assert.ok(Date.now() - started >= 350);
   assert.ok(Date.now() - started < 2000);
 });
 
@@ -50,4 +50,12 @@ test('stdout and stderr share one byte budget', async () => {
   );
   assert.equal(result.truncated, true);
   assert.ok(result.stdout.length + result.stderr.length <= 10);
+});
+
+test('Windows taskkill fallback is bounded by an explicit timeout', () => {
+  const source = readFileSync(
+    resolve(import.meta.dirname, '../apps/local-server/src/process/contained-process.ts'),
+    'utf8',
+  );
+  assert.match(source, /spawnSync\('taskkill'[\s\S]*?timeout\s*:/);
 });

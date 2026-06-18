@@ -61,6 +61,7 @@ export async function runContainedProcess(
           spawnSync('taskkill', ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])], {
             shell: false,
             stdio: 'ignore',
+            timeout: Math.max(1, options.killGraceMs ?? DEFAULT_KILL_GRACE_MS),
           });
         } else {
           process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');

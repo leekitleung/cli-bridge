@@ -28,9 +28,20 @@ import type {
   PendingPrompt,
   Plan,
   Project,
+  InboundMessage,
+  RelayContext,
 } from '../../../../packages/shared/src/types.ts';
+import {
+  assertAuditEvent,
+  assertBridgePacket,
+  assertGoal,
+  assertInboundMessage,
+  assertOutboundPrompt,
+  assertPlan,
+  assertProject,
+} from '../../../../packages/shared/src/schemas.ts';
 
-export const SNAPSHOT_VERSION = 2;
+export const SNAPSHOT_VERSION = 3;
 export const SNAPSHOT_FILENAME = 'bridge-snapshot.json';
 export const SNAPSHOT_BACKUP_FILENAME = 'bridge-snapshot.json.bak';
 export const SNAPSHOT_TEMP_FILENAME = 'bridge-snapshot.json.tmp';
@@ -41,6 +52,10 @@ export interface BridgeSnapshot {
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
   outboundPrompts: OutboundPrompt[];
+  /** v3: durable reviewed replies and their idempotency keys. */
+  inboundMessages: InboundMessage[];
+  /** v3: delivered session-to-endpoint routing contexts. */
+  relayContexts: RelayContext[];
   /** v2: persisted goal state. */
   goals: Goal[];
   /** v2: persisted plan state. */
@@ -74,11 +89,17 @@ function snapshotPath(dataDir: string): string {
 }
 
 function parseSnapshot(text: string): SnapshotReadResult {
+  let parsed: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(text);
-    if (typeof parsed !== 'object' || parsed === null) {
+    const value = JSON.parse(text);
+    if (typeof value !== 'object' || value === null) {
       return { ok: false, error: 'snapshot-not-object' };
     }
+    parsed = value as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'snapshot-malformed-json' };
+  }
+  try {
     const version = typeof parsed.version === 'number' ? parsed.version : 0;
     if (!Number.isInteger(version) || version < 0 || version > SNAPSHOT_VERSION) {
       return { ok: false, error: 'snapshot-unsupported-version' };
@@ -89,6 +110,8 @@ function parseSnapshot(text: string): SnapshotReadResult {
       auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
       pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
       outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
+      inboundMessages: Array.isArray(parsed.inboundMessages) ? parsed.inboundMessages : [],
+      relayContexts: Array.isArray(parsed.relayContexts) ? parsed.relayContexts : [],
       goals: Array.isArray(parsed.goals) ? parsed.goals : [],
       plans: Array.isArray(parsed.plans) ? parsed.plans : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects : [],
@@ -100,9 +123,31 @@ function parseSnapshot(text: string): SnapshotReadResult {
       teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
     };
+    // v0-v2 snapshots retain their historical tolerant hydration contract.
+    // v3+ snapshots are written by the hardened writer and fail closed.
+    if (version >= 3) {
+      snapshot.packets.forEach(assertBridgePacket);
+      snapshot.auditEvents.forEach(assertAuditEvent);
+      snapshot.outboundPrompts.forEach(assertOutboundPrompt);
+      snapshot.inboundMessages.forEach(assertInboundMessage);
+      snapshot.goals.forEach(assertGoal);
+      snapshot.plans.forEach(assertPlan);
+      snapshot.projects.forEach(assertProject);
+      for (const context of snapshot.relayContexts) {
+        if (
+          !context ||
+          typeof context.sessionId !== 'string' ||
+          typeof context.endpointId !== 'string' ||
+          typeof context.lastOutboundPromptId !== 'string' ||
+          typeof context.updatedAt !== 'number'
+        ) {
+          throw new Error('invalid relay context');
+        }
+      }
+    }
     return { ok: true, snapshot };
   } catch {
-    return { ok: false, error: 'snapshot-malformed-json' };
+    return { ok: false, error: 'snapshot-invalid-record' };
   }
 }
 
@@ -124,6 +169,15 @@ function writeAndSync(path: string, content: string): void {
   const fd = openSync(path, 'w');
   try {
     writeFileSync(fd, content, 'utf8');
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function syncDirectory(path: string): void {
+  const fd = openSync(path, 'r');
+  try {
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -166,8 +220,10 @@ export class JsonSnapshotStore {
           closeSync(backupFd);
         }
         renameSync(backupTempPath, backupPath);
+        syncDirectory(this.dataDir);
       }
       renameSync(tempPath, path);
+      syncDirectory(this.dataDir);
       return { ok: true, path };
     } catch (error) {
       removeTemporaryFile(tempPath);
@@ -209,6 +265,8 @@ export interface BuildSnapshotInput {
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
   outboundPrompts?: OutboundPrompt[];
+  inboundMessages?: InboundMessage[];
+  relayContexts?: RelayContext[];
   goals?: Goal[];
   plans?: Plan[];
   projects?: Project[];
@@ -228,6 +286,8 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     auditEvents: input.auditEvents,
     pendingPrompts: input.pendingPrompts,
     outboundPrompts: input.outboundPrompts ?? [],
+    inboundMessages: input.inboundMessages ?? [],
+    relayContexts: input.relayContexts ?? [],
     goals: input.goals ?? [],
     plans: input.plans ?? [],
     projects: input.projects ?? [],

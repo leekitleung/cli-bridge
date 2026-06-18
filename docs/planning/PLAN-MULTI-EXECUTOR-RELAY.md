@@ -361,20 +361,21 @@ any boundary (no executor pull client, no auto-send, no terminal writeback).
 - **G2 — manual panel fill never establishes a relay context.** The panel "填入"
   button creates a packet with the panel's own `panel-<timestamp>` session and
   no `endpointId`; extract for that session always falls back to a pending
-  prompt. To exercise inbound you MUST create an outbound that carries
-  `endpointId + sessionId` (the poller then fills + acks, recording the relay
-  context and the active relay session). Use `scripts/manual-inbound-e2e.mjs`.
+  prompt. To exercise inbound you MUST create an outbound with a `sessionId`;
+  the trusted server runtime supplies the inbound endpoint, and the poller then
+  fills + acks, recording relay context and the active relay session. Use
+  `scripts/manual-inbound-e2e.mjs`; clients never send `endpointId`.
 - **G3 — no panel observability.** The panel shows `暂无回程上下文` /
   `回程上下文可用` (`data-cli-bridge-relay-status`) without exposing session or
   endpoint identifiers. It never shows or accepts an `endpointId`; clearing the
   pairing token resets the status to `暂无回程上下文`.
 
 ### 13.2 Steps
-1. Start the local server; copy its pairing token.
+1. Run `npm start`; copy its pairing token.
 2. Seed an inbound-capable outbound:
    ```
    node --experimental-strip-types scripts/manual-inbound-e2e.mjs \
-     --token <PAIRING_TOKEN> --session s-manual-1 --endpoint mock-inbound-agent
+     --token <PAIRING_TOKEN> --session s-manual-1
    ```
 3. In Chrome: reload `apps/extension/dist`, hard-reload chatgpt.com, open the
    extension popup, enter the token, and click `保存并测试`. Confirm `已连接`.

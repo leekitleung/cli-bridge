@@ -170,6 +170,24 @@ export class InMemoryInboundMessageStore {
       .map(cloneMessage);
   }
 
+  exportMessages(): InboundMessage[] {
+    return this.list();
+  }
+
+  hydrateMessages(messages: unknown[]): number {
+    let hydrated = 0;
+    for (const candidate of messages) {
+      try {
+        assertInboundMessage(candidate);
+        this.messages.set(candidate.id, cloneMessage(candidate));
+        hydrated += 1;
+      } catch {
+        // Snapshot validation rejects invalid records before hydration.
+      }
+    }
+    return hydrated;
+  }
+
   claimNext(input: ClaimInboundMessageInput): InboundMessage | undefined {
     const message = Array.from(this.messages.values())
       .filter((candidate) => (

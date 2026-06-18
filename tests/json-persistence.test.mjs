@@ -5,8 +5,10 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
+  BRIDGE_PACKETS_PATH,
   BRIDGE_PROJECTS_PATH,
   createBridgeRuntime,
+  handleBridgeRequest,
 } from '../apps/local-server/src/routes/bridge-api.ts';
 import { createMetricsSummary } from '../apps/local-server/src/storage/metrics-summary.ts';
 import { SNAPSHOT_FILENAME, JsonSnapshotStore, buildSnapshot } from '../apps/local-server/src/storage/json-snapshot-store.ts';
@@ -199,7 +201,70 @@ test('runtime persistence surfaces snapshot write failure', () => {
   }
 });
 
-test('hydration skips invalid records without throwing', () => {
+test('runtime enters a persistence fault state instead of exposing ghost mutations', async () => {
+  const dir = tempDir();
+  try {
+    const runtime = createBridgeRuntime({ dataDir: dir });
+    runtime.packetStore.createPacket({
+      sessionId: 'ghost',
+      source: 'codex',
+      target: 'chatgpt-web',
+      kind: 'cli-output-review',
+      rawContent: 'must not remain observable',
+    });
+    mkdirSync(resolve(dir, 'bridge-snapshot.json.tmp'));
+
+    assert.throws(() => runtime.persist(), /snapshot write failed/i);
+    const result = await handleBridgeRequest(runtime, 'GET', BRIDGE_PACKETS_PATH, null);
+    assert.equal(result.statusCode, 503);
+    assert.match(result.payload.message, /persistence fault/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('inbound messages and relay context persist across restarts', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({
+      dataDir: dir,
+      inboundRelayEndpointId: 'mock-inbound-agent',
+    });
+    first.relayContextStore.bind('s-return', 'mock-inbound-agent', 1);
+    first.relayContextStore.recordDelivered('s-return', 'mock-inbound-agent', 'out-1', 2);
+    const created = first.inboundMessageStore.createIdempotent({
+      endpointId: 'mock-inbound-agent',
+      sessionId: 's-return',
+      content: 'reviewed reply',
+      source: 'chatgpt-web-extract',
+      sourceOutboundPromptId: 'out-1',
+      now: 3,
+    });
+    first.persist();
+
+    const second = createBridgeRuntime({
+      dataDir: dir,
+      inboundRelayEndpointId: 'mock-inbound-agent',
+    });
+    assert.equal(second.inboundMessageStore.list().length, 1);
+    assert.equal(second.inboundMessageStore.list()[0].id, created.message.id);
+    assert.equal(second.relayContextStore.getRelayContext('s-return').lastOutboundPromptId, 'out-1');
+    const replay = second.inboundMessageStore.createIdempotent({
+      endpointId: 'mock-inbound-agent',
+      sessionId: 's-return',
+      content: 'reviewed reply',
+      source: 'chatgpt-web-extract',
+      sourceOutboundPromptId: 'out-1',
+      now: 4,
+    });
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.message.id, created.message.id);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runtime rejects structurally invalid snapshot records instead of skipping them', () => {
   const dir = tempDir();
   try {
     // Write a hand-crafted snapshot with one valid and one invalid packet.
@@ -219,9 +284,10 @@ test('hydration skips invalid records without throwing', () => {
     snapshot.auditEvents.push({ bogus: 'event' });
     writeFileSync(path, JSON.stringify(snapshot), 'utf8');
 
-    const restored = createBridgeRuntime({ dataDir: dir });
-    // Only the one valid packet survives; the broken one is skipped.
-    assert.equal(restored.packetStore.listPackets().length, 1);
+    assert.throws(
+      () => createBridgeRuntime({ dataDir: dir }),
+      /snapshot-(invalid-record|corrupt)/i,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

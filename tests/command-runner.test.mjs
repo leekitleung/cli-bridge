@@ -140,7 +140,7 @@ test('runAllowlistedCommand fails closed on timeout', async () => {
 });
 
 test('runAllowlistedCommand fails closed when output exceeds the cap', async () => {
-  const big = 'x'.repeat(50);
+  const big = 'x'.repeat(51);
   const result = await runAllowlistedCommand(
     { command: 'claude', args: ['-p'] },
     {
@@ -152,6 +152,25 @@ test('runAllowlistedCommand fails closed when output exceeds the cap', async () 
   assert.equal(result.ok, false);
   assert.equal(result.truncated, true);
   assert.equal(result.failureReason, 'command-output-too-large');
+});
+
+test('runAllowlistedCommand accepts output exactly equal to the cap when runner did not truncate', async () => {
+  const result = await runAllowlistedCommand(
+    { command: 'codex', args: ['exec'] },
+    {
+      maxOutputBytes: 10,
+      launcherResolver: fakeLauncherResolver,
+      runner: fakeRunner({
+        exitCode: 0,
+        stdout: '1234567890',
+        stderr: '',
+        timedOut: false,
+        truncated: false,
+      }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, false);
 });
 
 test('runAllowlistedCommand fails closed when the runner throws', async () => {

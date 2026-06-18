@@ -22,7 +22,13 @@ export interface OutboundPollerOptions {
    * Defaults to {@link detectStreamingState} over the configured root.
    */
   isStreaming?: (root?: ParentNode) => boolean;
+  onEvent?: (event: OutboundPollerEvent) => void;
 }
+
+export type OutboundPollerEvent =
+  | { type: 'claimed'; sessionId: string }
+  | { type: 'delivered'; sessionId: string }
+  | { type: 'failed'; reason: 'fill-failed' | 'ack-failed' | 'poller-error' };
 
 export interface OutboundPollerHandle {
   stop(): void;
@@ -60,6 +66,7 @@ export function startOutboundPromptPoller(
       if (!outboundPrompt) {
         return null;
       }
+      options.onEvent?.({ type: 'claimed', sessionId: outboundPrompt.sessionId });
 
       const fillResult = await fillComposerText(outboundPrompt.prompt, {
         root: options.root,
@@ -81,6 +88,12 @@ export function startOutboundPromptPoller(
           packetId: outboundPrompt.packetId,
           updatedAt: Date.now(),
         });
+        options.onEvent?.({ type: 'delivered', sessionId: outboundPrompt.sessionId });
+      } else {
+        options.onEvent?.({
+          type: 'failed',
+          reason: fillResult.ok ? 'ack-failed' : 'fill-failed',
+        });
       }
       return fillResult;
     } finally {
@@ -90,7 +103,7 @@ export function startOutboundPromptPoller(
 
   const timer = setIntervalFn(
     () => {
-      tick().catch(() => {});
+      tick().catch(() => options.onEvent?.({ type: 'failed', reason: 'poller-error' }));
     },
     options.intervalMs ?? DEFAULT_OUTBOUND_POLL_INTERVAL_MS,
   );

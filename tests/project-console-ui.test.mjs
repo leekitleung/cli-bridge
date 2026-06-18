@@ -67,6 +67,16 @@ test('project console HTML renders the command-first project shell', () => {
   assert.equal(html.includes('Goal console'), false);
 });
 
+test('mobile console exposes project navigation, history, and facts through a compact drawer', () => {
+  const html = renderProjectConsoleHtml();
+  assert.match(html, /id="mobile-nav-toggle"/);
+  assert.match(html, /mobile-nav-open/);
+  assert.match(html, /id="mobile-facts"/);
+  assert.match(html, /syncMobileFacts/);
+  assert.match(html, /aria-controls="project-nav"/);
+  assert.match(html, /<nav id="project-nav"/);
+});
+
 test('project console is a thin client over only allowlisted bridge endpoints', () => {
   const html = renderProjectConsoleHtml();
   const paths = new Set(extractBridgePaths(html));

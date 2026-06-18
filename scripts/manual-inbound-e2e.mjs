@@ -17,7 +17,7 @@
 //
 // Usage (server must already be running; copy its pairing token):
 //   node --experimental-strip-types scripts/manual-inbound-e2e.mjs \
-//     --token <PAIRING_TOKEN> [--session s-manual-1] [--endpoint mock-inbound-agent] \
+//     --token <PAIRING_TOKEN> [--session s-manual-1] \
 //     [--base http://127.0.0.1:31337] [--prompt "review this output"]
 //
 // Then in the browser:
@@ -58,7 +58,7 @@ async function main() {
   }
   const base = args.base ?? LOCAL_SERVER_BASE_URL;
   const sessionId = args.session ?? `s-manual-${Date.now()}`;
-  const endpointId = args.endpoint ?? 'mock-inbound-agent';
+  const endpointId = 'mock-inbound-agent';
   const prompt = args.prompt ?? 'review this output (manual inbound E2E)';
 
   const headers = {
@@ -70,7 +70,7 @@ async function main() {
   const res = await fetch(`${base}/bridge/outbound`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sessionId, prompt, endpointId }),
+    body: JSON.stringify({ sessionId, prompt }),
   });
   const body = await res.json().catch(() => ({}));
   if (res.status !== 201) {

@@ -8,6 +8,8 @@ cd /d "%~dp0.."
 if "%CLI_BRIDGE_LOCAL_CONFIG%"=="" set "CLI_BRIDGE_LOCAL_CONFIG=scripts\local-config.json"
 
 call npm run start:local-server:configured
+set "exitCode=%ERRORLEVEL%"
 
 REM Keep the window open if launched by double-click so the URL/token stay visible.
 pause
+exit /b %exitCode%

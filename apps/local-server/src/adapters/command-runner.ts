@@ -278,7 +278,7 @@ export async function runAllowlistedCommand(
   const durationMs = Date.now() - startedAt;
   const truncated =
     raw.truncated === true ||
-    Buffer.byteLength(raw.stdout) + Buffer.byteLength(raw.stderr) >= resolved.maxOutputBytes;
+    Buffer.byteLength(raw.stdout) + Buffer.byteLength(raw.stderr) > resolved.maxOutputBytes;
 
   if (raw.timedOut) {
     return {

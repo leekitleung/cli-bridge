@@ -4,6 +4,7 @@
 // No git, no network client, no provider integration.
 
 import * as path from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import type { VerifyProfile, VerificationResult, VerificationRunRecord } from '../../../../packages/shared/src/types.ts';
 import { runContainedProcess } from '../process/contained-process.ts';
 
@@ -50,6 +51,13 @@ function resolveCwd(root: string, policy?: VerifyProfile['cwdPolicy']): { ok: tr
     const resolvedNorm = resolved.replace(/\\/g, '/');
     if (resolvedNorm !== rootNorm && !resolvedNorm.startsWith(rootNorm + '/')) {
       return { ok: false, error: 'cwd policy subPath escapes project root' };
+    }
+    if (existsSync(root) && existsSync(resolved)) {
+      const realRoot = realpathSync(root).replace(/\\/g, '/');
+      const realResolved = realpathSync(resolved).replace(/\\/g, '/');
+      if (realResolved !== realRoot && !realResolved.startsWith(realRoot + '/')) {
+        return { ok: false, error: 'cwd policy subPath escapes project root' };
+      }
     }
   }
   return { ok: true, cwd: resolved };

@@ -8,6 +8,16 @@ type ProxyResult = {
   error?: string;
 };
 
+const theme = document.createElement('style');
+theme.textContent = `
+  :root { color-scheme: light dark; --bg: #ffffff; --surface: #f9fafb; --text: #111827; --muted: #4b5563; --border: #d1d5db; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #18181b; --surface: #27272a; --text: #f4f4f5; --muted: #a1a1aa; --border: #52525b; }
+  }
+  button:focus-visible, input:focus-visible { outline: 2px solid #14b8a6; outline-offset: 2px; }
+`;
+document.head.append(theme);
+
 const root = document.createElement('main');
 Object.assign(root.style, {
   width: '300px',
@@ -15,8 +25,8 @@ Object.assign(root.style, {
   padding: '12px',
   display: 'grid',
   gap: '10px',
-  color: '#111827',
-  background: '#ffffff',
+  color: 'var(--text)',
+  background: 'var(--bg)',
   fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   fontSize: '13px',
 });
@@ -32,7 +42,7 @@ const help = document.createElement('p');
 help.textContent = '粘贴本地服务显示的配对口令。口令只保留在当前浏览器会话中，不写入 ChatGPT 页面。';
 Object.assign(help.style, {
   margin: '0',
-  color: '#4b5563',
+  color: 'var(--muted)',
   lineHeight: '1.4',
 });
 
@@ -44,7 +54,9 @@ input.setAttribute('aria-label', 'Pairing token');
 Object.assign(input.style, {
   width: '100%',
   boxSizing: 'border-box',
-  border: '1px solid #d1d5db',
+  border: '1px solid var(--border)',
+  color: 'var(--text)',
+  background: 'var(--bg)',
   borderRadius: '6px',
   padding: '8px',
   font: 'inherit',
@@ -67,20 +79,22 @@ clearButton.textContent = '清除';
 
 for (const button of [saveButton, clearButton]) {
   Object.assign(button.style, {
-    minHeight: '32px',
-    border: '1px solid #d1d5db',
+    minHeight: '44px',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
-    background: '#f9fafb',
-    color: '#111827',
+    background: 'var(--surface)',
+    color: 'var(--text)',
     cursor: 'pointer',
     font: 'inherit',
   });
 }
 
 const status = document.createElement('output');
+status.setAttribute('role', 'status');
+status.setAttribute('aria-live', 'polite');
 Object.assign(status.style, {
   minHeight: '18px',
-  color: '#374151',
+  color: 'var(--muted)',
   overflowWrap: 'anywhere',
 });
 

@@ -93,8 +93,12 @@ test('outbound poller fills composer and acknowledges delivery without submittin
 
   try {
     const timers = [];
+    const events = [];
     const poller = startOutboundPromptPoller({
       root: createFakeRoot([composer]),
+      onEvent(event) {
+        events.push(event);
+      },
       setIntervalFn(fn) {
         timers.push(fn);
         return 1;
@@ -116,7 +120,46 @@ test('outbound poller fills composer and acknowledges delivery without submittin
       ok: true,
     });
     assert.equal(timers.length, 1);
+    assert.deepEqual(events.map((event) => event.type), ['claimed', 'delivered']);
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('outbound poller reports acknowledgement failure to the visible event channel', async () => {
+  clearActiveRelaySession();
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const originalFetch = globalThis.fetch;
+  let request = 0;
+  globalThis.fetch = async () => {
+    request += 1;
+    if (request === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ outboundPrompt: {
+          id: 'out-fail', sessionId: 's-fail', packetId: 'p-fail', claimToken: 'claim-fail',
+          prompt: 'review', status: 'claimed', target: 'chatgpt-web',
+        } }),
+      };
+    }
+    return { ok: false, status: 503, json: async () => ({ status: 'error' }) };
+  };
+  try {
+    const events = [];
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      onEvent: (event) => events.push(event),
+      setIntervalFn: () => 1,
+      clearIntervalFn() {},
+    });
+    await poller.tick();
+    poller.stop();
+    assert.deepEqual(events.map((event) => event.type), ['claimed', 'failed']);
+    assert.equal(events[1].reason, 'ack-failed');
+  } finally {
+    clearActiveRelaySession();
     globalThis.fetch = originalFetch;
   }
 });

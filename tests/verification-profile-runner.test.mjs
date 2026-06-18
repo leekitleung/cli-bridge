@@ -4,6 +4,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as path from 'node:path';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { runVerificationProfile } from '../apps/local-server/src/verification/profile-runner.ts';
 
 const BASE_PROFILE = {
@@ -140,6 +142,30 @@ test('cwdPolicy traversal escape rejected before spawn', async () => {
   });
   assert.equal(r.record.result, 'errored');
   assert.equal(called, false);
+});
+
+test('cwdPolicy rejects a symlink that resolves outside the project root', async () => {
+  const root = mkdtempSync(path.resolve(tmpdir(), 'cli-bridge-profile-root-'));
+  const outside = mkdtempSync(path.resolve(tmpdir(), 'cli-bridge-profile-outside-'));
+  try {
+    mkdirSync(path.resolve(root, 'inside'));
+    symlinkSync(outside, path.resolve(root, 'inside', 'escape'));
+    let called = false;
+    const result = await makeRunner({
+      root,
+      profile: { cwdPolicy: { kind: 'project-root', subPath: 'inside/escape' } },
+      spawn: async () => {
+        called = true;
+        return { ok: true, exitCode: 0, signal: null, stdoutChunks: [], stderrChunks: [] };
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /escapes project root/i);
+    assert.equal(called, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 test('env allowlist only passes named vars', async () => {

@@ -116,6 +116,7 @@ export interface BridgeRuntime {
   reviewAdapterFor: (targetEndpointId: string) => CommandReviewAdapter | undefined;
   agent: MockAgentAdapter;
   persist: () => void;
+  getPersistenceFailure: () => string | undefined;
   // v2.0 Goal-driven execution (ADR-0003). Goal/plan/project data is
   // persisted in the JSON snapshot (v2).
   goalStore: InMemoryGoalStore;
@@ -1430,6 +1431,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       auditLog.hydrateEvents(read.snapshot.auditEvents);
       pendingPromptStore.hydratePrompts(read.snapshot.pendingPrompts);
       outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
+      inboundMessageStore.hydrateMessages(read.snapshot.inboundMessages ?? []);
+      relayContextStore.hydrateContexts(read.snapshot.relayContexts ?? []);
       // Hydrate v2 goal/plan/project state (fail-open: skip invalid records).
       for (const project of read.snapshot.projects ?? []) {
         projectStore.hydrateProject(project);
@@ -1466,13 +1469,19 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     }
   }
 
+  let persistenceFailure: string | undefined;
   const persist = (): void => {
     if (!snapshotStore) return;
+    if (persistenceFailure) {
+      throw new Error(persistenceFailure);
+    }
     const result = snapshotStore.write(buildSnapshot({
       packets: packetStore.exportPackets(),
       auditEvents: auditLog.exportEvents(),
       pendingPrompts: pendingPromptStore.exportPrompts(),
       outboundPrompts: outboundPromptStore.exportPrompts(),
+      inboundMessages: inboundMessageStore.exportMessages(),
+      relayContexts: relayContextStore.exportContexts(),
       goals: goalStore.exportGoals(),
       plans: goalStore.exportPlans(),
       projects: projectStore.exportProjects(),
@@ -1485,7 +1494,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teamArtifacts: teamStore.exportArtifacts(),
     }));
     if (!result.ok) {
-      throw new Error(`Snapshot write failed: ${result.error ?? 'unknown error'}`);
+      persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
+      throw new Error(persistenceFailure);
     }
   };
 
@@ -1506,6 +1516,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       }),
     agent,
     persist,
+    getPersistenceFailure: () => persistenceFailure,
     goalStore,
     projectStore,
     goalPlanCommandOptions: options.goalPlanCommandOptions,
@@ -1971,6 +1982,9 @@ export async function handleBridgeRequest(
   request: IncomingMessage,
   query?: URLSearchParams,
 ): Promise<BridgeResult> {
+  if (runtime.getPersistenceFailure()) {
+    return error(503, 'Runtime persistence fault; restart after repairing storage');
+  }
   if (pathname === BRIDGE_PACKETS_PATH && method === 'GET') {
     return ok({ packets: runtime.packetStore.listPackets() });
   }

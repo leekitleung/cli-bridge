@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
+import { build } from 'esbuild';
 
+import { setBridgeClientConfig } from '../apps/extension/src/content/bridge-client.ts';
 import {
   createConnectionPanelStatus,
   createFillPanelStatus,
@@ -14,6 +18,91 @@ import {
 } from '../apps/extension/src/ui/state.ts';
 
 const root = process.cwd();
+
+let bridgePanelModulePromise;
+
+async function loadBridgePanelModule() {
+  if (!bridgePanelModulePromise) {
+    bridgePanelModulePromise = (async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'cli-bridge-panel-test-'));
+      const outfile = join(dir, 'bridge-panel.mjs');
+      await build({
+        entryPoints: [resolve(root, 'apps/extension/src/ui/bridge-panel.tsx')],
+        outfile,
+        bundle: true,
+        format: 'esm',
+        platform: 'node',
+        logLevel: 'silent',
+      });
+      const mod = await import(`${outfile}?t=${Date.now()}`);
+      await rm(dir, { recursive: true, force: true });
+      return mod;
+    })();
+  }
+  return bridgePanelModulePromise;
+}
+
+async function waitForPanel(predicate, timeoutMs = 500) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitForPanel timeout');
+}
+
+function setupPanelDom() {
+  const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+    url: 'https://chatgpt.com/c/test',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalHTMLElement = globalThis.HTMLElement;
+  const originalHTMLTextAreaElement = globalThis.HTMLTextAreaElement;
+  const originalEvent = globalThis.Event;
+  const originalInputEvent = globalThis.InputEvent;
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalGetComputedStyle = globalThis.getComputedStyle;
+  const originalGetSelection = globalThis.getSelection;
+
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.HTMLElement = window.HTMLElement;
+  globalThis.HTMLTextAreaElement = window.HTMLTextAreaElement;
+  globalThis.Event = window.Event;
+  globalThis.InputEvent = window.InputEvent;
+  globalThis.getComputedStyle = window.getComputedStyle.bind(window);
+  globalThis.getSelection = () => ({ toString: () => 'selected ChatGPT reply' });
+
+  Object.defineProperty(window.HTMLElement.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value() {
+      return { width: 100, height: 24, top: 0, right: 100, bottom: 24, left: 0 };
+    },
+  });
+
+  return {
+    window,
+    document: window.document,
+    restore() {
+      globalThis.document = originalDocument;
+      globalThis.window = originalWindow;
+      globalThis.HTMLElement = originalHTMLElement;
+      globalThis.HTMLTextAreaElement = originalHTMLTextAreaElement;
+      globalThis.Event = originalEvent;
+      globalThis.InputEvent = originalInputEvent;
+      globalThis.fetch = originalFetch;
+      globalThis.chrome = originalChrome;
+      globalThis.getComputedStyle = originalGetComputedStyle;
+      globalThis.getSelection = originalGetSelection;
+      setBridgeClientConfig({ pairingToken: null });
+      dom.window.close();
+    },
+  };
+}
 
 test('loop panel status maps bridge loop stages into user-visible status text', () => {
   assert.deepEqual(createLoopPanelStatus('codex-output-ready'), {
@@ -143,4 +232,121 @@ test('Bridge Panel exposes loop status without adding auto-send controls', async
   assert.equal(source.includes('KeyboardEvent'), false);
   assert.equal(source.includes('send-button'), false);
   assert.equal(source.includes('automatic agent loop'), false);
+});
+
+test('Bridge Panel source implements the approved four-stage guarded utility UI', async () => {
+  const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
+
+  assert.match(source, /1 连接 · 2 发送至 ChatGPT · 3 选择并预览 · 4 确认回传/);
+  assert.match(source, /collapseButton/);
+  assert.match(source, /prefers-color-scheme: dark/);
+  assert.match(source, /aria-live/);
+  assert.match(source, /returnInFlight/);
+  assert.match(source, /updateActionState/);
+  assert.match(source, /onEvent/);
+  assert.match(source, /minHeight: '44px'/);
+  assert.equal(source.includes('requestSubmit'), false);
+  assert.equal(source.includes('KeyboardEvent'), false);
+});
+
+test('Bridge Panel disables guarded actions while unpaired and keeps one active primary action', async () => {
+  const { mountBridgePanel } = await loadBridgePanelModule();
+  const env = setupPanelDom();
+  try {
+    const handle = mountBridgePanel(env.document);
+    const buttons = Array.from(handle.element.querySelectorAll('button'));
+    const actionButtons = buttons.filter((button) => [
+      '填入下一步',
+      '预览回传',
+      '确认回传',
+      '复制预览',
+    ].includes(button.textContent ?? ''));
+
+    assert.deepEqual(actionButtons.map((button) => button.disabled), [true, true, true, true]);
+    assert.equal(actionButtons.filter((button) => button.style.fontWeight === '700').length, 0);
+  } finally {
+    env.restore();
+  }
+});
+
+test('Bridge Panel connected workflow exposes one primary action per stage and locks return retries', async () => {
+  const { mountBridgePanel } = await loadBridgePanelModule();
+  const env = setupPanelDom();
+  const calls = [];
+  let releaseReturn;
+  let handle;
+  try {
+    globalThis.chrome = {
+      storage: {
+        session: {
+          get: async () => ({ cliBridgePairingToken: 'tok-123' }),
+          remove: async () => {},
+        },
+      },
+    };
+    globalThis.fetch = async (url, init = {}) => {
+      const path = new URL(String(url)).pathname;
+      calls.push({ path, method: init.method ?? 'GET' });
+      if (path === '/health/private') {
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      }
+      if (path === '/bridge/packets') {
+        return { ok: true, status: 201, json: async () => ({ packet: { id: 'pkt-1' } }) };
+      }
+      if (path === '/bridge/outbound/next') {
+        return { ok: true, status: 200, json: async () => ({ outboundPrompt: null }) };
+      }
+      if (path === '/bridge/extract-return') {
+        await new Promise((resolve) => { releaseReturn = resolve; });
+        return { ok: true, status: 201, json: async () => ({ routedTo: 'pending-prompt' }) };
+      }
+      throw new Error(`unexpected fetch path ${path}`);
+    };
+
+    const composer = env.document.createElement('textarea');
+    composer.setAttribute('data-testid', 'prompt-textarea');
+    env.document.body.append(composer);
+
+    handle = mountBridgePanel(env.document);
+    const byLabel = (label) => Array.from(handle.element.querySelectorAll('button'))
+      .find((button) => button.textContent === label);
+    const primaryLabels = () => Array.from(handle.element.querySelectorAll('button'))
+      .filter((button) => button.style.fontWeight === '700')
+      .map((button) => button.textContent);
+
+    await waitForPanel(() => primaryLabels().includes('填入下一步'));
+    assert.deepEqual(primaryLabels(), ['填入下一步']);
+
+    byLabel('填入下一步').click();
+    await waitForPanel(() => primaryLabels().includes('预览回传'));
+    assert.deepEqual(primaryLabels(), ['预览回传']);
+
+    byLabel('预览回传').click();
+    assert.deepEqual(primaryLabels(), ['确认回传']);
+
+    byLabel('确认回传').click();
+    byLabel('确认回传').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls.filter((call) => call.path === '/bridge/extract-return').length, 1);
+    assert.equal(byLabel('确认回传').disabled, true);
+
+    releaseReturn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(byLabel('确认回传').disabled, true);
+  } finally {
+    handle?.element.querySelectorAll('button').forEach((button) => {
+      if (button.textContent === '清除配对') {
+        button.click();
+      }
+    });
+    env.restore();
+  }
+});
+
+test('extension popup follows host theme and exposes accessible status feedback', async () => {
+  const source = await readFile(resolve(root, 'apps/extension/src/popup/index.ts'), 'utf8');
+  assert.match(source, /color-scheme: light dark/);
+  assert.match(source, /prefers-color-scheme: dark/);
+  assert.match(source, /aria-live/);
+  assert.match(source, /minHeight: '44px'/);
 });

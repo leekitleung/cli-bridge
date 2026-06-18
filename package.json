@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "node --experimental-strip-types scripts/start.ts",
     "build-extension": "node ./scripts/build-extension.mjs",
     "lint": "node ./scripts/lint.mjs",
     "remote-review-gate": "node ./scripts/remote-review-gate.mjs --pretty",

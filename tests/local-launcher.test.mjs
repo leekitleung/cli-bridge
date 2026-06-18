@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -23,11 +24,17 @@ import {
   loadConfig,
   bootstrapStartedServer,
   installShutdownHandlers,
+  openInBrowser,
 } from '../scripts/start-local-configured.ts';
 
 const PAIRING_HEADER = 'x-cli-bridge-pairing-token';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE_PATH = resolve(__dirname, '../scripts/local-config.example.json');
+
+test('npm start is the single safe product entrypoint', () => {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8'));
+  assert.equal(pkg.scripts.start, 'node --experimental-strip-types scripts/start.ts');
+});
 
 function authHeaders(token) {
   return { 'content-type': 'application/json', [PAIRING_HEADER]: token };
@@ -371,4 +378,23 @@ test('buildConsoleOpenTarget points at the console with no token/query', () => {
   assert.ok(!target.includes('?'));
   assert.ok(!target.includes('#'));
   assert.ok(!target.toLowerCase().includes('token'));
+});
+
+test('browser opener handles asynchronous spawn errors without throwing', () => {
+  const child = new EventEmitter();
+  child.unref = () => child;
+  let errorHandled = false;
+  child.on('error', () => { errorHandled = true; });
+  openInBrowser('http://127.0.0.1:31337/console/project', {
+    platform: 'linux',
+    spawnFn: () => child,
+  });
+  child.emit('error', new Error('ENOENT'));
+  assert.equal(errorHandled, true);
+});
+
+test('Windows launcher preserves npm exit status', () => {
+  const source = readFileSync(resolve(__dirname, '../scripts/start-local.cmd'), 'utf8');
+  assert.match(source, /set\s+"exitCode=%ERRORLEVEL%"/i);
+  assert.match(source, /exit\s+\/b\s+%exitCode%/i);
 });

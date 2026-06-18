@@ -16,8 +16,9 @@ loops.
 
 - **Local Server**: binds `127.0.0.1` only, exposes `GET /health` (public) and
   `GET /health/private` (origin guard + pairing token).
-- **Browser extension**: mounts a Bridge Panel on ChatGPT Web with three
-  actions — Fill / Extract / Copy — plus a clipboard fallback.
+- **Browser extension**: mounts a collapsible, host-theme-aware Bridge Panel on
+  ChatGPT Web with four explicit stages: connect, fill for ChatGPT, select and
+  preview, then confirm return. It never clicks ChatGPT Send.
 - **In-memory core relay, wired over local HTTP** (`/bridge/*`, authenticated):
   BridgePacket + redaction + audit log, Pending Prompt lifecycle
   (create / confirm / send-via-mock / cancel), and a metrics summary.
@@ -28,7 +29,7 @@ loops.
   can queue redacted Codex output for ChatGPT Web. The extension polls, fills the
   composer, and records an acknowledgement. It does **not** submit the prompt.
 - **Optional JSON persistence**: set `CLI_BRIDGE_DATA_DIR` to make packets,
-  audit events, and pending prompts survive a restart. Off by default
+  audit events, prompts, inbound returns, and relay context survive a restart. Off by default
   (in-memory). Raw content is never written to disk; only redacted
   `processedContent` is persisted.
 - **Still library-only** (validated by tests, not yet exposed over HTTP):
@@ -80,11 +81,9 @@ loops.
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is
   superseded for v1.5b.
 
-> Status caveats: real Codex Managed PTY delivery remains experimental. Real
-> ChatGPT Web manual E2E was validated on 2026-06-08 (see
-> `docs/planning/CLI-BRIDGE-v1.4-VALIDATION-HANDOFF.md`). The bidirectional loop,
-> endpoint registry, review lifecycle, and WorkBuddy contract are not yet exposed
-> through a user-runnable path; they are validated by automated tests.
+> Status caveat: real Codex Managed PTY delivery remains experimental. The
+> browser relay remains intentionally manual at ChatGPT Send and return
+> confirmation; this is a safety boundary, not an incomplete automation step.
 
 ## Requirements
 
@@ -110,13 +109,20 @@ npm test                  # node --test suite
 
 Each command exits non-zero on failure.
 
-## Run the local server
+## Start CLI Bridge
 
 ```bash
-npm run start:local-server
+npm start
 ```
 
-It logs the bound URL (default `http://127.0.0.1:31337`). Smoke check:
+This is the primary product entrypoint. It binds loopback only, configures the
+safe local inbound test route, prints the Project Workspace URL and a temporary
+pairing token, and opens the console when run interactively. Set
+`CLI_BRIDGE_NO_OPEN=1` to suppress browser opening. Advanced operator-specific
+verification and GitHub configuration remains available through
+`npm run start:local-server:configured`.
+
+Smoke check:
 
 ```bash
 curl http://127.0.0.1:31337/health          # 200 ok
@@ -167,11 +173,10 @@ Notes:
 
 ## Console UI
 
-Run the local server, then open the console in a browser:
+Run the product entrypoint; it opens the project console by default:
 
 ```
-npm run start:local-server
-# open the printed Console UI URL, e.g. http://127.0.0.1:31337/console
+npm start
 ```
 
 The console is a thin view over the existing `/bridge/*` endpoints. Paste the
@@ -188,6 +193,10 @@ auto-executed.
 2. In Chrome, open `chrome://extensions`, enable Developer mode.
 3. Choose "Load unpacked" and select **`apps/extension/dist`** (the built
    output — not the source directory).
+4. Start with `npm start`, click the CLI Bridge extension icon, paste the
+   printed pairing token, and choose **保存并测试**.
+5. On ChatGPT, follow the numbered panel stages. Composer fill is automatic;
+   sending and confirmed return are always manual.
 
 ## Remote review gate
 
