@@ -23,8 +23,9 @@
 // Then in the browser:
 //   1. The extension poller fills the ChatGPT composer (no auto-send).
 //   2. Send the message manually; wait for the reply.
-//   3. Click the panel "提取" button.
-//   4. Verify: this script's printed inbound-check URL shows the reviewed reply.
+//   3. Select the reply text to return, then click "预览回传".
+//   4. Review the preview and click "确认回传".
+//   5. Verify: this script's printed inbound-check URL shows the reviewed reply.
 
 import process from 'node:process';
 
@@ -86,7 +87,8 @@ async function main() {
   console.log('Next steps in the browser:');
   console.log('  1. The extension poller fills the ChatGPT composer (no auto-send).');
   console.log('  2. Send the message manually and wait for the reply.');
-  console.log('  3. Click the panel "提取" button.');
+  console.log('  3. Select the reply text to return, then click "预览回传".');
+  console.log('  4. Review the preview and click "确认回传".');
   console.log('');
   console.log('Verify the reviewed reply landed in the inbound queue:');
   console.log(`  GET ${base}/bridge/inbound?endpointId=${endpointId}`);

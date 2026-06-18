@@ -11,6 +11,7 @@ export const ORIGIN_HEADER = 'origin';
 // the server binds 127.0.0.1 only; any page able to send this origin is already
 // local, and the pairing token remains the real authentication.
 const LOOPBACK_ORIGIN_PATTERN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/u;
+const CHROME_EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}$/u;
 
 export function isLoopbackOrigin(origin: string | null): boolean {
   return typeof origin === 'string' && LOOPBACK_ORIGIN_PATTERN.test(origin);
@@ -46,6 +47,13 @@ export function isAllowedOrigin(origin: string | null, isTestEnvironment = false
     return true;
   }
 
+  // Unpacked extension IDs are derived by Chrome and can vary by install
+  // path. The pairing token remains the authentication boundary; this check
+  // only admits syntactically valid Chrome extension origins.
+  if (CHROME_EXTENSION_ORIGIN_PATTERN.test(origin)) {
+    return true;
+  }
+
   return ALLOWED_ORIGINS.includes(origin as (typeof ALLOWED_ORIGINS)[number]);
 }
 
@@ -63,4 +71,3 @@ export function assertAllowedOrigin(
     message: origin ? 'Invalid origin' : 'Missing origin',
   };
 }
-

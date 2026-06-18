@@ -364,10 +364,10 @@ any boundary (no executor pull client, no auto-send, no terminal writeback).
   prompt. To exercise inbound you MUST create an outbound that carries
   `endpointId + sessionId` (the poller then fills + acks, recording the relay
   context and the active relay session). Use `scripts/manual-inbound-e2e.mjs`.
-- **G3 — no panel observability.** The panel now shows
-  `no active relay session` / `active relay session: <sessionId>`
-  (`data-cli-bridge-relay-status`). It never shows or accepts an `endpointId`;
-  clearing the pairing token resets it to `no active relay session`.
+- **G3 — no panel observability.** The panel shows `暂无回程上下文` /
+  `回程上下文可用` (`data-cli-bridge-relay-status`) without exposing session or
+  endpoint identifiers. It never shows or accepts an `endpointId`; clearing the
+  pairing token resets the status to `暂无回程上下文`.
 
 ### 13.2 Steps
 1. Start the local server; copy its pairing token.
@@ -376,12 +376,15 @@ any boundary (no executor pull client, no auto-send, no terminal writeback).
    node --experimental-strip-types scripts/manual-inbound-e2e.mjs \
      --token <PAIRING_TOKEN> --session s-manual-1 --endpoint mock-inbound-agent
    ```
-3. In Chrome: reload `apps/extension/dist`, hard-reload chatgpt.com, save the
-   token in the panel, confirm "已连接". The panel should show
-   `active relay session: s-manual-1` once the poller fills the composer.
+3. In Chrome: reload `apps/extension/dist`, hard-reload chatgpt.com, open the
+   extension popup, enter the token, and click `保存并测试`. Confirm `已连接`.
+   After the poller fills the composer, the page panel should show
+   `回程上下文可用`.
 4. The composer is filled automatically (no auto-send). Send manually; wait for
    the reply.
-5. Click "提取". The panel status should report routed-to-inbound.
+5. Explicitly select the reply text to return. Click `预览回传`, verify the
+   preview contains only that selection, then click `确认回传`. The panel status
+   should report routed-to-inbound.
 6. Verify the reviewed reply is queued for the executor:
    ```
    GET /bridge/inbound?endpointId=mock-inbound-agent

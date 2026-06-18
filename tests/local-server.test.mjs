@@ -156,6 +156,9 @@ test('pairing token helpers work without persisting token state', () => {
 test('origin guard helpers work for allowed, blocked, and missing origins', () => {
   assert.equal(isAllowedOrigin('https://chatgpt.com'), true);
   assert.equal(isAllowedOrigin(ALLOWED_EXTENSION_ORIGIN), true);
+  assert.equal(isAllowedOrigin('chrome-extension://fhchgdnhoghcjnlajjhejikndobkenmi'), true);
+  assert.equal(isAllowedOrigin('chrome-extension://not-a-valid-extension-id'), false);
+  assert.equal(isAllowedOrigin('https://fhchgdnhoghcjnlajjhejikndobkenmi'), false);
   assert.equal(isAllowedOrigin('https://example.com'), false);
   // A missing Origin is allowed: it cannot be a cross-site request, and the
   // pairing token remains the gate.
@@ -277,6 +280,37 @@ test('private health endpoint requires allowed origin before pairing token', asy
     },
   });
   assert.equal(allowedOriginValidTokenResponse.status, 200);
+});
+
+test('private health endpoint accepts a Chrome-assigned extension origin without weakening token auth', async (t) => {
+  const handle = await startLocalServer(0);
+
+  t.after(async () => {
+    await new Promise((resolve, reject) => {
+      handle.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(undefined);
+      });
+    });
+  });
+
+  const extensionOrigin = 'chrome-extension://fhchgdnhoghcjnlajjhejikndobkenmi';
+  const missingTokenResponse = await fetch(`${handle.url}/health/private`, {
+    headers: { origin: extensionOrigin },
+  });
+  assert.equal(missingTokenResponse.status, 401);
+
+  const validTokenResponse = await fetch(`${handle.url}/health/private`, {
+    headers: {
+      origin: extensionOrigin,
+      [PAIRING_TOKEN_HEADER]: handle.pairingToken,
+    },
+  });
+  assert.equal(validTokenResponse.status, 200);
 });
 
 test('private health endpoint with valid token and no origin succeeds (same-origin console)', async (t) => {
