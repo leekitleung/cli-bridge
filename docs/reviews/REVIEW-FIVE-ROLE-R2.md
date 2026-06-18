@@ -4,9 +4,10 @@
 
 **Product evidence commit**: `05c441b2b6339ffe279b7b907df80f82f472bda8`
 
-**Evidence document commit**: `a5da00635baf84ef1a39a59abf30cc9c3b6bda05`
+**Evidence document commits**: `a5da00635baf84ef1a39a59abf30cc9c3b6bda05`,
+`ac82f9cde852f2e1ae243733d0b0a51e76d537ba`
 
-**Status**: **EX-90-5F EVIDENCE REFRESH READY; FINAL FIVE-ROLE RERUN PENDING**
+**Status**: **FINAL PASS - FIVE ROLES >=90 WITH ZERO RED LINES**
 
 This file is the Task 4 evidence manifest for the five-role hardening loop.
 Round 2 initially failed on evidence and UI findings. The bounded EX-90-4F
@@ -90,6 +91,17 @@ Remote verification after adding this evidence document:
 - Remaining warning: PR unavailable because the local GitHub CLI is not logged in;
   this is not a failure in the remote gate.
 
+Remote verification after EX-90-5F evidence refresh:
+
+- `HEAD`: `ac82f9cde852f2e1ae243733d0b0a51e76d537ba`
+- `origin/main`: `ac82f9cde852f2e1ae243733d0b0a51e76d537ba`
+- `npm run remote-review-gate`: exit 0, verdict `pass`
+- CI: `CI` run `27789983512`, conclusion `success`
+- CI URL: `https://github.com/leekitleung/cli-bridge/actions/runs/27789983512`
+- Remote diff scope: `none`
+- Remaining warning: PR unavailable because the local GitHub CLI is not logged in;
+  this is not a failure in the remote gate.
+
 ## Hashes
 
 - Product evidence Git tree hash:
@@ -138,7 +150,8 @@ account E2E run.
 
 ## Final Five-Role Rerun
 
-Round 2 rerun against `a5da00635baf84ef1a39a59abf30cc9c3b6bda05` produced:
+Round 2 rerun against `a5da00635baf84ef1a39a59abf30cc9c3b6bda05` produced an
+intermediate failure:
 
 | Role | Score | Red lines | Verdict |
 | --- | ---: | ---: | --- |
@@ -154,7 +167,17 @@ red lines were the duplicate/mislabeled preview/confirmed-return screenshots
 and this file still declaring final acceptance pending. EX-90-5F refreshed the
 evidence above and did not modify product code.
 
-Pending. The next review pass must use this evidence file, the product evidence
-commit, the remote gate evidence, and the refreshed 90-5F screenshot set above.
-Final acceptance remains blocked until all five roles score at least 90 with
-zero red lines.
+Final R3 rerun against `ac82f9cde852f2e1ae243733d0b0a51e76d537ba` produced:
+
+| Role | Score | Red lines | Verdict |
+| --- | ---: | ---: | --- |
+| Heavy vibe coder | 92 | 0 | PASS |
+| Native visual designer | 91 | 0 | PASS |
+| Zero-document new user | 92 | 0 | PASS |
+| Ten-year terminal veteran | 94 | 0 | PASS |
+| Destructive quality officer | 92 | 0 | PASS |
+
+Final acceptance verdict: PASS. All five roles scored at least 90 with zero red
+lines. The final product evidence remains the bounded product commit
+`05c441b2b6339ffe279b7b907df80f82f472bda8`; later commits in this loop update
+review evidence only.
