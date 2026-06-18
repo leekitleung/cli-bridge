@@ -4,8 +4,8 @@
 // No network, no credentials, no git writes, no baselineRoot fallback.
 // Git status is context only — never pass/fail.
 
-import { spawn, type ChildProcess } from 'node:child_process';
 import type { GitStatusView } from '../../../../packages/shared/src/types.ts';
+import { runContainedProcess } from '../process/contained-process.ts';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -235,52 +235,12 @@ async function defaultGitSpawn(
   args: string[],
   opts: { cwd: string; env: Record<string, string>; timeoutMs: number; outputCapBytes: number },
 ): ReturnType<GitSpawnFn> {
-  return new Promise((resolve) => {
-    const proc: ChildProcess = spawn(file, args, {
-      shell: false,
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: 'pipe',
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let settled = false;
-
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-        resolve({ ok: false, exitCode: null, signal: 'SIGTERM', stdoutChunks, stderrChunks, error: 'timeout' });
-      }
-    }, opts.timeoutMs);
-
-    let capped = false;
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      if (!capped) {
-        stdoutChunks.push(chunk);
-        if (stdoutChunks.reduce((s, c) => s + c.byteLength, 0) + stderrChunks.reduce((s, c) => s + c.byteLength, 0) > opts.outputCapBytes) capped = true;
-      }
-    });
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      if (!capped) {
-        stderrChunks.push(chunk);
-        if (stdoutChunks.reduce((s, c) => s + c.byteLength, 0) + stderrChunks.reduce((s, c) => s + c.byteLength, 0) > opts.outputCapBytes) capped = true;
-      }
-    });
-
-    proc.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve({ ok: false, exitCode: null, signal: null, stdoutChunks, stderrChunks, error: err.message });
-    });
-
-    proc.on('close', (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve({ ok: exitCode === 0, exitCode, signal, stdoutChunks, stderrChunks });
-    });
-  });
+  return runContainedProcess(file, args, opts).then((result) => ({
+    ok: result.exitCode === 0 && !result.timedOut && !result.error,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdoutChunks: result.stdout.length ? [result.stdout] : [],
+    stderrChunks: result.stderr.length ? [result.stderr] : [],
+    ...(result.timedOut ? { error: 'timeout' } : result.error ? { error: result.error } : {}),
+  }));
 }

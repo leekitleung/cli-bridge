@@ -157,3 +157,25 @@ test('runReviewWorkflow reports a network error at the create step', async () =>
   assert.equal(result.step, 'create');
   assert.match(result.failureReason, /connection refused/);
 });
+
+test('review HTTP timeout spans response body consumption', async () => {
+  const started = Date.now();
+  const result = await runReviewWorkflow({
+    baseUrl: 'http://127.0.0.1:31337',
+    token: 't',
+    sessionId: 's1',
+    sourceEndpointId: 'codex-command',
+    targetEndpointId: 'claude-code-command',
+    prompt: 'review this',
+    timeoutMs: 50,
+    fetchFn: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => await new Promise(() => {}),
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.step, 'create');
+  assert.equal(result.failureReason, 'review-http-timeout');
+  assert.ok(Date.now() - started < 1000);
+});

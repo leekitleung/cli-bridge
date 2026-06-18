@@ -1,16 +1,30 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-function runReadOnlyCommand(command, args, options = {}) {
+const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
+const DEFAULT_OUTPUT_CAP_BYTES = 256_000;
+
+export function runReadOnlyCommand(command, args, options = {}) {
+  const outputCapBytes = options.outputCapBytes ?? DEFAULT_OUTPUT_CAP_BYTES;
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? process.cwd(),
-    encoding: 'utf8',
     shell: false,
+    timeout: options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    maxBuffer: outputCapBytes + 1,
   });
+  const stdoutRaw = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? '');
+  const stderrRaw = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? '');
+  const stdout = stdoutRaw.subarray(0, outputCapBytes);
+  const remaining = Math.max(0, outputCapBytes - stdout.byteLength);
+  const stderr = stderrRaw.subarray(0, remaining);
+  const truncated = stdoutRaw.byteLength + stderrRaw.byteLength > outputCapBytes;
+  const timedOut = result.error?.code === 'ETIMEDOUT';
   return {
-    status: result.status ?? 1,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    status: timedOut || truncated ? 1 : (result.status ?? 1),
+    stdout: stdout.toString('utf8'),
+    stderr: timedOut ? 'command timed out' : stderr.toString('utf8'),
+    timedOut,
+    truncated,
   };
 }
 
@@ -141,8 +155,8 @@ export function buildRemoteReviewGateReport(input) {
   if (input.localHead && input.remoteHead && !remoteMatchesLocal) {
     failures.push('remote-head-mismatch');
   }
-  if (input.ci?.status === 'fail') {
-    failures.push('ci-failing');
+  if (input.ci?.status !== 'pass') {
+    failures.push(input.ci?.status === 'fail' ? 'ci-failing' : `ci-${input.ci?.status ?? 'missing'}`);
   }
 
   // pushed is true only when the local HEAD is actually present on the remote

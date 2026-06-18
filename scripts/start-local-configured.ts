@@ -258,6 +258,69 @@ export async function bootstrapProjects(opts: {
   }
 }
 
+async function closeLocalServer(handle: LocalServerHandle, timeoutMs: number): Promise<void> {
+  if (!handle.server.listening) return;
+  await new Promise<void>((resolveClose) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveClose();
+    };
+    const timer = setTimeout(() => {
+      handle.server.closeAllConnections?.();
+      finish();
+    }, timeoutMs);
+    handle.server.close(() => finish());
+  });
+}
+
+export async function bootstrapStartedServer(
+  handle: LocalServerHandle,
+  projects: LocalProjectConfig[],
+  fetchFn: FetchLike,
+  shutdownTimeoutMs = 2_000,
+): Promise<void> {
+  try {
+    await bootstrapProjects({
+      baseUrl: handle.url,
+      pairingToken: handle.pairingToken,
+      projects,
+      fetchFn,
+    });
+  } catch (error) {
+    await closeLocalServer(handle, shutdownTimeoutMs);
+    throw error;
+  }
+}
+
+interface ShutdownProcess {
+  exitCode?: number;
+  once(event: NodeJS.Signals, listener: () => void | Promise<void>): unknown;
+  removeListener(event: NodeJS.Signals, listener: () => void | Promise<void>): unknown;
+}
+
+export function installShutdownHandlers(
+  handle: LocalServerHandle,
+  processLike: ShutdownProcess = process,
+  timeoutMs = 2_000,
+): () => void {
+  let closing = false;
+  const shutdown = async (): Promise<void> => {
+    if (closing) return;
+    closing = true;
+    await closeLocalServer(handle, timeoutMs);
+    processLike.exitCode = 0;
+  };
+  processLike.once('SIGINT', shutdown);
+  processLike.once('SIGTERM', shutdown);
+  return () => {
+    processLike.removeListener('SIGINT', shutdown);
+    processLike.removeListener('SIGTERM', shutdown);
+  };
+}
+
 /**
  * Build the console summary lines. Never includes any token value — only the
  * pairing token (which is the loopback auth secret the operator needs) and
@@ -323,12 +386,12 @@ async function main(): Promise<void> {
 
   const handle = await startLocalServer(port, buildRuntimeOptions(config, githubTokenStore));
 
-  await bootstrapProjects({
-    baseUrl: handle.url,
-    pairingToken: handle.pairingToken,
-    projects: config.projects ?? [],
-    fetchFn: fetch as unknown as FetchLike,
-  });
+  await bootstrapStartedServer(
+    handle,
+    config.projects ?? [],
+    fetch as unknown as FetchLike,
+  );
+  installShutdownHandlers(handle);
 
   for (const line of formatStartupSummary(handle, config, tokenProjects)) {
     console.log(line);

@@ -3,9 +3,9 @@
 // timeout/kill, output cap + discard, exit-status mapping, single-run lock.
 // No git, no network client, no provider integration.
 
-import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import type { VerifyProfile, VerificationResult, VerificationRunRecord } from '../../../../packages/shared/src/types.ts';
+import { runContainedProcess } from '../process/contained-process.ts';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -16,6 +16,7 @@ export type SpawnFn = (file: string, args: string[], opts: { cwd: string; env: R
   stdoutChunks: Buffer[];
   stderrChunks: Buffer[];
   error?: string;
+  truncated?: boolean;
 }>;
 
 export interface RunnerOptions {
@@ -119,7 +120,7 @@ export async function runVerificationProfile(opts: RunnerOptions): Promise<Runne
 
     // Cap + discard output (also enforced during collection by defaultSpawn)
     const totalOut = sumBytes(spawnResult.stdoutChunks) + sumBytes(spawnResult.stderrChunks);
-    const truncated = totalOut > capBytes;
+    const truncated = spawnResult.truncated === true || totalOut > capBytes;
     const outputDiscarded = true; // always discarded per ADR-0018
 
     const record: VerificationRunRecord = {
@@ -165,52 +166,13 @@ async function defaultSpawn(
   args: string[],
   opts: { cwd: string; env: Record<string, string>; timeoutMs: number; outputCapBytes: number },
 ): ReturnType<SpawnFn> {
-  return new Promise((resolve) => {
-    const proc: ChildProcess = spawn(file, args, {
-      shell: false,
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: 'pipe',
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let settled = false;
-
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        try { proc.kill('SIGTERM'); } catch {}
-        resolve({ ok: false, exitCode: null, signal: 'SIGTERM', stdoutChunks, stderrChunks, error: 'timeout' });
-      }
-    }, opts.timeoutMs);
-
-    let capped = false;
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      if (!capped) {
-        stdoutChunks.push(chunk);
-        if (sumBytes(stdoutChunks) + sumBytes(stderrChunks) > opts.outputCapBytes) capped = true;
-      }
-    });
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      if (!capped) {
-        stderrChunks.push(chunk);
-        if (sumBytes(stdoutChunks) + sumBytes(stderrChunks) > opts.outputCapBytes) capped = true;
-      }
-    });
-
-    proc.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve({ ok: false, exitCode: null, signal: null, stdoutChunks, stderrChunks, error: err.message });
-    });
-
-    proc.on('close', (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve({ ok: exitCode === 0, exitCode, signal, stdoutChunks, stderrChunks });
-    });
-  });
+  return runContainedProcess(file, args, opts).then((result) => ({
+    ok: result.exitCode === 0 && !result.timedOut && !result.error,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdoutChunks: result.stdout.length ? [result.stdout] : [],
+    stderrChunks: result.stderr.length ? [result.stderr] : [],
+    truncated: result.truncated,
+    ...(result.timedOut ? { error: 'timeout' } : result.error ? { error: result.error } : {}),
+  }));
 }

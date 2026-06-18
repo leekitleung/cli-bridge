@@ -18,6 +18,7 @@ export interface ReviewWorkflowInput {
   prompt: string;
   origin?: string;
   fetchFn?: typeof fetch;
+  timeoutMs?: number;
 }
 
 export interface ReviewWorkflowResult {
@@ -33,6 +34,7 @@ export interface ReviewWorkflowResult {
 }
 
 const DEFAULT_ORIGIN = 'https://chatgpt.com';
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 export async function runReviewWorkflow(
   input: ReviewWorkflowInput,
@@ -44,30 +46,46 @@ export async function runReviewWorkflow(
     'x-cli-bridge-pairing-token': input.token,
   };
   const base = input.baseUrl.replace(/\/$/u, '');
+  const timeoutMs = input.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
 
   const post = async (path: string, body: unknown): Promise<
     { ok: true; data: any } | { ok: false; status: number; message: string }
   > => {
-    let response: Awaited<ReturnType<typeof fetch>>;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      response = await fetchFn(`${base}${path}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
+      const operation = async () => {
+        const response = await fetchFn(`${base}${path}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        let data: any = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
+        }
+        return { response, data };
+      };
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('review-http-timeout'));
+        }, timeoutMs);
       });
+      const { response, data } = await Promise.race([operation(), deadline]);
+      if (!response.ok) {
+        return { ok: false, status: response.status, message: data?.message ?? `http-${response.status}` };
+      }
+      return { ok: true, data };
     } catch (error) {
-      return { ok: false, status: 0, message: error instanceof Error ? error.message : 'network-error' };
+      const message = error instanceof Error ? error.message : 'network-error';
+      return { ok: false, status: 0, message };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    let data: any = null;
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
-    if (!response.ok) {
-      return { ok: false, status: response.status, message: data?.message ?? `http-${response.status}` };
-    }
-    return { ok: true, data };
   };
 
   // 1. create (server moves it to previewed)

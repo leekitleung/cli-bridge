@@ -21,6 +21,8 @@ import {
   shouldAutoOpen,
   buildConsoleOpenTarget,
   loadConfig,
+  bootstrapStartedServer,
+  installShutdownHandlers,
 } from '../scripts/start-local-configured.ts';
 
 const PAIRING_HEADER = 'x-cli-bridge-pairing-token';
@@ -203,6 +205,34 @@ test('bootstrapProjects fails closed on a non-409 error too', async () => {
     }),
     /500/,
   );
+});
+
+test('configured launcher closes the listening server when bootstrap fails', async () => {
+  const handle = await startLocalServer(0);
+  await assert.rejects(
+    bootstrapStartedServer(handle, [{ key: 'broken' }], async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'boom',
+    })),
+    /bootstrap failed/i,
+  );
+  assert.equal(handle.server.listening, false);
+});
+
+test('configured launcher installs bounded signal shutdown', async () => {
+  const handle = await startLocalServer(0);
+  const listeners = new Map();
+  const processLike = {
+    exitCode: undefined,
+    once(event, listener) { listeners.set(event, listener); return this; },
+    removeListener(event) { listeners.delete(event); return this; },
+  };
+  const remove = installShutdownHandlers(handle, processLike, 500);
+  await listeners.get('SIGTERM')();
+  assert.equal(handle.server.listening, false);
+  assert.equal(processLike.exitCode, 0);
+  remove();
 });
 
 // ── §5.4 F1: shipped example is runnable as-shipped (no .cmd/.bat argv[0]) ──

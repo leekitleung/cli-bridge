@@ -11,11 +11,9 @@
 // live in the adapters built on top of this gate. Keeping the gate small and
 // logic-free makes it auditable.
 
-import {
-  spawn,
-} from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter as pathDelimiter, join as joinPath } from 'node:path';
+import { runContainedProcess } from '../process/contained-process.ts';
 
 // Only these base commands may ever be executed. The list is fixed in source;
 // it is never derived from request input.
@@ -80,6 +78,7 @@ export interface RawProcessResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  truncated?: boolean;
 }
 
 // Injectable boundary so tests drive behaviour with a fake and never spawn a
@@ -148,55 +147,23 @@ class NodeSpawnRunner implements ProcessRunner {
     launcher: ResolvedLauncher,
     options: ResolvedRunOptions,
   ): Promise<RawProcessResult> {
-    return await new Promise<RawProcessResult>((resolve) => {
-      const child = spawn(
-        launcher.executable,
-        [...launcher.prependArgs, ...execution.args],
-        {
-          cwd: execution.cwd,
-          stdio: 'pipe',
-          shell: false,
-        },
-      );
-
-      let stdout = '';
-      let stderr = '';
-      let timedOut = false;
-      let settled = false;
-
-      const cap = (current: string, chunk: string): string =>
-        `${current}${chunk}`.slice(0, options.maxOutputBytes);
-
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGKILL');
-      }, options.timeoutMs);
-
-      child.stdout?.on('data', (chunk: Buffer | string) => {
-        stdout = cap(stdout, String(chunk));
-      });
-      child.stderr?.on('data', (chunk: Buffer | string) => {
-        stderr = cap(stderr, String(chunk));
-      });
-
-      const finish = (exitCode: number | null): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        resolve({ exitCode, stdout, stderr, timedOut });
-      };
-
-      child.on('error', () => finish(null));
-      child.on('close', (code) => finish(code));
-
-      if (typeof execution.stdin === 'string' && child.stdin) {
-        child.stdin.end(execution.stdin);
-      } else {
-        child.stdin?.end();
-      }
-    });
+    const result = await runContainedProcess(
+      launcher.executable,
+      [...launcher.prependArgs, ...execution.args],
+      {
+        cwd: execution.cwd,
+        stdin: execution.stdin,
+        timeoutMs: options.timeoutMs,
+        outputCapBytes: options.maxOutputBytes,
+      },
+    );
+    return {
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString('utf8'),
+      stderr: result.stderr.toString('utf8'),
+      timedOut: result.timedOut,
+      truncated: result.truncated,
+    };
   }
 }
 
@@ -310,8 +277,8 @@ export async function runAllowlistedCommand(
 
   const durationMs = Date.now() - startedAt;
   const truncated =
-    raw.stdout.length >= resolved.maxOutputBytes ||
-    raw.stderr.length >= resolved.maxOutputBytes;
+    raw.truncated === true ||
+    Buffer.byteLength(raw.stdout) + Buffer.byteLength(raw.stderr) >= resolved.maxOutputBytes;
 
   if (raw.timedOut) {
     return {

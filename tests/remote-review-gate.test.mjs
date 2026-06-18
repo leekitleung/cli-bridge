@@ -7,6 +7,7 @@ import {
   detectDiffScopeContradiction,
   parseGithubRunList,
   parsePullRequestView,
+  runReadOnlyCommand,
 } from '../scripts/remote-review-gate.mjs';
 
 test('remote review gate passes when clean local head matches remote head', () => {
@@ -19,9 +20,7 @@ test('remote review gate passes when clean local head matches remote head', () =
     pr: {
       status: 'absent',
     },
-    ci: {
-      status: 'absent',
-    },
+    ci: { status: 'pass' },
     remoteDiffScope: {
       status: 'summarized',
       summary: 'none',
@@ -33,7 +32,7 @@ test('remote review gate passes when clean local head matches remote head', () =
   assert.equal(report.pushed, true);
   assert.deepEqual(report.failures, []);
   assert.equal(report.pr.status, 'absent');
-  assert.equal(report.ci.status, 'absent');
+  assert.equal(report.ci.status, 'pass');
 });
 
 test('remote review gate fails on dirty working tree', () => {
@@ -135,6 +134,45 @@ test('remote review gate blocks present failing CI', () => {
 
   assert.equal(report.verdict, 'fail');
   assert.ok(report.failures.includes('ci-failing'));
+});
+
+for (const status of ['absent', 'pending', 'unavailable']) {
+  test(`remote review gate fails when required CI is ${status}`, () => {
+    const report = buildRemoteReviewGateReport({
+      branch: 'main',
+      localHead: 'abc',
+      upstream: 'origin/main',
+      remoteHead: 'abc',
+      workingTreeClean: true,
+      pr: { status: 'present' },
+      ci: { status },
+      remoteDiffScope: { status: 'summarized', summary: 'none' },
+    });
+    assert.equal(report.verdict, 'fail');
+    assert.ok(report.failures.includes(`ci-${status}`));
+  });
+}
+
+test('remote gate subprocesses time out with a stable failure', () => {
+  const started = Date.now();
+  const result = runReadOnlyCommand(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)'],
+    { timeoutMs: 50 },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /timed out/i);
+  assert.ok(Date.now() - started < 1000);
+});
+
+test('remote gate stdout and stderr share one output budget', () => {
+  const result = runReadOnlyCommand(
+    process.execPath,
+    ['-e', "process.stdout.write('12345678'); process.stderr.write('abcdefgh')"],
+    { outputCapBytes: 10 },
+  );
+  assert.notEqual(result.status, 0);
+  assert.ok(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= 10);
 });
 
 test('github parser distinguishes absent PR and unavailable PR', () => {
