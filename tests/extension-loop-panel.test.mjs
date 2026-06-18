@@ -239,6 +239,8 @@ test('Bridge Panel source implements the approved four-stage guarded utility UI'
 
   assert.match(source, /1 连接 · 2 发送至 ChatGPT · 3 选择并预览 · 4 确认回传/);
   assert.match(source, /collapseButton/);
+  assert.match(source, /createLucideChevronIcon/);
+  assert.match(source, /renderLucideChevronIcon/);
   assert.match(source, /prefers-color-scheme: dark/);
   assert.match(source, /aria-live/);
   assert.match(source, /returnInFlight/);
@@ -276,20 +278,25 @@ test('Bridge Panel collapse hides the workflow body despite inline layout styles
   const env = setupPanelDom();
   try {
     const handle = mountBridgePanel(env.document);
-    const collapse = Array.from(handle.element.querySelectorAll('button'))
-      .find((button) => button.textContent === '收起');
+    const collapse = handle.element.querySelector('button[aria-label="收起面板"]');
     const body = Array.from(handle.element.children)
       .find((child) => child.tagName === 'DIV' && child !== handle.element.firstElementChild);
 
+    assert.equal(collapse.title, '收起');
+    assert.match(collapse.querySelector('path').getAttribute('d'), /m18 15-6-6-6 6/);
     collapse.click();
-    assert.equal(collapse.textContent, '展开');
+    assert.equal(collapse.getAttribute('aria-label'), '展开面板');
+    assert.equal(collapse.title, '展开');
     assert.equal(collapse.getAttribute('aria-expanded'), 'false');
+    assert.match(collapse.querySelector('path').getAttribute('d'), /m6 9 6 6 6-6/);
     assert.equal(body.hidden, true);
     assert.equal(body.style.display, 'none');
 
     collapse.click();
-    assert.equal(collapse.textContent, '收起');
+    assert.equal(collapse.getAttribute('aria-label'), '收起面板');
+    assert.equal(collapse.title, '收起');
     assert.equal(collapse.getAttribute('aria-expanded'), 'true');
+    assert.match(collapse.querySelector('path').getAttribute('d'), /m18 15-6-6-6 6/);
     assert.equal(body.hidden, false);
     assert.equal(body.style.display, 'grid');
   } finally {

@@ -128,8 +128,11 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const collapseButton = root.createElement('button');
   collapseButton.type = 'button';
-  collapseButton.textContent = '收起';
+  collapseButton.setAttribute('aria-label', '收起面板');
+  collapseButton.title = '收起';
   collapseButton.setAttribute('aria-expanded', 'true');
+  const collapseIcon = createLucideChevronIcon(root, 'up');
+  collapseButton.append(collapseIcon);
 
   const panelHeader = root.createElement('div');
   Object.assign(panelHeader.style, {
@@ -270,8 +273,12 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   });
 
   Object.assign(collapseButton.style, {
+    width: '44px',
+    height: '44px',
     minHeight: '44px',
-    padding: '0 12px',
+    padding: '0',
+    display: 'inline-grid',
+    placeItems: 'center',
     color: 'var(--cb-text)',
     background: 'var(--cb-surface)',
     border: '1px solid var(--cb-border)',
@@ -496,8 +503,10 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     const collapsed = panelBody.hidden === false;
     panelBody.hidden = collapsed;
     panelBody.style.display = collapsed ? 'none' : 'grid';
-    collapseButton.textContent = collapsed ? '展开' : '收起';
+    collapseButton.setAttribute('aria-label', collapsed ? '展开面板' : '收起面板');
+    collapseButton.title = collapsed ? '展开' : '收起';
     collapseButton.setAttribute('aria-expanded', String(!collapsed));
+    renderLucideChevronIcon(collapseIcon, collapsed ? 'down' : 'up');
   });
 
   panel.append(
@@ -532,4 +541,28 @@ function isDarkHost(root: Document): boolean {
   }
   const [, r, g, b] = match.map(Number);
   return (0.2126 * r) + (0.7152 * g) + (0.0722 * b) < 128;
+}
+
+function createLucideChevronIcon(root: Document, direction: 'up' | 'down'): SVGSVGElement {
+  const icon = root.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('width', '18');
+  icon.setAttribute('height', '18');
+  icon.setAttribute('fill', 'none');
+  icon.setAttribute('stroke', 'currentColor');
+  icon.setAttribute('stroke-width', '2');
+  icon.setAttribute('stroke-linecap', 'round');
+  icon.setAttribute('stroke-linejoin', 'round');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.style.display = 'block';
+  renderLucideChevronIcon(icon, direction);
+  return icon;
+}
+
+function renderLucideChevronIcon(icon: SVGSVGElement, direction: 'up' | 'down') {
+  const root = icon.ownerDocument;
+  icon.replaceChildren();
+  const path = root.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', direction === 'up' ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6');
+  icon.append(path);
 }
