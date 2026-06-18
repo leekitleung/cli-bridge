@@ -2,18 +2,19 @@
 //
 // This DOES NOT auto-send, inject into a terminal, or write back to any
 // executor. It only seeds the one precondition that REVIEW-INBOUND-ROUTING-E2E
-// found missing for a real-browser test: an outbound prompt that carries an
-// endpointId + sessionId, targeting an inbound-capable endpoint.
+// found missing for a real-browser test: an outbound prompt for the
+// server-configured inbound-capable endpoint.
 //
 // Why this is needed (see docs/planning/PLAN-MULTI-EXECUTOR-RELAY.md runbook):
 //   - The panel's manual "填入" button creates a packet with the panel's own
 //     panel-<timestamp> session and NO endpointId, so it NEVER establishes a
 //     relay context. extract-return for that session always falls back to a
 //     pending-prompt.
-//   - Only a delivered outbound that carries an endpointId writes a relay
-//     context. The extension poller claims this outbound, fills the composer,
-//     and acks delivery — which records both the relay context (server) and the
-//     active relay session (panel). Extract then routes into the inbound queue.
+//   - Only a delivered outbound created by the server-owned inbound route
+//     writes a relay context. The extension poller claims this outbound, fills
+//     the composer, and acks delivery — which records both the relay context
+//     (server) and the active relay session (panel). Extract then routes into
+//     the inbound queue.
 //
 // Usage (server must already be running; copy its pairing token):
 //   node --experimental-strip-types scripts/manual-inbound-e2e.mjs \
@@ -82,7 +83,7 @@ async function main() {
   console.log('Created outbound prompt:');
   console.log(`  id:         ${body.outboundPrompt.id}`);
   console.log(`  sessionId:  ${sessionId}`);
-  console.log(`  endpointId: ${endpointId}`);
+  console.log(`  server route: ${endpointId}`);
   console.log('');
   console.log('Next steps in the browser:');
   console.log('  1. The extension poller fills the ChatGPT composer (no auto-send).');

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
@@ -50,6 +51,43 @@ function splitUpstream(upstream) {
 
 function normalizeReason(stderr, fallback) {
   return trimOrNull(stderr) ?? fallback;
+}
+
+function parseGithubRemoteUrl(value) {
+  const remote = trimOrNull(value);
+  if (!remote) return null;
+  const https = remote.match(/^https:\/\/github\.com\/([^/]+)\/([^/.]+)(?:\.git)?$/);
+  if (https) {
+    return { owner: https[1], repo: https[2] };
+  }
+  const ssh = remote.match(/^git@github\.com:([^/]+)\/([^/.]+)(?:\.git)?$/);
+  if (ssh) {
+    return { owner: ssh[1], repo: ssh[2] };
+  }
+  return null;
+}
+
+function fetchGithubJson(path) {
+  try {
+    const output = execFileSync('curl', [
+      '-sS',
+      '-f',
+      '-L',
+      '-H',
+      'Accept: application/vnd.github+json',
+      `https://api.github.com${path}`,
+    ], {
+      encoding: 'utf8',
+      maxBuffer: DEFAULT_OUTPUT_CAP_BYTES,
+      timeout: DEFAULT_COMMAND_TIMEOUT_MS,
+    });
+    return { ok: true, data: JSON.parse(output) };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : 'github api unavailable',
+    };
+  }
 }
 
 export function parsePullRequestView(result) {
@@ -136,6 +174,28 @@ export function parseGithubRunList(result) {
     status: 'fail',
     ...base,
   };
+}
+
+export function parseGithubActionsRunsPayload(payload, headSha) {
+  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
+  const matchingRuns = runs.filter((run) => !headSha || run.head_sha === headSha);
+  if (matchingRuns.length === 0) {
+    return { status: 'absent' };
+  }
+  const [latest] = matchingRuns;
+  const base = {
+    workflowName: latest.name,
+    databaseId: latest.id,
+    url: latest.html_url,
+    conclusion: latest.conclusion,
+  };
+  if (latest.status !== 'completed') {
+    return { status: 'pending', ...base };
+  }
+  if (['success', 'neutral', 'skipped'].includes(latest.conclusion)) {
+    return { status: 'pass', ...base };
+  }
+  return { status: 'fail', ...base };
 }
 
 export function buildRemoteReviewGateReport(input) {
@@ -289,7 +349,32 @@ function collectGitEvidence(cwd) {
   };
 }
 
-function collectGithubEvidence(cwd, branch) {
+function collectPublicGithubEvidence(cwd, branch, localHead) {
+  const upstreamResult = runReadOnlyCommand('git', ['config', '--get', 'remote.origin.url'], { cwd });
+  if (upstreamResult.status !== 0) {
+    return {
+      status: 'unavailable',
+      reason: 'origin url unavailable',
+    };
+  }
+  const repo = parseGithubRemoteUrl(upstreamResult.stdout);
+  if (!repo) {
+    return {
+      status: 'unavailable',
+      reason: 'origin is not a github repository',
+    };
+  }
+  const runs = fetchGithubJson(`/repos/${repo.owner}/${repo.repo}/actions/runs?branch=${encodeURIComponent(branch ?? '')}&per_page=10`);
+  if (runs.ok) {
+    return parseGithubActionsRunsPayload(runs.data, localHead);
+  }
+  return {
+    status: 'unavailable',
+    reason: runs.reason,
+  };
+}
+
+function collectGithubEvidence(cwd, branch, localHead) {
   const pr = parsePullRequestView(runReadOnlyCommand('gh', [
     'pr',
     'view',
@@ -297,7 +382,7 @@ function collectGithubEvidence(cwd, branch) {
     'number,state,url,headRefName,baseRefName',
   ], { cwd }));
 
-  const ci = parseGithubRunList(runReadOnlyCommand('gh', [
+  let ci = parseGithubRunList(runReadOnlyCommand('gh', [
     'run',
     'list',
     '--branch',
@@ -307,6 +392,9 @@ function collectGithubEvidence(cwd, branch) {
     '--json',
     'status,conclusion,workflowName,databaseId,url',
   ], { cwd }));
+  if (ci.status === 'unavailable') {
+    ci = collectPublicGithubEvidence(cwd, branch, localHead);
+  }
 
   return {
     pr,
@@ -328,7 +416,7 @@ export function collectRemoteReviewGateReport(options = {}) {
           reason: 'github check disabled',
         },
       }
-    : collectGithubEvidence(cwd, gitEvidence.branch);
+    : collectGithubEvidence(cwd, gitEvidence.branch, gitEvidence.localHead);
 
   return buildRemoteReviewGateReport({
     ...gitEvidence,

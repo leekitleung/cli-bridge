@@ -68,6 +68,13 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       --cb-border: #d1d5db;
       color-scheme: light dark;
     }
+    #${PANEL_ROOT_ID}[data-cli-bridge-host-theme="dark"] {
+      --cb-panel-bg: rgba(24, 24, 27, 0.98);
+      --cb-surface: #27272a;
+      --cb-text: #f4f4f5;
+      --cb-muted: #a1a1aa;
+      --cb-border: #52525b;
+    }
     @media (prefers-color-scheme: dark) {
       #${PANEL_ROOT_ID} {
         --cb-panel-bg: rgba(24, 24, 27, 0.98);
@@ -88,6 +95,9 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   const panel = root.createElement('section');
   panel.id = PANEL_ROOT_ID;
   panel.setAttribute('data-cli-bridge-panel', 'true');
+  if (isDarkHost(root)) {
+    panel.setAttribute('data-cli-bridge-host-theme', 'dark');
+  }
   Object.assign(panel.style, {
     position: 'fixed',
     right: '16px',
@@ -485,6 +495,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   collapseButton.addEventListener('click', () => {
     const collapsed = panelBody.hidden === false;
     panelBody.hidden = collapsed;
+    panelBody.style.display = collapsed ? 'none' : 'grid';
     collapseButton.textContent = collapsed ? '展开' : '收起';
     collapseButton.setAttribute('aria-expanded', String(!collapsed));
   });
@@ -511,4 +522,14 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       return latestPanelStatus;
     },
   };
+}
+
+function isDarkHost(root: Document): boolean {
+  const background = globalThis.getComputedStyle?.(root.body).backgroundColor ?? '';
+  const match = background.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!match) {
+    return false;
+  }
+  const [, r, g, b] = match.map(Number);
+  return (0.2126 * r) + (0.7152 * g) + (0.0722 * b) < 128;
 }

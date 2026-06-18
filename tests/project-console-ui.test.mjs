@@ -77,6 +77,20 @@ test('mobile console exposes project navigation, history, and facts through a co
   assert.match(html, /<nav id="project-nav"/);
 });
 
+test('project console supports light mode and mobile touch targets', () => {
+  const html = renderProjectConsoleHtml();
+  assert.match(html, /--bg: #f7f7f5/);
+  assert.match(html, /@media \(prefers-color-scheme: dark\)/);
+  assert.match(html, /--composer-bg: #ffffff/);
+  assert.match(html, /--composer-bg: #2b2b2b/);
+  assert.match(html, /mobile-nav-toggle \{ display: none; min-height: 44px; \}/);
+  assert.match(html, /header input, header button \{[^}]*min-height: 44px/s);
+  assert.match(html, /footer #command-send \{[^}]*width: 44px;[^}]*height: 44px/s);
+  assert.match(html, /\.composer-icon \{[^}]*width: 44px;[^}]*height: 44px/s);
+  assert.match(html, /\.composer-pill \{[^}]*min-height: 44px/s);
+  assert.doesNotMatch(html, /mobile-nav-toggle \{ display: none; min-height: 40px; \}/);
+});
+
 test('project console is a thin client over only allowlisted bridge endpoints', () => {
   const html = renderProjectConsoleHtml();
   const paths = new Set(extractBridgePaths(html));

@@ -198,6 +198,15 @@ auto-executed.
 5. On ChatGPT, follow the numbered panel stages. Composer fill is automatic;
    sending and confirmed return are always manual.
 
+Recovery notes:
+
+- If the popup says the local server cannot be reached, keep `npm start`
+  running and retry **保存并测试**.
+- If the popup says the pairing token is invalid, copy the newest token printed
+  by `npm start`, replace the old popup value, and choose **保存并测试** again.
+- If the ChatGPT panel is still unpaired, click **刷新连接** after the popup
+  reports a successful test.
+
 ## Remote review gate
 
 ```bash

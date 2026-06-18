@@ -32,19 +32,47 @@ export function renderProjectConsoleHtml(): string {
 <style>
 :root {
   color-scheme: light dark;
-  --bg: #0d0d0d;
-  --surface: #171717;
-  --panel: #202020;
-  --hover: #242424;
-  --border: #303030;
-  --text: #f4f4f5;
-  --muted: #a1a1aa;
-  --subtle: #71717a;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --panel: #f1f3f2;
+  --hover: #e8ecea;
+  --border: #d7ddd9;
+  --text: #181a19;
+  --muted: #5f6a65;
+  --subtle: #7b8580;
   --accent: #10a37f;
   --warn: #b45309;
   --danger: #7f1d1d;
   --done: #14532d;
   --gate: #b45309;
+  --topbar-bg: rgba(247, 247, 245, 0.96);
+  --composer-bg: #ffffff;
+  --composer-shadow: 0 18px 54px rgba(12, 18, 16, 0.12);
+  --composer-placeholder: #7b8580;
+  --composer-mode: #303634;
+  --composer-send-bg: #181a19;
+  --composer-send-text: #ffffff;
+  --pill-muted: #6b7280;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0d0d;
+    --surface: #171717;
+    --panel: #202020;
+    --hover: #242424;
+    --border: #303030;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --subtle: #71717a;
+    --topbar-bg: rgba(13, 13, 13, 0.96);
+    --composer-bg: #2b2b2b;
+    --composer-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+    --composer-placeholder: #8e8e8e;
+    --composer-mode: #e5e5e5;
+    --composer-send-bg: #a3a3a3;
+    --composer-send-text: #222;
+    --pill-muted: #a3a3a3;
+  }
 }
 *, *::before, *::after { box-sizing: border-box; }
 body {
@@ -70,7 +98,7 @@ header {
   align-items: center;
   gap: 16px;
   padding: 0 24px;
-  background: rgba(13, 13, 13, 0.96);
+  background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
 }
 header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
@@ -84,7 +112,7 @@ header .conn-row {
   align-items: center;
   min-width: 0;
 }
-header input, header button { font: inherit; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 6px 10px; font-size: 12px; }
+header input, header button { font: inherit; min-height: 44px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 8px 10px; font-size: 12px; }
 header input { width: 100%; min-width: 0; }
 header button { cursor: pointer; background: var(--panel); border-color: var(--border); }
 header #connect { display: inline-flex; align-items: center; gap: 7px; }
@@ -98,7 +126,7 @@ header .conn-status {
 }
 header .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: inline-block; flex: 0 0 auto; }
 header .conn-dot.ok { background: #22c55e; }
-.mobile-nav-toggle { display: none; min-height: 40px; }
+.mobile-nav-toggle { display: none; min-height: 44px; }
 .mobile-facts { display: none; }
 
 /* ─── Left Rail ─── */
@@ -232,9 +260,9 @@ footer {
   gap: 8px;
   border-radius: 18px;
   border: 1px solid var(--border);
-  background: #2b2b2b;
+  background: var(--composer-bg);
   padding: 12px 10px 8px;
-  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+  box-shadow: var(--composer-shadow);
 }
 footer input {
   width: 100%;
@@ -249,7 +277,7 @@ footer input {
   font-size: 15px;
   line-height: 1.35;
 }
-footer input::placeholder { color: #8e8e8e; }
+footer input::placeholder { color: var(--composer-placeholder); }
 .composer-toolbar {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
@@ -265,8 +293,8 @@ footer #command-send {
   background: transparent;
 }
 .composer-icon {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   display: inline-grid;
   place-items: center;
   color: #a3a3a3;
@@ -279,14 +307,14 @@ footer #command-send {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 4px;
   color: #ff7a1a;
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
 }
-.composer-pill.pending { color: #a3a3a3; }
+.composer-pill.pending { color: var(--pill-muted); }
 .composer-pill.error { color: #f87171; }
 .composer-pill .shield {
   width: 13px;
@@ -309,18 +337,18 @@ footer #command-send {
 }
 .composer-spacer { min-width: 0; }
 .composer-mode {
-  color: #e5e5e5;
+  color: var(--composer-mode);
   font-size: 13px;
   white-space: nowrap;
 }
 footer #command-send {
-  width: 29px;
-  height: 29px;
+  width: 44px;
+  height: 44px;
   display: inline-grid;
   place-items: center;
   border-radius: 999px;
-  background: #a3a3a3;
-  color: #222;
+  background: var(--composer-send-bg);
+  color: var(--composer-send-text);
   cursor: pointer;
   font-size: 18px;
   font-weight: 700;
@@ -393,7 +421,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   }
   .composer-shell { min-height: 106px; border-radius: 17px; }
   .composer-toolbar { grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 7px; }
-  .composer-icon { width: 24px; font-size: 22px; }
+  .composer-icon { width: 44px; height: 44px; font-size: 22px; }
   .composer-pill { font-size: 11px; }
   .composer-mode { font-size: 12px; }
 }

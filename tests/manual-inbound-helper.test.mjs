@@ -8,5 +8,8 @@ test('manual inbound helper uses server-owned outbound routing', async () => {
   const requestBody = source.match(/body: JSON\.stringify\(([^\n]+)\)/)?.[1] ?? '';
   assert.equal(requestBody.includes('endpointId'), false);
   assert.equal(source.includes('args.endpoint'), false);
+  assert.equal(source.includes('carries an endpointId'), false);
+  assert.equal(source.includes('  endpointId:'), false);
+  assert.match(source, /server-configured inbound-capable endpoint/);
   assert.match(source, /mock-inbound-agent/);
 });

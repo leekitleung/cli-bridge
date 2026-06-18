@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildRemoteReviewGateReport,
   detectDiffScopeContradiction,
+  parseGithubActionsRunsPayload,
   parseGithubRunList,
   parsePullRequestView,
   runReadOnlyCommand,
@@ -220,6 +221,35 @@ test('github run parser reports absent, pending, pass, and fail states', () => {
     stdout: '[{"status":"completed","conclusion":"failure","url":"https://example.test/run"}]',
     stderr: '',
   }).status, 'fail');
+});
+
+test('github actions API parser filters by head sha and maps latest run state', () => {
+  const payload = {
+    workflow_runs: [
+      {
+        id: 1,
+        name: 'CI',
+        html_url: 'https://example.test/old',
+        head_sha: 'old',
+        status: 'completed',
+        conclusion: 'success',
+      },
+      {
+        id: 2,
+        name: 'CI',
+        html_url: 'https://example.test/current',
+        head_sha: 'abc123',
+        status: 'completed',
+        conclusion: 'success',
+      },
+    ],
+  };
+
+  const parsed = parseGithubActionsRunsPayload(payload, 'abc123');
+  assert.equal(parsed.status, 'pass');
+  assert.equal(parsed.databaseId, 2);
+  assert.equal(parseGithubActionsRunsPayload(payload, 'missing').status, 'absent');
+  assert.equal(parseGithubActionsRunsPayload({ workflow_runs: [] }, 'abc123').status, 'absent');
 });
 
 test('remote review gate CLI entry prints JSON and exits non-zero on a failing verdict', async () => {

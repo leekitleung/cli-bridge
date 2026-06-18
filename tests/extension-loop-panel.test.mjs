@@ -244,6 +244,8 @@ test('Bridge Panel source implements the approved four-stage guarded utility UI'
   assert.match(source, /returnInFlight/);
   assert.match(source, /updateActionState/);
   assert.match(source, /onEvent/);
+  assert.match(source, /data-cli-bridge-host-theme/);
+  assert.match(source, /isDarkHost/);
   assert.match(source, /minHeight: '44px'/);
   assert.equal(source.includes('requestSubmit'), false);
   assert.equal(source.includes('KeyboardEvent'), false);
@@ -264,6 +266,32 @@ test('Bridge Panel disables guarded actions while unpaired and keeps one active 
 
     assert.deepEqual(actionButtons.map((button) => button.disabled), [true, true, true, true]);
     assert.equal(actionButtons.filter((button) => button.style.fontWeight === '700').length, 0);
+  } finally {
+    env.restore();
+  }
+});
+
+test('Bridge Panel collapse hides the workflow body despite inline layout styles', async () => {
+  const { mountBridgePanel } = await loadBridgePanelModule();
+  const env = setupPanelDom();
+  try {
+    const handle = mountBridgePanel(env.document);
+    const collapse = Array.from(handle.element.querySelectorAll('button'))
+      .find((button) => button.textContent === '收起');
+    const body = Array.from(handle.element.children)
+      .find((child) => child.tagName === 'DIV' && child !== handle.element.firstElementChild);
+
+    collapse.click();
+    assert.equal(collapse.textContent, '展开');
+    assert.equal(collapse.getAttribute('aria-expanded'), 'false');
+    assert.equal(body.hidden, true);
+    assert.equal(body.style.display, 'none');
+
+    collapse.click();
+    assert.equal(collapse.textContent, '收起');
+    assert.equal(collapse.getAttribute('aria-expanded'), 'true');
+    assert.equal(body.hidden, false);
+    assert.equal(body.style.display, 'grid');
   } finally {
     env.restore();
   }
