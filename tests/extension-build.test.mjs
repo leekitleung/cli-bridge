@@ -58,6 +58,10 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
   assert.equal(contentSource.includes('BridgePacket'), false);
   assert.equal(contentSource.includes('MockAgent'), false);
   assert.equal(contentSource.includes('CodexManaged'), false);
+
+  const popupSource = await readFile(popupScriptPath, 'utf8');
+  assert.equal(popupSource.includes('chrome.storage.session'), true);
+  assert.equal(popupSource.includes('chrome.storage.local'), false);
 });
 
 test('content runtime entry calls Bridge Panel mount with duplicate guard', async () => {

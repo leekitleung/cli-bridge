@@ -55,6 +55,27 @@ test('redactSensitiveContent redacts common API tokens without blocking', () => 
   assert.doesNotMatch(result.processedContent, /abcdefghijklmnopqrstuvwxyz123456/);
 });
 
+test('redactSensitiveContent covers common cloud, package, chat, auth, and cookie secrets', () => {
+  const secrets = {
+    aws: ['AKIA', 'IOSFODNN7EXAMPLE'].join(''),
+    slack: ['xoxb', '123456789012', '123456789012', 'abcdefghijklmnopqrstuvwx'].join('-'),
+    npm: ['npm', 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJ'].join('_'),
+    basic: 'Authorization: Basic dXNlcjpwYXNzd29yZA==',
+    cookie: 'Cookie: sessionid=super-secret-cookie-value; theme=dark',
+  };
+  const result = redactSensitiveContent(Object.values(secrets).join('\n'));
+
+  assert.equal(result.redactionApplied, true);
+  for (const secret of Object.values(secrets)) {
+    assert.equal(result.processedContent.includes(secret), false);
+  }
+  assert.match(result.processedContent, /REDACTED_AWS_ACCESS_KEY/);
+  assert.match(result.processedContent, /REDACTED_SLACK_TOKEN/);
+  assert.match(result.processedContent, /REDACTED_NPM_TOKEN/);
+  assert.match(result.processedContent, /Authorization: \[REDACTED_AUTHORIZATION\]/);
+  assert.match(result.processedContent, /Cookie: \[REDACTED_COOKIE\]/);
+});
+
 test('redactSensitiveContent blocks private keys and env secret assignments', () => {
   const result = redactSensitiveContent([
     'API_TOKEN=super-secret-token',

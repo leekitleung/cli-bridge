@@ -9,6 +9,7 @@ declare namespace chrome {
       remove(keys: string | string[]): Promise<void>;
     }
     const local: StorageArea;
+    const session: StorageArea;
   }
 
   namespace runtime {

@@ -62,7 +62,7 @@ test('extract-return routes to inbound when relay context resolves an inbound-ca
     runtime,
     'POST',
     '/bridge/extract-return',
-    jsonRequest({ sessionId: 's-inbox', content: 'reviewed reply' }),
+    jsonRequest({ sessionId: 's-inbox', content: 'reviewed reply', operationId: 'out-1' }),
   );
 
   assert.equal(result.statusCode, 201);
@@ -97,7 +97,12 @@ test('extract-return ignores any endpointId in the body (never trusted)', async 
     runtime,
     'POST',
     '/bridge/extract-return',
-    jsonRequest({ sessionId: 's-inbox', content: 'x', endpointId: 'attacker-endpoint' }),
+    jsonRequest({
+      sessionId: 's-inbox',
+      content: 'x',
+      operationId: 'out-1',
+      endpointId: 'attacker-endpoint',
+    }),
   );
   assert.equal(result.payload.routedTo, 'inbound');
   assert.equal(result.payload.inboundMessage.endpointId, 'inbox-cli');

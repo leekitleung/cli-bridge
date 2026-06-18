@@ -29,7 +29,7 @@ Object.assign(title.style, {
 });
 
 const help = document.createElement('p');
-help.textContent = '粘贴本地服务显示的配对口令。口令只保存在扩展存储中，不写入 ChatGPT 页面。';
+help.textContent = '粘贴本地服务显示的配对口令。口令只保留在当前浏览器会话中，不写入 ChatGPT 页面。';
 Object.assign(help.style, {
   margin: '0',
   color: '#4b5563',
@@ -118,10 +118,10 @@ function proxyHealth(token: string): Promise<ProxyResult> {
 }
 
 async function loadSavedToken() {
-  const stored = await chrome.storage.local.get('cliBridgePairingToken');
+  const stored = await chrome.storage.session.get('cliBridgePairingToken');
   if (typeof stored?.cliBridgePairingToken === 'string' && stored.cliBridgePairingToken.length > 0) {
     input.placeholder = '已配对；输入新口令可替换';
-    renderStatus('已保存配对口令，可在 ChatGPT 页面刷新连接。', 'success');
+    renderStatus('当前会话已配对，可在 ChatGPT 页面刷新连接。', 'success');
   } else {
     renderStatus('未配对。');
   }
@@ -143,14 +143,14 @@ saveButton.addEventListener('click', async () => {
     return;
   }
 
-  await chrome.storage.local.set({ cliBridgePairingToken: token });
+  await chrome.storage.session.set({ cliBridgePairingToken: token });
   input.value = '';
   input.placeholder = '已配对；输入新口令可替换';
-  renderStatus('已保存并通过连接测试。', 'success');
+  renderStatus('当前会话已配对并通过连接测试。', 'success');
 });
 
 clearButton.addEventListener('click', async () => {
-  await chrome.storage.local.remove('cliBridgePairingToken');
+  await chrome.storage.session.remove('cliBridgePairingToken');
   input.value = '';
   input.placeholder = 'pairing token';
   renderStatus('已清除配对口令。');

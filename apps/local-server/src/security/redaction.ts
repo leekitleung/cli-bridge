@@ -41,6 +41,31 @@ const REDACTION_RULES: RedactionRule[] = [
     pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b/g,
     replacement: 'Bearer [REDACTED_TOKEN]',
   },
+  {
+    name: 'aws-access-key',
+    pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+    replacement: '[REDACTED_AWS_ACCESS_KEY]',
+  },
+  {
+    name: 'slack-token',
+    pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g,
+    replacement: '[REDACTED_SLACK_TOKEN]',
+  },
+  {
+    name: 'npm-token',
+    pattern: /\bnpm_[A-Za-z0-9]{20,}\b/g,
+    replacement: '[REDACTED_NPM_TOKEN]',
+  },
+  {
+    name: 'authorization-header',
+    pattern: /^(Authorization\s*:)(?!\s*Bearer\s+\[REDACTED_TOKEN\])\s*.+$/gim,
+    replacement: '$1 [REDACTED_AUTHORIZATION]',
+  },
+  {
+    name: 'cookie-header',
+    pattern: /^(Cookie\s*:\s*).+$/gim,
+    replacement: '$1[REDACTED_COOKIE]',
+  },
 ];
 
 export function redactSensitiveContent(rawContent: string): RedactionResult {

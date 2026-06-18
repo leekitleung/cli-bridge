@@ -17,25 +17,38 @@ import {
 import { PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
 
 function withFakeChromeStorage(initial = {}) {
-  const store = { ...initial };
+  const sessionStore = { ...initial };
+  const localStore = {};
   const original = globalThis.chrome;
   globalThis.chrome = {
     storage: {
       local: {
+        async get() {
+          throw new Error('persistent local storage must not be used for pairing');
+        },
+        async set() {
+          throw new Error('persistent local storage must not be used for pairing');
+        },
+        async remove() {
+          throw new Error('persistent local storage must not be used for pairing');
+        },
+      },
+      session: {
         async get(key) {
-          return key in store ? { [key]: store[key] } : {};
+          return key in sessionStore ? { [key]: sessionStore[key] } : {};
         },
         async set(obj) {
-          Object.assign(store, obj);
+          Object.assign(sessionStore, obj);
         },
         async remove(key) {
-          delete store[key];
+          delete sessionStore[key];
         },
       },
     },
   };
   return {
-    store,
+    store: sessionStore,
+    localStore,
     restore() {
       globalThis.chrome = original;
     },
@@ -134,14 +147,15 @@ test('bridge client config is readable and resettable', () => {
   assert.equal(getBridgeClientConfig().pairingToken, null);
 });
 
-test('savePairingTokenToStorage writes chrome.storage.local and updates cached config', async () => {
+test('savePairingTokenToStorage writes session-only storage and updates cached config', async () => {
   setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: null });
   const fake = withFakeChromeStorage();
   try {
     const ok = await savePairingTokenToStorage('  tok-xyz  ');
     assert.equal(ok, true);
     assert.equal(getBridgeClientConfig().pairingToken, 'tok-xyz', 'trims and caches token');
-    assert.equal(fake.store.cliBridgePairingToken, 'tok-xyz', 'persists to storage');
+    assert.equal(fake.store.cliBridgePairingToken, 'tok-xyz', 'retains token for this browser session');
+    assert.deepEqual(fake.localStore, {}, 'never persists pairing token to local storage');
     assert.equal(hasPairingToken(), true);
   } finally {
     fake.restore();

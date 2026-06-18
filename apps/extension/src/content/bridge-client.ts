@@ -147,11 +147,19 @@ export function createPendingPrompt(sessionId: string, prompt: string) {
  * creates an inbound message or falls back to a pending prompt. Goes through
  * the background proxy like every other bridge call.
  */
-export function createExtractReturn(sessionId: string, content: string) {
+export function createExtractReturn(
+  sessionId: string,
+  content: string,
+  operationId?: string,
+) {
   return bridgeFetch<{
     routedTo: 'inbound' | 'pending-prompt';
     fallbackReason?: string;
-  }>('/bridge/extract-return', 'POST', { sessionId, content });
+  }>('/bridge/extract-return', 'POST', {
+    sessionId,
+    content,
+    ...(operationId ? { operationId } : {}),
+  });
 }
 
 export function confirmPendingPrompt(promptId: string) {
@@ -215,8 +223,8 @@ export function listPackets() {
 
 export async function loadPairingTokenFromStorage(): Promise<string | null> {
   try {
-    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
-      const result = await chrome.storage.local.get('cliBridgePairingToken');
+    if (typeof chrome !== 'undefined' && chrome?.storage?.session) {
+      const result = await chrome.storage.session.get('cliBridgePairingToken');
       const token = result?.cliBridgePairingToken;
       if (typeof token === 'string' && token.length > 0) {
         cachedConfig.pairingToken = token;
@@ -231,9 +239,9 @@ export async function loadPairingTokenFromStorage(): Promise<string | null> {
 }
 
 /**
- * Persist the pairing token so the user does not need the service-worker
- * console to pair. Updates the in-memory config first so the current session
- * works even if extension storage is unavailable.
+ * Keep the pairing token for the current browser session. Session storage is
+ * memory-only and is cleared when the browser exits, the extension reloads, or
+ * the extension is disabled.
  */
 export async function savePairingTokenToStorage(token: string): Promise<boolean> {
   const trimmed = typeof token === 'string' ? token.trim() : '';
@@ -244,8 +252,8 @@ export async function savePairingTokenToStorage(token: string): Promise<boolean>
   cachedConfig.pairingToken = trimmed;
 
   try {
-    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
-      await chrome.storage.local.set({ cliBridgePairingToken: trimmed });
+    if (typeof chrome !== 'undefined' && chrome?.storage?.session) {
+      await chrome.storage.session.set({ cliBridgePairingToken: trimmed });
     }
     return true;
   } catch {
@@ -258,8 +266,8 @@ export async function clearPairingTokenFromStorage(): Promise<void> {
   cachedConfig.pairingToken = null;
 
   try {
-    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
-      await chrome.storage.local.remove('cliBridgePairingToken');
+    if (typeof chrome !== 'undefined' && chrome?.storage?.session) {
+      await chrome.storage.session.remove('cliBridgePairingToken');
     }
   } catch {
     // storage unavailable — nothing else to clear

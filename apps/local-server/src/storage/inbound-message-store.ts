@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { assertInboundMessage } from '../../../../packages/shared/src/schemas.ts';
+import { redactSensitiveContent } from '../security/redaction.ts';
 import type {
   InboundMessage,
   InboundSource,
@@ -63,6 +64,12 @@ export interface InboundActionResult {
   ok: boolean;
   message?: InboundMessage;
   failureReason?: InboundActionFailure;
+}
+
+export interface IdempotentInboundCreateResult {
+  message: InboundMessage;
+  replayed: boolean;
+  conflict: boolean;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<InboundStatus> = new Set([
@@ -129,6 +136,29 @@ export class InMemoryInboundMessageStore {
     });
 
     return cloneMessage(message);
+  }
+
+  createIdempotent(input: CreateInboundMessageInput): IdempotentInboundCreateResult {
+    if (!input.sourceOutboundPromptId) {
+      return { message: this.create(input), replayed: false, conflict: false };
+    }
+    const existing = Array.from(this.messages.values()).find((message) => (
+      message.sourceOutboundPromptId === input.sourceOutboundPromptId
+    ));
+    if (!existing) {
+      return { message: this.create(input), replayed: false, conflict: false };
+    }
+    const processedContent = redactSensitiveContent(input.content).processedContent;
+    const sameOperation = (
+      existing.endpointId === input.endpointId &&
+      existing.sessionId === input.sessionId &&
+      existing.content === processedContent
+    );
+    return {
+      message: cloneMessage(existing),
+      replayed: sameOperation,
+      conflict: !sameOperation,
+    };
   }
 
   list(query: ListInboundMessagesQuery = {}): InboundMessage[] {

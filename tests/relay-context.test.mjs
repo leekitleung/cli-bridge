@@ -144,7 +144,7 @@ test('POST /bridge/outbound rejects an unknown endpointId', async (t) => {
   assert.equal(res.status, 400);
 });
 
-test('POST /bridge/outbound binds session to endpoint and rejects a conflicting endpoint', async (t) => {
+test('POST /bridge/outbound rejects client-selected endpoint routing', async (t) => {
   const handle = await startLocalServer(0);
   t.after(closer(handle));
 
@@ -153,34 +153,20 @@ test('POST /bridge/outbound binds session to endpoint and rejects a conflicting 
     headers: authHeaders(handle),
     body: JSON.stringify({ sessionId: 's-a', prompt: 'one', endpointId: 'codex-cli' }),
   });
-  assert.equal(first.status, 201);
-  assert.equal((await first.json()).outboundPrompt.endpointId, 'codex-cli');
-
-  // Same session + same endpoint: allowed.
-  const repeat = await fetch(`${handle.url}/bridge/outbound`, {
-    method: 'POST',
-    headers: authHeaders(handle),
-    body: JSON.stringify({ sessionId: 's-a', prompt: 'two', endpointId: 'codex-cli' }),
-  });
-  assert.equal(repeat.status, 201);
-
-  // Same session + different endpoint: conflict.
-  const conflict = await fetch(`${handle.url}/bridge/outbound`, {
-    method: 'POST',
-    headers: authHeaders(handle),
-    body: JSON.stringify({ sessionId: 's-a', prompt: 'three', endpointId: 'mock-agent' }),
-  });
-  assert.equal(conflict.status, 409);
+  assert.equal(first.status, 400);
+  assert.match((await first.json()).message, /server-owned/i);
 });
 
-test('outbound with endpointId round-trips through claim and delivered ack', async (t) => {
-  const handle = await startLocalServer(0);
+test('server-configured outbound endpoint round-trips through claim and delivered ack', async (t) => {
+  const handle = await startLocalServer(0, {
+    inboundRelayEndpointId: 'mock-inbound-agent',
+  });
   t.after(closer(handle));
 
   const create = await fetch(`${handle.url}/bridge/outbound`, {
     method: 'POST',
     headers: authHeaders(handle),
-    body: JSON.stringify({ sessionId: 's-b', prompt: 'review me', endpointId: 'codex-cli' }),
+    body: JSON.stringify({ sessionId: 's-b', prompt: 'review me' }),
   });
   const created = await create.json();
   const id = created.outboundPrompt.id;
@@ -196,5 +182,5 @@ test('outbound with endpointId round-trips through claim and delivered ack', asy
   });
   const acked = await ack.json();
   assert.equal(acked.outboundPrompt.status, 'delivered');
-  assert.equal(acked.outboundPrompt.endpointId, 'codex-cli');
+  assert.equal(acked.outboundPrompt.endpointId, 'mock-inbound-agent');
 });

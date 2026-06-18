@@ -41,18 +41,17 @@ function registerInboundCapable(runtime, id) {
   });
 }
 
-test('full outbound→deliver→extract-return chain routes the reply into the inbound queue', async () => {
-  const runtime = createBridgeRuntime();
-  const endpointId = 'e2e-cli';
+test('full outbound→deliver→extract-return chain uses the server-configured endpoint and is idempotent', async () => {
+  const endpointId = 'mock-inbound-agent';
+  const runtime = createBridgeRuntime({ inboundRelayEndpointId: endpointId });
   const sessionId = 's-e2e';
-  registerInboundCapable(runtime, endpointId);
 
-  // 1. Create outbound prompt carrying the endpointId (binds session→endpoint).
+  // 1. The client cannot choose an endpoint. The runtime owns that decision.
   const outboundCreate = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/outbound',
-    jsonRequest({ sessionId, prompt: 'review this output', endpointId }),
+    jsonRequest({ sessionId, prompt: 'review this output' }),
   );
   assert.equal(outboundCreate.statusCode, 201);
   const outboundPromptId = outboundCreate.payload.outboundPrompt.id;
@@ -85,13 +84,32 @@ test('full outbound→deliver→extract-return chain routes the reply into the i
     runtime,
     'POST',
     '/bridge/extract-return',
-    jsonRequest({ sessionId, content: 'reviewed reply from chatgpt' }),
+    jsonRequest({
+      sessionId,
+      content: 'reviewed reply from chatgpt',
+      operationId: outboundPromptId,
+    }),
   );
   assert.equal(extract.statusCode, 201);
   assert.equal(extract.payload.routedTo, 'inbound');
   const inboundId = extract.payload.inboundMessage.id;
   assert.equal(extract.payload.inboundMessage.endpointId, endpointId);
   assert.equal(extract.payload.inboundMessage.status, 'queued');
+
+  const replay = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/extract-return',
+    jsonRequest({
+      sessionId,
+      content: 'reviewed reply from chatgpt',
+      operationId: outboundPromptId,
+    }),
+  );
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.payload.replayed, true);
+  assert.equal(replay.payload.inboundMessage.id, inboundId);
+  assert.equal(runtime.inboundMessageStore.summary().total, 1);
 
   // 5. The executor pulls it from the inbound queue (claim).
   const inboundClaim = await handleBridgeRequest(
@@ -116,6 +134,82 @@ test('full outbound→deliver→extract-return chain routes the reply into the i
   assert.equal(inboundAck.payload.inboundMessage.status, 'consumed');
 });
 
+test('outbound rejects client endpoint selection and validates the trusted runtime endpoint', async () => {
+  const runtime = createBridgeRuntime({ inboundRelayEndpointId: 'mock-inbound-agent' });
+  const rejected = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/outbound',
+    jsonRequest({
+      sessionId: 's-client-route',
+      prompt: 'review',
+      endpointId: 'codex-cli',
+    }),
+  );
+  assert.equal(rejected.statusCode, 400);
+  assert.match(rejected.payload.message, /endpointId/i);
+
+  assert.throws(
+    () => createBridgeRuntime({ inboundRelayEndpointId: 'not-registered' }),
+    /inboundRelayEndpointId/i,
+  );
+});
+
+test('extract-return rejects a mismatched operation id and conflicting replay content', async () => {
+  const runtime = createBridgeRuntime({ inboundRelayEndpointId: 'mock-inbound-agent' });
+  const sessionId = 's-operation';
+  const created = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/outbound',
+    jsonRequest({ sessionId, prompt: 'review' }),
+  );
+  const claim = await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
+  await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/outbound/ack',
+    jsonRequest({
+      outboundPromptId: created.payload.outboundPrompt.id,
+      claimToken: claim.payload.outboundPrompt.claimToken,
+      ok: true,
+    }),
+  );
+
+  const mismatch = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/extract-return',
+    jsonRequest({ sessionId, content: 'reply', operationId: 'wrong-operation' }),
+  );
+  assert.equal(mismatch.statusCode, 409);
+
+  const first = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/extract-return',
+    jsonRequest({
+      sessionId,
+      content: 'reply',
+      operationId: created.payload.outboundPrompt.id,
+    }),
+  );
+  assert.equal(first.statusCode, 201);
+
+  const conflict = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/extract-return',
+    jsonRequest({
+      sessionId,
+      content: 'different reply',
+      operationId: created.payload.outboundPrompt.id,
+    }),
+  );
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(runtime.inboundMessageStore.summary().total, 1);
+});
+
 test('extract-return for a session with no delivered outbound still falls back to pending-prompt', async () => {
   const runtime = createBridgeRuntime();
   const extract = await handleBridgeRequest(
@@ -131,63 +225,22 @@ test('extract-return for a session with no delivered outbound still falls back t
   assert.equal(runtime.inboundMessageStore.summary().total, 0);
 });
 
-test('extract-return falls back when the delivered endpoint cannot receive inbound', async () => {
-  const runtime = createBridgeRuntime();
-  const sessionId = 's-incapable';
-  const endpointId = 'plain-cli';
-  // Register an endpoint WITHOUT canReceiveInbound.
-  runtime.endpointRegistry.register({
-    id: endpointId,
-    label: endpointId,
-    transport: 'mock',
-    risk: 'low',
-    capabilities: {
-      canAcceptPrompt: true,
-      canReturnOutput: true,
-      canReview: false,
-      canExecute: false,
-      canSummarize: false,
-      canReceiveInbound: false,
-    },
-  });
-
-  const outboundCreate = await handleBridgeRequest(
-    runtime,
-    'POST',
-    '/bridge/outbound',
-    jsonRequest({ sessionId, prompt: 'p', endpointId }),
+test('runtime rejects a configured endpoint that cannot receive inbound', async () => {
+  assert.throws(
+    () => createBridgeRuntime({ inboundRelayEndpointId: 'codex-cli' }),
+    /cannot receive inbound/i,
   );
-  const outboundPromptId = outboundCreate.payload.outboundPrompt.id;
-  const claim = await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);
-  await handleBridgeRequest(
-    runtime,
-    'POST',
-    '/bridge/outbound/ack',
-    jsonRequest({ outboundPromptId, claimToken: claim.payload.outboundPrompt.claimToken, ok: true }),
-  );
-
-  const extract = await handleBridgeRequest(
-    runtime,
-    'POST',
-    '/bridge/extract-return',
-    jsonRequest({ sessionId, content: 'reply' }),
-  );
-  assert.equal(extract.payload.routedTo, 'pending-prompt');
-  assert.equal(extract.payload.fallbackReason, 'endpoint-cannot-receive-inbound');
-  assert.equal(runtime.inboundMessageStore.summary().total, 0);
 });
 
 test('a failed outbound ack does NOT write a relay context, so extract-return falls back', async () => {
-  const runtime = createBridgeRuntime();
   const sessionId = 's-failed-ack';
-  const endpointId = 'e2e-cli-2';
-  registerInboundCapable(runtime, endpointId);
+  const runtime = createBridgeRuntime({ inboundRelayEndpointId: 'mock-inbound-agent' });
 
   const outboundCreate = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/outbound',
-    jsonRequest({ sessionId, prompt: 'p', endpointId }),
+    jsonRequest({ sessionId, prompt: 'p' }),
   );
   const outboundPromptId = outboundCreate.payload.outboundPrompt.id;
   const claim = await handleBridgeRequest(runtime, 'GET', '/bridge/outbound/next', null);

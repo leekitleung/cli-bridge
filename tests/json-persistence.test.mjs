@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -97,6 +97,106 @@ test('runtime stays in-memory and writes nothing when no data dir is configured'
   // persist() is a no-op without a data dir; must not throw.
   assert.doesNotThrow(() => runtime.persist());
   assert.equal(runtime.packetStore.listPackets().length, 1);
+});
+
+test('snapshot writes atomically, keeps a backup, and leaves no temporary file', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const first = buildSnapshot({ packets: [], auditEvents: [], pendingPrompts: [] });
+    const second = buildSnapshot({
+      packets: [],
+      auditEvents: [],
+      pendingPrompts: [],
+      projects: [{ key: 'second', label: 'Second', createdAt: 2 }],
+    });
+    assert.equal(store.write(first).ok, true);
+    assert.equal(store.write(second).ok, true);
+    assert.equal(existsSync(resolve(dir, 'bridge-snapshot.json.tmp')), false);
+    assert.equal(existsSync(resolve(dir, 'bridge-snapshot.json.bak')), true);
+    assert.equal(store.read().snapshot.projects[0].key, 'second');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot read recovers a corrupt primary from backup and fails when both are corrupt', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const first = buildSnapshot({
+      packets: [],
+      auditEvents: [],
+      pendingPrompts: [],
+      projects: [{ key: 'backup', label: 'Backup', createdAt: 1 }],
+    });
+    const second = buildSnapshot({
+      packets: [],
+      auditEvents: [],
+      pendingPrompts: [],
+      projects: [{ key: 'primary', label: 'Primary', createdAt: 2 }],
+    });
+    store.write(first);
+    store.write(second);
+
+    writeFileSync(resolve(dir, SNAPSHOT_FILENAME), '{broken', 'utf8');
+    const recovered = store.read();
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.recoveredFromBackup, true);
+    assert.equal(recovered.snapshot.projects[0].key, 'backup');
+
+    writeFileSync(resolve(dir, 'bridge-snapshot.json.bak'), '{also-broken', 'utf8');
+    const failed = store.read();
+    assert.equal(failed.ok, false);
+    assert.match(failed.error, /snapshot-corrupt/i);
+    assert.throws(() => createBridgeRuntime({ dataDir: dir }), /snapshot-corrupt/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot read fails closed for a non-missing filesystem error', () => {
+  const dir = tempDir();
+  try {
+    mkdirSync(resolve(dir, SNAPSHOT_FILENAME));
+
+    const read = new JsonSnapshotStore(dir).read();
+    assert.equal(read.ok, false);
+    assert.match(read.error, /snapshot-read-failed/i);
+    assert.throws(() => createBridgeRuntime({ dataDir: dir }), /snapshot-read-failed/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot read rejects an unsupported future schema version', () => {
+  const dir = tempDir();
+  try {
+    const snapshot = buildSnapshot({ packets: [], auditEvents: [], pendingPrompts: [] });
+    writeFileSync(
+      resolve(dir, SNAPSHOT_FILENAME),
+      JSON.stringify({ ...snapshot, version: 999 }),
+      'utf8',
+    );
+
+    const read = new JsonSnapshotStore(dir).read();
+    assert.equal(read.ok, false);
+    assert.match(read.error, /snapshot-unsupported-version/i);
+    assert.throws(() => createBridgeRuntime({ dataDir: dir }), /snapshot-unsupported-version/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runtime persistence surfaces snapshot write failure', () => {
+  const dataPath = tempDir();
+  try {
+    const runtime = createBridgeRuntime({ dataDir: dataPath });
+    mkdirSync(resolve(dataPath, 'bridge-snapshot.json.tmp'));
+    assert.throws(() => runtime.persist(), /snapshot write failed/i);
+  } finally {
+    rmSync(dataPath, { recursive: true, force: true });
+  }
 });
 
 test('hydration skips invalid records without throwing', () => {

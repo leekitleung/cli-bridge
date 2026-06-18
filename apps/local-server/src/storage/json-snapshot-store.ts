@@ -1,4 +1,15 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 
 import type {
@@ -21,6 +32,8 @@ import type {
 
 export const SNAPSHOT_VERSION = 2;
 export const SNAPSHOT_FILENAME = 'bridge-snapshot.json';
+export const SNAPSHOT_BACKUP_FILENAME = 'bridge-snapshot.json.bak';
+export const SNAPSHOT_TEMP_FILENAME = 'bridge-snapshot.json.tmp';
 
 export interface BridgeSnapshot {
   version: number;
@@ -53,10 +66,76 @@ export interface SnapshotReadResult {
   ok: boolean;
   snapshot?: BridgeSnapshot;
   error?: string;
+  recoveredFromBackup?: boolean;
 }
 
 function snapshotPath(dataDir: string): string {
   return resolve(dataDir, SNAPSHOT_FILENAME);
+}
+
+function parseSnapshot(text: string): SnapshotReadResult {
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return { ok: false, error: 'snapshot-not-object' };
+    }
+    const version = typeof parsed.version === 'number' ? parsed.version : 0;
+    if (!Number.isInteger(version) || version < 0 || version > SNAPSHOT_VERSION) {
+      return { ok: false, error: 'snapshot-unsupported-version' };
+    }
+    const snapshot: BridgeSnapshot = {
+      version,
+      packets: Array.isArray(parsed.packets) ? parsed.packets : [],
+      auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
+      pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
+      outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
+      goals: Array.isArray(parsed.goals) ? parsed.goals : [],
+      plans: Array.isArray(parsed.plans) ? parsed.plans : [],
+      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      workbuddyTaskReferences: Array.isArray(parsed.workbuddyTaskReferences) ? parsed.workbuddyTaskReferences : [],
+      workbuddyReviewResultSinks: Array.isArray(parsed.workbuddyReviewResultSinks) ? parsed.workbuddyReviewResultSinks : [],
+      workbuddyPromptDraftSinks: Array.isArray(parsed.workbuddyPromptDraftSinks) ? parsed.workbuddyPromptDraftSinks : [],
+      workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
+      teams: Array.isArray(parsed.teams) ? parsed.teams : [],
+      teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
+      verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
+    };
+    return { ok: true, snapshot };
+  } catch {
+    return { ok: false, error: 'snapshot-malformed-json' };
+  }
+}
+
+function readSnapshotFile(path: string): SnapshotReadResult {
+  try {
+    return parseSnapshot(readFileSync(path, 'utf8'));
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? error.code
+      : undefined;
+    return {
+      ok: false,
+      error: code === 'ENOENT' ? 'snapshot-missing' : 'snapshot-read-failed',
+    };
+  }
+}
+
+function writeAndSync(path: string, content: string): void {
+  const fd = openSync(path, 'w');
+  try {
+    writeFileSync(fd, content, 'utf8');
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function removeTemporaryFile(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Preserve the original write error; cleanup is best-effort.
+  }
 }
 
 export class JsonSnapshotStore {
@@ -71,12 +150,28 @@ export class JsonSnapshotStore {
   }
 
   write(snapshot: BridgeSnapshot): SnapshotWriteResult {
+    const path = snapshotPath(this.dataDir);
+    const tempPath = resolve(this.dataDir, SNAPSHOT_TEMP_FILENAME);
+    const backupPath = resolve(this.dataDir, SNAPSHOT_BACKUP_FILENAME);
+    const backupTempPath = `${backupPath}.tmp`;
     try {
       mkdirSync(this.dataDir, { recursive: true });
-      const path = snapshotPath(this.dataDir);
-      writeFileSync(path, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+      writeAndSync(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+      if (existsSync(path)) {
+        copyFileSync(path, backupTempPath);
+        const backupFd = openSync(backupTempPath, 'r');
+        try {
+          fsyncSync(backupFd);
+        } finally {
+          closeSync(backupFd);
+        }
+        renameSync(backupTempPath, backupPath);
+      }
+      renameSync(tempPath, path);
       return { ok: true, path };
     } catch (error) {
+      removeTemporaryFile(tempPath);
+      removeTemporaryFile(backupTempPath);
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'snapshot-write-failed',
@@ -85,39 +180,27 @@ export class JsonSnapshotStore {
   }
 
   read(): SnapshotReadResult {
-    let text: string;
-    try {
-      text = readFileSync(snapshotPath(this.dataDir), 'utf8');
-    } catch {
-      return { ok: false, error: 'snapshot-missing' };
+    const primary = readSnapshotFile(snapshotPath(this.dataDir));
+    if (primary.ok) {
+      return primary;
     }
-
-    try {
-      const parsed = JSON.parse(text);
-      if (typeof parsed !== 'object' || parsed === null) {
-        return { ok: false, error: 'snapshot-not-object' };
-      }
-      const snapshot: BridgeSnapshot = {
-        version: typeof parsed.version === 'number' ? parsed.version : 0,
-        packets: Array.isArray(parsed.packets) ? parsed.packets : [],
-        auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
-        pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
-        outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
-        goals: Array.isArray(parsed.goals) ? parsed.goals : [],
-        plans: Array.isArray(parsed.plans) ? parsed.plans : [],
-        projects: Array.isArray(parsed.projects) ? parsed.projects : [],
-        workbuddyTaskReferences: Array.isArray(parsed.workbuddyTaskReferences) ? parsed.workbuddyTaskReferences : [],
-        workbuddyReviewResultSinks: Array.isArray(parsed.workbuddyReviewResultSinks) ? parsed.workbuddyReviewResultSinks : [],
-        workbuddyPromptDraftSinks: Array.isArray(parsed.workbuddyPromptDraftSinks) ? parsed.workbuddyPromptDraftSinks : [],
-        workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
-        teams: Array.isArray(parsed.teams) ? parsed.teams : [],
-        teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
-        verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
-      };
-      return { ok: true, snapshot };
-    } catch {
-      return { ok: false, error: 'snapshot-malformed-json' };
+    const backup = readSnapshotFile(resolve(this.dataDir, SNAPSHOT_BACKUP_FILENAME));
+    if (backup.ok) {
+      return { ...backup, recoveredFromBackup: true };
     }
+    if (primary.error === 'snapshot-read-failed') {
+      return primary;
+    }
+    if (backup.error === 'snapshot-read-failed') {
+      return backup;
+    }
+    if (backup.error === 'snapshot-missing') {
+      return primary;
+    }
+    if (primary.error === 'snapshot-missing') {
+      return backup;
+    }
+    return { ok: false, error: 'snapshot-corrupt-primary-and-backup' };
   }
 }
 

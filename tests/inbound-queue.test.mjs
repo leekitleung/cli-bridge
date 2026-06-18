@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Readable } from 'node:stream';
 
 import {
   ALLOWED_EXTENSION_ORIGIN,
   PAIRING_TOKEN_HEADER,
 } from '../packages/shared/src/constants.ts';
 import { startLocalServer } from '../apps/local-server/src/server.ts';
+import {
+  createBridgeRuntime,
+  handleBridgeRequest,
+} from '../apps/local-server/src/routes/bridge-api.ts';
 import { InMemoryAuditLog } from '../apps/local-server/src/storage/audit-log.ts';
 import { InMemoryPacketStore } from '../apps/local-server/src/storage/packet-store.ts';
 import { InMemoryInboundMessageStore } from '../apps/local-server/src/storage/inbound-message-store.ts';
@@ -108,24 +113,6 @@ test('inbound rejects cross-endpoint claim/ack/cancel and terminal re-actions', 
 // is the registry's — so we test both the capability rejection and the success
 // path using a registered inbound-capable endpoint.
 
-async function bindSession(handle, sessionId, endpointId) {
-  // Create + claim + ack(ok) an outbound for the endpoint so the relay context
-  // resolves the session to that endpoint.
-  const create = await fetch(`${handle.url}/bridge/outbound`, {
-    method: 'POST',
-    headers: authHeaders(handle),
-    body: JSON.stringify({ sessionId, prompt: 'p', endpointId }),
-  });
-  const id = (await create.json()).outboundPrompt.id;
-  const claim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
-  const claimToken = (await claim.json()).outboundPrompt.claimToken;
-  await fetch(`${handle.url}/bridge/outbound/ack`, {
-    method: 'POST',
-    headers: authHeaders(handle),
-    body: JSON.stringify({ outboundPromptId: id, claimToken, ok: true }),
-  });
-}
-
 test('POST /bridge/inbound without a relay context returns an explicit error', async (t) => {
   const handle = await startLocalServer(0);
   t.after(closer(handle));
@@ -137,17 +124,17 @@ test('POST /bridge/inbound without a relay context returns an explicit error', a
   assert.equal(res.status, 409);
 });
 
-test('POST /bridge/inbound rejects when the resolved endpoint cannot receive inbound', async (t) => {
-  const handle = await startLocalServer(0);
-  t.after(closer(handle));
+test('POST /bridge/inbound rejects when the resolved endpoint cannot receive inbound', async () => {
+  const runtime = createBridgeRuntime();
   // codex-cli is a default endpoint WITHOUT canReceiveInbound.
-  await bindSession(handle, 's-codex', 'codex-cli');
-  const res = await fetch(`${handle.url}/bridge/inbound`, {
-    method: 'POST',
-    headers: authHeaders(handle),
-    body: JSON.stringify({ sessionId: 's-codex', content: 'reply' }),
-  });
-  assert.equal(res.status, 403);
+  runtime.relayContextStore.recordDelivered('s-codex', 'codex-cli', 'out-1');
+  const result = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/inbound',
+    Readable.from([Buffer.from(JSON.stringify({ sessionId: 's-codex', content: 'reply' }))]),
+  );
+  assert.equal(result.statusCode, 403);
 });
 
 test('GET /bridge/inbound and /next require an endpointId', async (t) => {

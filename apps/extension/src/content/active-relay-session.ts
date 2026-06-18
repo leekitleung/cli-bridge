@@ -34,6 +34,7 @@ export interface ExtractReturnResult {
 export type ExtractReturnSender = (
   sessionId: string,
   content: string,
+  operationId?: string,
 ) => Promise<ExtractReturnResult>;
 
 export function setActiveRelaySession(session: ActiveRelaySession): void {
@@ -67,7 +68,11 @@ export async function submitExtractReturn(
   send: ExtractReturnSender,
 ): Promise<ExtractReturnResult> {
   const active = getActiveRelaySession();
-  const result = await send(active?.sessionId ?? fallbackSessionId, content);
+  const result = await send(
+    active?.sessionId ?? fallbackSessionId,
+    content,
+    active?.outboundPromptId,
+  );
   if (result.ok && active) {
     const current = getActiveRelaySession();
     if (current?.outboundPromptId === active.outboundPromptId) {

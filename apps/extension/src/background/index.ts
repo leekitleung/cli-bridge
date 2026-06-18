@@ -282,7 +282,7 @@ export async function handleProxyFetch(
 
 // --- Pairing token management ---
 // The background script provides a message-based API for the content script
-// and popup to set/get the pairing token stored in chrome.storage.local.
+// and popup to set/get the memory-only pairing token for this browser session.
 
 interface PairingMessage {
   type: 'cli-bridge-set-token' | 'cli-bridge-get-token';
@@ -302,7 +302,7 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
 
       const message = msg as PairingMessage;
       if (message.type === 'cli-bridge-set-token' && typeof message.token === 'string') {
-        chrome.storage.local.set({ cliBridgePairingToken: message.token }).then(() => {
+        chrome.storage.session.set({ cliBridgePairingToken: message.token }).then(() => {
           sendResponse({ ok: true });
         }).catch(() => {
           sendResponse({ ok: false });
@@ -311,7 +311,7 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
       }
 
       if (message.type === 'cli-bridge-get-token') {
-        chrome.storage.local.get('cliBridgePairingToken').then((result) => {
+        chrome.storage.session.get('cliBridgePairingToken').then((result) => {
           sendResponse({ ok: true, token: result?.cliBridgePairingToken ?? null });
         }).catch(() => {
           sendResponse({ ok: false, token: null });

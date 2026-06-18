@@ -108,6 +108,8 @@ export interface BridgeRuntime {
   /** Phase 3 multi-executor relay (inbound queue core): server-side return queue. */
   inboundMessageStore: InMemoryInboundMessageStore;
   endpointRegistry: InMemoryEndpointRegistry;
+  /** Operator-configured inbound route; never accepted from an HTTP body. */
+  readonly inboundRelayEndpointId?: string;
   pendingReviewStore: InMemoryPendingReviewStore;
   // Resolves a review target endpoint id to its command adapter. Tests inject a
   // fake here so they never spawn a real CLI; production uses the default map.
@@ -149,6 +151,8 @@ export interface BridgeRuntimeOptions {
   // When set, the runtime hydrates from and persists to a JSON snapshot in this
   // directory. When omitted, the runtime stays fully in-memory.
   dataDir?: string;
+  /** Trusted server-side route for extension outbound/return sessions. */
+  inboundRelayEndpointId?: string;
   // Override the review command adapter resolution (used by tests to avoid
   // spawning real CLIs). When omitted, the default real adapters are used.
   reviewAdapterFor?: (targetEndpointId: string) => CommandReviewAdapter | undefined;
@@ -1375,6 +1379,15 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     CODEX_REVIEW_COMMAND_ENDPOINT,
     MOCK_INBOUND_AGENT_ENDPOINT,
   ]);
+  const inboundRelayEndpointId = options.inboundRelayEndpointId;
+  if (inboundRelayEndpointId) {
+    if (!endpointRegistry.get(inboundRelayEndpointId)) {
+      throw new Error('inboundRelayEndpointId must reference a registered endpoint');
+    }
+    if (!endpointRegistry.can(inboundRelayEndpointId, 'receive-inbound')) {
+      throw new Error('inboundRelayEndpointId endpoint cannot receive inbound');
+    }
+  }
   const pendingReviewStore = new InMemoryPendingReviewStore(
     endpointRegistry,
     packetStore,
@@ -1409,6 +1422,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
 
   if (snapshotStore) {
     const read = snapshotStore.read();
+    if (!read.ok && read.error !== 'snapshot-missing') {
+      throw new Error(read.error ?? 'snapshot-read-failed');
+    }
     if (read.ok && read.snapshot) {
       packetStore.hydratePackets(read.snapshot.packets);
       auditLog.hydrateEvents(read.snapshot.auditEvents);
@@ -1452,7 +1468,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
 
   const persist = (): void => {
     if (!snapshotStore) return;
-    snapshotStore.write(buildSnapshot({
+    const result = snapshotStore.write(buildSnapshot({
       packets: packetStore.exportPackets(),
       auditEvents: auditLog.exportEvents(),
       pendingPrompts: pendingPromptStore.exportPrompts(),
@@ -1468,6 +1484,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teams: teamStore.exportTeams(),
       teamArtifacts: teamStore.exportArtifacts(),
     }));
+    if (!result.ok) {
+      throw new Error(`Snapshot write failed: ${result.error ?? 'unknown error'}`);
+    }
   };
 
   return {
@@ -1478,6 +1497,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     relayContextStore,
     inboundMessageStore,
     endpointRegistry,
+    inboundRelayEndpointId,
     pendingReviewStore,
     reviewAdapterFor: options.reviewAdapterFor
       ?? ((targetEndpointId: string) => {
@@ -1994,27 +2014,13 @@ export async function handleBridgeRequest(
     if (!sessionId || !prompt) {
       return error(400, 'sessionId and prompt are required');
     }
-    // Phase 3 relay (foundation): optional endpointId. When present it must
-    // reference a registered endpoint and binds the session to that endpoint.
-    let endpointId: string | undefined;
-    const endpointIdRaw = parsed.body.endpointId;
-    if (endpointIdRaw !== undefined) {
-      if (typeof endpointIdRaw !== 'string' || endpointIdRaw.trim().length === 0) {
-        return error(400, 'endpointId must be a non-empty string');
-      }
-      endpointId = endpointIdRaw;
-      if (!runtime.endpointRegistry.get(endpointId)) {
-        return error(400, 'unknown endpointId');
-      }
-      const bind = runtime.relayContextStore.bind(sessionId, endpointId);
-      if (!bind.ok) {
-        return error(409, 'sessionId is already bound to a different endpointId');
-      }
+    if (Object.prototype.hasOwnProperty.call(parsed.body, 'endpointId')) {
+      return error(400, 'endpointId is server-owned and must not be supplied');
     }
     const outboundPrompt = runtime.outboundPromptStore.createOutboundPrompt({
       sessionId,
       prompt,
-      endpointId,
+      endpointId: runtime.inboundRelayEndpointId,
     });
     runtime.persist();
     return created({ outboundPrompt });
@@ -2194,14 +2200,27 @@ export async function handleBridgeRequest(
       return error(400, 'sessionId and content are required');
     }
 
-    const endpointId = runtime.relayContextStore.resolveInboundEndpointForSession(sessionId);
+    const relayContext = runtime.relayContextStore.getRelayContext(sessionId);
+    const endpointId = relayContext?.endpointId;
     if (endpointId && runtime.endpointRegistry.can(endpointId, 'receive-inbound')) {
-      const inboundMessage = runtime.inboundMessageStore.create({
+      const operationId = requireString(parsed.body, 'operationId');
+      if (!operationId || operationId !== relayContext.lastOutboundPromptId) {
+        return error(409, 'operationId does not match the delivered outbound prompt');
+      }
+      const creation = runtime.inboundMessageStore.createIdempotent({
         endpointId,
         sessionId,
         content,
         source: 'chatgpt-web-extract',
+        sourceOutboundPromptId: operationId,
       });
+      if (creation.conflict) {
+        return error(409, 'operationId was already used with different return content');
+      }
+      const inboundMessage = creation.message;
+      if (creation.replayed) {
+        return ok({ routedTo: 'inbound', inboundMessage, replayed: true });
+      }
       runtime.auditLog.createAndAppend({
         sessionId,
         packetId: inboundMessage.packetId,
@@ -2212,7 +2231,7 @@ export async function handleBridgeRequest(
         result: { ok: true },
       });
       runtime.persist();
-      return created({ routedTo: 'inbound', inboundMessage });
+      return created({ routedTo: 'inbound', inboundMessage, replayed: false });
     }
 
     const fallbackReason = endpointId

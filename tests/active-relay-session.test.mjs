@@ -98,19 +98,23 @@ test('extract return keeps the active route on failure and clears it only after 
     updatedAt: Date.now(),
   });
   const sessions = [];
-  const failed = await submitExtractReturn('reviewed result', 'fallback-session', async (sessionId) => {
+  const operationIds = [];
+  const failed = await submitExtractReturn('reviewed result', 'fallback-session', async (sessionId, _content, operationId) => {
     sessions.push(sessionId);
+    operationIds.push(operationId);
     return { ok: false, status: 0, error: 'network-error' };
   });
   assert.equal(failed.ok, false);
   assert.equal(getActiveRelaySession().sessionId, 'session-retry');
 
-  const succeeded = await submitExtractReturn('reviewed result', 'fallback-session', async (sessionId) => {
+  const succeeded = await submitExtractReturn('reviewed result', 'fallback-session', async (sessionId, _content, operationId) => {
     sessions.push(sessionId);
+    operationIds.push(operationId);
     return { ok: true, status: 201, data: { routedTo: 'inbound' } };
   });
   assert.equal(succeeded.ok, true);
   assert.deepEqual(sessions, ['session-retry', 'session-retry']);
+  assert.deepEqual(operationIds, ['out-retry', 'out-retry']);
   assert.equal(getActiveRelaySession(), null);
 });
 
