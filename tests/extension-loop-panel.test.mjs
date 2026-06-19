@@ -358,6 +358,7 @@ test('Bridge Panel connected workflow exposes one primary action per stage and l
 
     byLabel('预览回传').click();
     assert.deepEqual(primaryLabels(), ['确认回传']);
+    assert.equal(byLabel('预览回传').disabled, false);
 
     byLabel('确认回传').click();
     byLabel('确认回传').click();

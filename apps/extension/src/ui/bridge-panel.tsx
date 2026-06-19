@@ -295,8 +295,10 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   };
 
   const updateActionState = () => {
+    const canPreviewReturn = latestLoopStage === 'chatgpt-awaiting-user-send'
+      || latestLoopStage === 'pending-prompt-ready';
     fillButton.disabled = !isConnected || latestLoopStage !== 'codex-output-ready';
-    extractButton.disabled = !isConnected || latestLoopStage !== 'chatgpt-awaiting-user-send';
+    extractButton.disabled = !isConnected || !canPreviewReturn;
     returnButton.disabled = !isConnected || !pendingExtractText || returnInFlight;
     copyButton.disabled = preview.textContent?.length === 0;
     for (const button of [fillButton, extractButton, returnButton, copyButton]) {
@@ -304,7 +306,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       button.style.opacity = button.disabled ? '0.55' : '1';
     }
     setPrimary(fillButton, !fillButton.disabled);
-    setPrimary(extractButton, !extractButton.disabled);
+    setPrimary(extractButton, !extractButton.disabled && latestLoopStage === 'chatgpt-awaiting-user-send');
     setPrimary(returnButton, !returnButton.disabled);
     setPrimary(copyButton, false);
   };
