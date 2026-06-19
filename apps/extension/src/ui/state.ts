@@ -236,7 +236,7 @@ export function createLoopPanelStatus(stage: BridgePanelLoopStage): BridgePanelS
       return {
         kind: 'blocked',
         label: '等待发送',
-        detail: '内容已填入，请在 ChatGPT 中手动发送',
+        detail: '手动发送后，选择回复并点击预览回传',
       };
     case 'pending-prompt-ready':
       return {

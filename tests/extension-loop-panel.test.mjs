@@ -113,7 +113,7 @@ test('loop panel status maps bridge loop stages into user-visible status text', 
   assert.deepEqual(createLoopPanelStatus('chatgpt-awaiting-user-send'), {
     kind: 'blocked',
     label: '等待发送',
-    detail: '内容已填入，请在 ChatGPT 中手动发送',
+    detail: '手动发送后，选择回复并点击预览回传',
   });
   assert.deepEqual(createLoopPanelStatus('pending-prompt-ready'), {
     kind: 'success',
