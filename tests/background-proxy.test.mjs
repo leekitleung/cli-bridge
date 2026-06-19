@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { handleProxyFetch } from '../apps/extension/src/background/index.ts';
+import {
+  allowContentScriptSessionStorage,
+  handleProxyFetch,
+} from '../apps/extension/src/background/index.ts';
 import { PAIRING_TOKEN_HEADER, LOCAL_SERVER_BASE_URL } from '../packages/shared/src/constants.ts';
 
 function stubFetch(impl) {
@@ -16,6 +19,43 @@ function stubFetch(impl) {
 function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
+
+test('allowContentScriptSessionStorage exposes session storage to content scripts', async () => {
+  const calls = [];
+  const session = {
+    async setAccessLevel(options) {
+      calls.push({ thisArg: this, options });
+    },
+  };
+
+  const ok = await allowContentScriptSessionStorage({ storage: { session } });
+
+  assert.equal(ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].thisArg, session);
+  assert.deepEqual(calls[0].options, {
+    accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS',
+  });
+});
+
+test('allowContentScriptSessionStorage no-ops when access level API is unavailable', async () => {
+  assert.equal(await allowContentScriptSessionStorage(undefined), false);
+  assert.equal(await allowContentScriptSessionStorage({ storage: { session: {} } }), false);
+});
+
+test('allowContentScriptSessionStorage fails closed when Chrome rejects access level setup', async () => {
+  const ok = await allowContentScriptSessionStorage({
+    storage: {
+      session: {
+        async setAccessLevel() {
+          throw new Error('unsupported');
+        },
+      },
+    },
+  });
+
+  assert.equal(ok, false);
+});
 
 test('handleProxyFetch accepts /health/private GET and attaches the pairing token', async () => {
   const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, { status: 'ok' }));

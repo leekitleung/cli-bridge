@@ -191,7 +191,42 @@ export interface ProxyFetchResult {
   error?: string;
 }
 
+type SessionStorageAccessLevel = 'TRUSTED_AND_UNTRUSTED_CONTEXTS';
+
+interface ChromeSessionStorageAccess {
+  setAccessLevel?: (options: { accessLevel: SessionStorageAccessLevel }) => Promise<void> | void;
+}
+
+interface ChromeStorageAccessApi {
+  storage?: {
+    session?: ChromeSessionStorageAccess;
+  };
+}
+
+export async function allowContentScriptSessionStorage(
+  chromeApi: ChromeStorageAccessApi | undefined,
+): Promise<boolean> {
+  const session = chromeApi?.storage?.session;
+  const setAccessLevel = session?.setAccessLevel;
+  if (typeof setAccessLevel !== 'function') {
+    return false;
+  }
+
+  try {
+    await setAccessLevel.call(session, {
+      accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const PROXY_FETCH_TIMEOUT_MS = 10_000;
+
+if (typeof chrome !== 'undefined') {
+  void allowContentScriptSessionStorage(chrome as unknown as ChromeStorageAccessApi);
+}
 
 function isAllowedProxyPath(path: unknown): path is string {
   if (typeof path !== 'string' || path.length === 0) {
