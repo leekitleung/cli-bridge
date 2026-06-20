@@ -346,6 +346,45 @@ test('editing a proposal creates a new proposal id and invalidates old confirmat
     projectId: 'cli-bridge',
     now: 1793000000006,
   }).ok, false);
+  assert.equal(store.getCurrent({ planId: 'plan-1' }).id, edited.id);
+});
+
+test('current proposal selection ignores terminal history and chooses the newest actionable plan', () => {
+  const store = new InMemoryExecutionProposalStore();
+  const first = createProposal(store, { now: 1793000000003 });
+  store.cancel(first.id, 1793000000004);
+  const second = createProposal(store, {
+    artifact: { artifactId: 'artifact-current', contentHash: 'sha256:artifact-current' },
+    now: 1793000000005,
+  });
+  store.requestConfirmation(second.id, 1793000000006);
+
+  assert.equal(store.getCurrent({ planId: 'plan-1' }).id, second.id);
+  store.cancel(second.id, 1793000000007);
+  assert.equal(store.getCurrent({ planId: 'plan-1' }), undefined);
+});
+
+test('pause and cancel reject terminal or dispatching lifecycle rewrites', () => {
+  const store = new InMemoryExecutionProposalStore();
+  const returned = createProposal(store);
+  store.requestConfirmation(returned.id, 1793000000004);
+  store.confirm({
+    proposalId: returned.id,
+    planId: 'plan-1',
+    stepId: 'step-1',
+    artifactId: 'artifact-1',
+    contentHash: returned.contentHash,
+    bindingHash: 'sha256:binding',
+    executionEndpointId: 'codex-command',
+    executionPermissionProfile: 'patch-proposal',
+    projectId: 'cli-bridge',
+    now: 1793000000005,
+  });
+  store.markDispatching(returned.id, 1793000000006);
+  assert.throws(() => store.cancel(returned.id, 1793000000007), /proposal-not-cancellable/);
+  store.markReturned(returned.id, { stdout: '', stderr: '', exitCode: 0 }, 1793000000008);
+  assert.throws(() => store.pause(returned.id, 'late-pause', 1793000000009), /proposal-not-pausable/);
+  assert.throws(() => store.cancel(returned.id, 1793000000010), /proposal-not-cancellable/);
 });
 
 test('dispatch only uses locked execution endpoint through bounded adapter and pauses uncertainty', async () => {

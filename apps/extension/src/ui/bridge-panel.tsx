@@ -417,11 +417,13 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     const data = result.data as {
       bindings?: Parameters<typeof createAutomationMirrorStatus>[0]['binding'][];
       proposals?: Parameters<typeof createAutomationMirrorStatus>[0]['proposal'][];
+      currentBinding?: Parameters<typeof createAutomationMirrorStatus>[0]['binding'];
+      currentProposal?: Parameters<typeof createAutomationMirrorStatus>[0]['proposal'];
     };
-    const proposal = data.proposals?.[0] ?? null;
+    const proposal = data.currentProposal ?? null;
     latestAutomationProposalId = proposal?.id ?? '';
     const next = createAutomationMirrorStatus({
-      binding: data.bindings?.[0] ?? null,
+      binding: data.currentBinding ?? null,
       proposal,
       round: 0,
     });

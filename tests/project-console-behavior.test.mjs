@@ -215,13 +215,17 @@ test('/goals renders binding and proposal controls, then confirms with server-ow
   setFixture('/bridge/metrics', { ok: true, payload: {} });
   setFixture('/bridge/projects', defaultProjectsFixture());
   setFixture('/bridge/projects/cli-bridge', detail);
-  setFixture('/bridge/execution-proposals', { ok: true, payload: {
-    bindings: [{
+  const currentBinding = {
       reasoningEndpointId: 'claude-code-command', executionEndpointId: 'codex-command',
       reasoningTier: 'high', executionTier: 'bounded', executionWorkingDirectoryRef: 'project-root:cli-bridge',
       executionPermissionProfile: 'workspace-write', maxSteps: 4, maxReasoningRounds: 2, deadlineAt: '2026-06-21T00:00:00Z',
-    }],
-    proposals: [proposal],
+      planId: 'plan-1',
+  };
+  setFixture('/bridge/execution-proposals', { ok: true, payload: {
+    bindings: [{ ...currentBinding, planId: 'old-plan', executionEndpointId: 'wrong-endpoint' }, currentBinding],
+    proposals: [{ ...proposal, id: 'cancelled-old', preview: 'stale proposal', status: 'cancelled' }, proposal],
+    currentBinding,
+    currentProposal: proposal,
   } });
   setFixture('/bridge/execution-proposals/confirm', { ok: true, payload: { proposal: { ...proposal, status: 'confirmed' } } });
 
@@ -232,6 +236,7 @@ test('/goals renders binding and proposal controls, then confirms with server-ow
 
   assert.match(document.getElementById('goals-context').textContent, /claude-code-command/);
   assert.match(document.getElementById('goals-context').textContent, /Apply only the reviewed patch/);
+  assert.doesNotMatch(document.getElementById('goals-context').textContent, /stale proposal|wrong-endpoint/);
   document.querySelector('[data-proposal-action="confirm"]').click();
   await waitFor(() => fetchCalls.some(call => call.path === '/bridge/execution-proposals/confirm'));
 

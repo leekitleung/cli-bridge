@@ -1440,8 +1440,8 @@ async function refreshGoalAutomationContext() {
   const res = await api('/bridge/execution-proposals?planId=' + encodeURIComponent(planId));
   if (res.ok) {
     store.cache.automation = {
-      binding: res.data.bindings?.[0] || null,
-      proposal: res.data.proposals?.[0] || null,
+      binding: res.data.currentBinding || null,
+      proposal: res.data.currentProposal || null,
     };
   }
   store.contextBusy = false;

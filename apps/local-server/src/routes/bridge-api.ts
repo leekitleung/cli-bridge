@@ -3682,6 +3682,12 @@ export async function handleBridgeRequest(
 
   if (pathname === BRIDGE_EXECUTION_PROPOSALS_PATH && method === 'GET') {
     const planId = query?.get('planId') ?? undefined;
+    const currentProposal = runtime.executionProposalStore.getCurrent({ planId });
+    const currentBinding = currentProposal
+      ? runtime.automationBindingStore.getBinding(currentProposal.planId)
+      : planId
+        ? runtime.automationBindingStore.getBinding(planId)
+        : undefined;
     const bindings = planId
       ? (runtime.automationBindingStore.getBinding(planId)
         ? [runtime.automationBindingStore.getBinding(planId)]
@@ -3690,6 +3696,8 @@ export async function handleBridgeRequest(
     return ok({
       bindings: bindings.filter(Boolean),
       proposals: runtime.executionProposalStore.list({ planId }),
+      currentBinding,
+      currentProposal,
     });
   }
 

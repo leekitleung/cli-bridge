@@ -259,6 +259,9 @@ export class InMemoryExecutionProposalStore {
 
   pause(proposalId: string, reason: string, now: number = Date.now()): ExecutionProposal {
     const proposal = this.requireProposal(proposalId);
+    if (!['draft', 'awaiting-confirmation', 'confirmed', 'dispatching'].includes(proposal.status)) {
+      throw new Error('proposal-not-pausable');
+    }
     proposal.status = 'paused';
     proposal.pausedAt = now;
     proposal.failureReason = reason;
@@ -277,6 +280,9 @@ export class InMemoryExecutionProposalStore {
 
   cancel(proposalId: string, now: number = Date.now()): ExecutionProposal {
     const proposal = this.requireProposal(proposalId);
+    if (!['draft', 'awaiting-confirmation', 'confirmed', 'paused'].includes(proposal.status)) {
+      throw new Error('proposal-not-cancellable');
+    }
     proposal.status = 'cancelled';
     proposal.cancelledAt = now;
     proposal.updatedAt = now;
@@ -294,6 +300,12 @@ export class InMemoryExecutionProposalStore {
       .filter(proposal => query.goalId === undefined || proposal.goalId === query.goalId)
       .sort((left, right) => left.createdAt - right.createdAt)
       .map(clone);
+  }
+
+  getCurrent(query: { planId?: string; goalId?: string } = {}): ExecutionProposal | undefined {
+    return this.list(query)
+      .filter(proposal => !['returned', 'failed', 'cancelled', 'timed-out'].includes(proposal.status))
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
   }
 
   private requireProposal(proposalId: string): ExecutionProposal {

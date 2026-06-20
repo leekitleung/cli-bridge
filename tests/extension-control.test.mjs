@@ -48,6 +48,10 @@ test('extension bridge panel mirrors automation state but cannot confirm, edit, 
   assert.equal(source.includes('resumeAutomationControl'), true);
   assert.equal(source.includes('cancelAutomationControl'), true);
   assert.equal(source.includes('getAutomationControlStatus'), true);
+  assert.equal(source.includes('data.currentProposal'), true);
+  assert.equal(source.includes('data.currentBinding'), true);
+  assert.equal(source.includes('proposals?.[0]'), false);
+  assert.equal(source.includes('bindings?.[0]'), false);
 
   assert.equal(source.includes('confirmAutomationControl'), false);
   assert.equal(source.includes('editAutomationControl'), false);
