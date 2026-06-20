@@ -3,12 +3,15 @@ import {
   AUDIT_RISK_LEVELS,
   AGENT_ENDPOINT_RISKS,
   AGENT_ENDPOINT_TRANSPORTS,
+  AUTOMATION_EXECUTION_TIERS,
+  AUTOMATION_REASONING_TIERS,
   AGENT_REVIEW_STATUSES,
   BRIDGE_PACKET_KINDS,
   BRIDGE_PACKET_SOURCES,
   BRIDGE_PACKET_STATUSES,
   BRIDGE_PACKET_TARGETS,
   OUTBOUND_PROMPT_STATUSES,
+  WEB_RELAY_LOOP_STATUSES,
   INBOUND_SOURCES,
   INBOUND_STATUSES,
   RAW_CONTENT_REF_STORAGE,
@@ -16,6 +19,8 @@ import {
   PLAN_STATUSES,
   PLAN_STEP_STATUSES,
   PLAN_STEP_KINDS,
+  REASONING_ARTIFACT_KINDS,
+  EXECUTION_PROPOSAL_STATUSES,
   EXECUTION_TIERS,
   VERIFICATION_RESULTS,
   type AgentEndpoint,
@@ -24,11 +29,15 @@ import {
   type AuditEvent,
   type BridgePacket,
   type OutboundPrompt,
+  type WebRelayLoop,
   type InboundMessage,
   type Goal,
   type Plan,
   type PlanStep,
   type Project,
+  type ReasoningArtifact,
+  type ExecutionProposal,
+  type RunEndpointBinding,
   type WorkBuddyExecutionLedgerEvent,
   type WorkBuddyProjectSnapshot,
   type WorkBuddyPromptDraftSink,
@@ -294,7 +303,19 @@ export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
   requireNumber(value, 'createdAt', errors);
   requireNumber(value, 'updatedAt', errors);
 
-  for (const key of ['claimedAt', 'deliveredAt', 'failedAt', 'cancelledAt']) {
+  for (const key of [
+    'claimedAt',
+    'deliveredAt',
+    'waitingAt',
+    'submittedAt',
+    'respondingAt',
+    'responseReadyAt',
+    'returnedAt',
+    'completedAt',
+    'expiredAt',
+    'failedAt',
+    'cancelledAt',
+  ]) {
     if (
       value[key] !== undefined &&
       (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
@@ -310,8 +331,50 @@ export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
     errors.push('claimToken must be a non-empty string when present');
   }
 
+  if (!isRecord(value.authorization)) {
+    errors.push('authorization must be an object');
+  } else {
+    if (value.authorization.target !== 'chatgpt-web') {
+      errors.push('authorization.target must be chatgpt-web');
+    }
+    if (
+      typeof value.authorization.contentHash !== 'string' ||
+      !value.authorization.contentHash.startsWith('sha256:')
+    ) {
+      errors.push('authorization.contentHash must be a sha256 string');
+    }
+    if (
+      typeof value.authorization.expiresAt !== 'number' ||
+      !Number.isFinite(value.authorization.expiresAt)
+    ) {
+      errors.push('authorization.expiresAt must be a finite number');
+    }
+  }
+
   if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
     errors.push('failureReason must be a string');
+  }
+
+  if (value.evidence !== undefined) {
+    if (!Array.isArray(value.evidence)) {
+      errors.push('evidence must be an array when present');
+    } else {
+      for (const item of value.evidence) {
+        if (!isRecord(item)) {
+          errors.push('evidence items must be objects');
+          continue;
+        }
+        if (typeof item.type !== 'string' || item.type.trim().length === 0) {
+          errors.push('evidence.type must be a non-empty string');
+        }
+        if (typeof item.at !== 'number' || !Number.isFinite(item.at)) {
+          errors.push('evidence.at must be a finite number');
+        }
+        if (item.reason !== undefined && typeof item.reason !== 'string') {
+          errors.push('evidence.reason must be a string when present');
+        }
+      }
+    }
   }
 
   if (
@@ -319,6 +382,13 @@ export function validateOutboundPrompt(value: unknown): SchemaValidationResult {
     (typeof value.endpointId !== 'string' || value.endpointId.trim().length === 0)
   ) {
     errors.push('endpointId must be a non-empty string when present');
+  }
+
+  if (
+    value.loopId !== undefined &&
+    (typeof value.loopId !== 'string' || value.loopId.trim().length === 0)
+  ) {
+    errors.push('loopId must be a non-empty string when present');
   }
 
   return {
@@ -331,6 +401,296 @@ export function assertOutboundPrompt(value: unknown): asserts value is OutboundP
   const result = validateOutboundPrompt(value);
   if (!result.ok) {
     throw new Error(`Invalid OutboundPrompt: ${result.errors.join(', ')}`);
+  }
+}
+
+function validateBindingEndpointRef(value: unknown, prefix: string, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push(`${prefix} must be an object`);
+    return;
+  }
+  requireString(value, 'id', errors);
+  requireString(value, 'label', errors);
+  if (!isOneOf(value.transport, AGENT_ENDPOINT_TRANSPORTS)) {
+    errors.push(`${prefix}.transport is invalid`);
+  }
+  if (!isRecord(value.capabilities)) {
+    errors.push(`${prefix}.capabilities must be an object`);
+  } else if (typeof value.capabilities.canExecute !== 'boolean') {
+    errors.push(`${prefix}.capabilities.canExecute must be a boolean`);
+  }
+}
+
+export function validateRunEndpointBinding(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['run endpoint binding must be an object'] };
+  }
+
+  for (const key of [
+    'goalId',
+    'planId',
+    'reasoningEndpointId',
+    'executionEndpointId',
+    'executionPermissionProfile',
+    'executionWorkingDirectoryRef',
+    'deadlineAt',
+    'bindingHash',
+  ]) {
+    requireString(value, key, errors);
+  }
+
+  if (value.parentPlanId !== undefined && typeof value.parentPlanId !== 'string') {
+    errors.push('parentPlanId must be a string when present');
+  }
+  if (!isOneOf(value.reasoningTier, AUTOMATION_REASONING_TIERS)) {
+    errors.push('reasoningTier is invalid');
+  }
+  if (!isOneOf(value.executionTier, AUTOMATION_EXECUTION_TIERS)) {
+    errors.push('executionTier is invalid');
+  }
+  for (const key of ['maxSteps', 'maxReasoningRounds', 'createdAt', 'updatedAt']) {
+    requireNumber(value, key, errors);
+  }
+  if (
+    value.lockedAt !== undefined &&
+    (typeof value.lockedAt !== 'number' || !Number.isFinite(value.lockedAt))
+  ) {
+    errors.push('lockedAt must be a finite number');
+  }
+  if (typeof value.deadlineAt === 'string' && Number.isNaN(Date.parse(value.deadlineAt))) {
+    errors.push('deadlineAt must be an ISO date string');
+  }
+  if (typeof value.bindingHash === 'string' && !value.bindingHash.startsWith('sha256:')) {
+    errors.push('bindingHash must be a sha256 string');
+  }
+
+  validateBindingEndpointRef(value.reasoningEndpoint, 'reasoningEndpoint', errors);
+  validateBindingEndpointRef(value.executionEndpoint, 'executionEndpoint', errors);
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertRunEndpointBinding(value: unknown): asserts value is RunEndpointBinding {
+  const result = validateRunEndpointBinding(value);
+  if (!result.ok) {
+    throw new Error(`Invalid RunEndpointBinding: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateReasoningArtifact(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['reasoning artifact must be an object'] };
+  }
+
+  for (const key of [
+    'artifactId',
+    'goalId',
+    'planId',
+    'endpointId',
+    'bindingHash',
+    'contentHash',
+    'summary',
+    'createdAt',
+  ]) {
+    requireString(value, key, errors);
+  }
+  if (!isOneOf(value.kind, REASONING_ARTIFACT_KINDS)) {
+    errors.push('kind is invalid');
+  }
+  if (typeof value.bindingHash === 'string' && !value.bindingHash.startsWith('sha256:')) {
+    errors.push('bindingHash must be a sha256 string');
+  }
+  if (typeof value.contentHash === 'string' && !value.contentHash.startsWith('sha256:')) {
+    errors.push('contentHash must be a sha256 string');
+  }
+  if (typeof value.createdAt === 'string' && Number.isNaN(Date.parse(value.createdAt))) {
+    errors.push('createdAt must be an ISO date string');
+  }
+  if (typeof value.summary === 'string' && value.summary.trim().length === 0) {
+    errors.push('summary must be non-empty');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertReasoningArtifact(value: unknown): asserts value is ReasoningArtifact {
+  const result = validateReasoningArtifact(value);
+  if (!result.ok) {
+    throw new Error(`Invalid ReasoningArtifact: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateExecutionProposal(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['execution proposal must be an object'] };
+  }
+
+  for (const key of [
+    'id',
+    'goalId',
+    'planId',
+    'stepId',
+    'artifactId',
+    'contentHash',
+    'bindingHash',
+    'executionEndpointId',
+    'executionPermissionProfile',
+    'projectId',
+    'preview',
+    'command',
+    'stdin',
+  ]) {
+    requireString(value, key, errors);
+  }
+  if (value.command !== 'codex' && value.command !== 'claude') {
+    errors.push('command must be codex or claude');
+  }
+  if (!isOneOf(value.status, EXECUTION_PROPOSAL_STATUSES)) {
+    errors.push('status is invalid');
+  }
+  if (!isStringArray(value.args)) {
+    errors.push('args must be a string array');
+  }
+  for (const key of ['createdAt', 'updatedAt', 'expiresAt']) {
+    requireNumber(value, key, errors);
+  }
+  for (const key of [
+    'confirmedAt',
+    'dispatchingAt',
+    'returnedAt',
+    'failedAt',
+    'pausedAt',
+    'cancelledAt',
+    'timedOutAt',
+  ]) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+    ) {
+      errors.push(`${key} must be a finite number when present`);
+    }
+  }
+  for (const key of [
+    'confirmationNonce',
+    'failureReason',
+    'supersedesProposalId',
+    'supersededByProposalId',
+  ]) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') {
+      errors.push(`${key} must be a string when present`);
+    }
+  }
+  if (typeof value.contentHash === 'string' && !value.contentHash.startsWith('sha256:')) {
+    errors.push('contentHash must be a sha256 string');
+  }
+  if (typeof value.bindingHash === 'string' && !value.bindingHash.startsWith('sha256:')) {
+    errors.push('bindingHash must be a sha256 string');
+  }
+  if (value.result !== undefined) {
+    if (!isRecord(value.result)) {
+      errors.push('result must be an object when present');
+    } else {
+      if (typeof value.result.stdout !== 'string') errors.push('result.stdout must be a string');
+      if (typeof value.result.stderr !== 'string') errors.push('result.stderr must be a string');
+      if (
+        value.result.exitCode !== null &&
+        (typeof value.result.exitCode !== 'number' || !Number.isFinite(value.result.exitCode))
+      ) {
+        errors.push('result.exitCode must be a finite number or null');
+      }
+    }
+  }
+  for (const forbidden of ['apiKey', 'credentials', 'rawProviderOutput', 'rawTranscript', 'providerTranscript']) {
+    if (forbidden in value) errors.push(`${forbidden} must not be stored on ExecutionProposal`);
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertExecutionProposal(value: unknown): asserts value is ExecutionProposal {
+  const result = validateExecutionProposal(value);
+  if (!result.ok) {
+    throw new Error(`Invalid ExecutionProposal: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateWebRelayLoop(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['web relay loop must be an object'] };
+  }
+
+  for (const key of ['id', 'projectId', 'goalId', 'sessionId', 'endpointId']) {
+    if (typeof value[key] !== 'string' || (value[key] as string).trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isOneOf(value.status, WEB_RELAY_LOOP_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  for (const key of [
+    'round',
+    'maxRounds',
+    'perRoundTimeoutMs',
+    'totalDeadlineAt',
+    'noProgressLimit',
+    'noProgressCount',
+    'createdAt',
+    'updatedAt',
+  ]) {
+    requireNumber(value, key, errors);
+  }
+
+  for (const key of ['pausedAt', 'cancelledAt', 'doneAt', 'failedAt']) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+    ) {
+      errors.push(`${key} must be a finite number`);
+    }
+  }
+
+  if (
+    value.currentOutboundPromptId !== undefined &&
+    typeof value.currentOutboundPromptId !== 'string'
+  ) {
+    errors.push('currentOutboundPromptId must be a string when present');
+  }
+
+  if (value.failureReason !== undefined && typeof value.failureReason !== 'string') {
+    errors.push('failureReason must be a string');
+  }
+
+  if (!Array.isArray(value.seenContentHashes)) {
+    errors.push('seenContentHashes must be an array');
+  } else {
+    for (const hash of value.seenContentHashes) {
+      if (typeof hash !== 'string' || !hash.startsWith('sha256:')) {
+        errors.push('seenContentHashes entries must be sha256 strings');
+      }
+    }
+  }
+
+  if (!Array.isArray(value.evidence)) {
+    errors.push('evidence must be an array');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertWebRelayLoop(value: unknown): asserts value is WebRelayLoop {
+  const result = validateWebRelayLoop(value);
+  if (!result.ok) {
+    throw new Error(`Invalid WebRelayLoop: ${result.errors.join(', ')}`);
   }
 }
 
@@ -943,11 +1303,23 @@ export function validatePlan(value: unknown): SchemaValidationResult {
   }
   requireString(value, 'id', errors);
   requireString(value, 'goalId', errors);
+  if (value.parentPlanId !== undefined && typeof value.parentPlanId !== 'string') {
+    errors.push('parentPlanId must be a string when present');
+  }
   if (!isOneOf(value.status, PLAN_STATUSES)) {
     errors.push('status is invalid');
   }
   requireNumber(value, 'createdAt', errors);
   requireNumber(value, 'updatedAt', errors);
+  if (
+    value.pausedAt !== undefined &&
+    (typeof value.pausedAt !== 'number' || !Number.isFinite(value.pausedAt))
+  ) {
+    errors.push('pausedAt must be a finite number when present');
+  }
+  if (value.pauseReason !== undefined && typeof value.pauseReason !== 'string') {
+    errors.push('pauseReason must be a string when present');
+  }
   // permittedTiers: non-empty array of valid ExecutionTier values that must
   // always contain 'patch-proposal'.
   if (!Array.isArray(value.permittedTiers) || value.permittedTiers.length === 0) {

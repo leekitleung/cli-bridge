@@ -21,6 +21,12 @@ export interface ExtractPromptOptions {
   selection?: Pick<Selection, 'toString'> | null;
 }
 
+export interface StableAssistantResponseResult {
+  ok: boolean;
+  text: string;
+  reason: 'streaming' | 'empty' | 'unstable' | 'not-found' | null;
+}
+
 const VISIBLE_TEXT_SELECTORS = [
   '[data-message-author-role="assistant"]',
   '[data-testid^="conversation-turn"] [data-message-author-role="assistant"]',
@@ -232,6 +238,66 @@ export function extractLastCompleteAssistantMessage(
     text,
     reason: null,
   };
+}
+
+function defaultDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof globalThis.setTimeout === 'function') {
+      globalThis.setTimeout(resolve, ms);
+    } else {
+      resolve();
+    }
+  });
+}
+
+export async function waitForStableAssistantResponse(options: {
+  root?: ParentNode;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  stablePolls?: number;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+} = {}): Promise<StableAssistantResponseResult> {
+  const root = options.root ?? getDefaultRoot();
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 1000;
+  const stablePolls = options.stablePolls ?? 2;
+  const now = options.now ?? (() => Date.now());
+  const delay = options.delay ?? defaultDelay;
+  const start = now();
+  let lastText = '';
+  let stableCount = 0;
+
+  while (now() - start <= timeoutMs) {
+    if (detectStreamingState(root)) {
+      stableCount = 0;
+      await delay(pollIntervalMs);
+      continue;
+    }
+    const extracted = extractLastCompleteAssistantMessage(root);
+    if (!extracted.ok || extracted.text.trim().length === 0) {
+      await delay(pollIntervalMs);
+      continue;
+    }
+    if (extracted.text === lastText) {
+      stableCount += 1;
+    } else {
+      lastText = extracted.text;
+      stableCount = 1;
+    }
+    if (stableCount >= stablePolls) {
+      return { ok: true, text: lastText, reason: null };
+    }
+    await delay(pollIntervalMs);
+  }
+
+  if (detectStreamingState(root)) {
+    return { ok: false, text: '', reason: 'streaming' };
+  }
+  if (!lastText) {
+    return { ok: false, text: '', reason: 'not-found' };
+  }
+  return { ok: false, text: lastText, reason: 'unstable' };
 }
 
 export function extractPromptText(

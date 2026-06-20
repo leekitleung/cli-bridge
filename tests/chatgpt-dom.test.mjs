@@ -6,6 +6,9 @@ import test from 'node:test';
 import {
   fillComposerText,
   findComposerInput,
+  findUniqueSendButton,
+  getComposerContentHash,
+  submitAuthorizedPrompt,
 } from '../apps/extension/src/content/chatgpt-dom.ts';
 import {
   copyTextToClipboard,
@@ -17,6 +20,7 @@ import {
   extractMarkedBlock,
   extractPromptText,
   getUserSelectionText,
+  waitForStableAssistantResponse,
 } from '../apps/extension/src/content/extraction.ts';
 
 const root = process.cwd();
@@ -54,6 +58,10 @@ class FakeElement extends EventTarget {
   }
 
   focus() {}
+
+  click() {
+    this.clicked = true;
+  }
 
   getBoundingClientRect() {
     return this.rect;
@@ -111,6 +119,18 @@ function selectorMatches(element, selector) {
 
   if (selector === 'button[aria-label*="Stop"]') {
     return tagName === 'button' && (element.getAttribute('aria-label')?.includes('Stop') ?? false);
+  }
+
+  if (selector === 'button[data-testid="send-button"]') {
+    return tagName === 'button' && element.getAttribute('data-testid') === 'send-button';
+  }
+
+  if (selector === 'button[aria-label="Send prompt"]') {
+    return tagName === 'button' && element.getAttribute('aria-label') === 'Send prompt';
+  }
+
+  if (selector === 'button[aria-label="Send message"]') {
+    return tagName === 'button' && element.getAttribute('aria-label') === 'Send message';
   }
 
   if (selector.includes('[placeholder]')) {
@@ -187,6 +207,60 @@ test('fillComposerText fills textarea and dispatches input/change events', async
   });
   assert.equal(composer.value, 'review this diff');
   assert.deepEqual(composer.dispatchedEvents, ['input', 'change']);
+});
+
+test('submitAuthorizedPrompt verifies composer hash and clicks exactly one native send button', async () => {
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const sendButton = new FakeElement('button', { 'data-testid': 'send-button' });
+  const rootNode = createFakeRoot([composer, sendButton]);
+  await fillComposerText('authorized text', { root: rootNode });
+  const hash = await getComposerContentHash(rootNode);
+
+  assert.equal(findUniqueSendButton(rootNode), sendButton);
+  const result = await submitAuthorizedPrompt(hash, { root: rootNode });
+  assert.equal(result.ok, true);
+  assert.equal(sendButton.clicked, true);
+});
+
+test('submitAuthorizedPrompt waits for submitted prompt page evidence', async () => {
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const sendButton = new FakeElement('button', { 'data-testid': 'send-button' });
+  const rootNode = createFakeRoot([composer, sendButton]);
+  rootNode.textContent = '';
+  sendButton.click = () => {
+    sendButton.clicked = true;
+    composer.value = '';
+    rootNode.textContent = 'authorized observed text';
+  };
+  await fillComposerText('authorized observed text', { root: rootNode });
+  const hash = await getComposerContentHash(rootNode);
+
+  const result = await submitAuthorizedPrompt(hash, {
+    root: rootNode,
+    expectedPromptText: 'authorized observed text',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sendButton.clicked, true);
+});
+
+test('submitAuthorizedPrompt fails closed on hash mismatch or ambiguous send controls', async () => {
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const sendA = new FakeElement('button', { 'data-testid': 'send-button' });
+  const sendB = new FakeElement('button', { 'aria-label': 'Send prompt' });
+  const rootNode = createFakeRoot([composer, sendA, sendB]);
+  await fillComposerText('authorized text', { root: rootNode });
+
+  const mismatch = await submitAuthorizedPrompt('sha256:not-the-right-hash', { root: rootNode });
+  assert.equal(mismatch.ok, false);
+  assert.equal(mismatch.reason, 'composer-hash-mismatch');
+
+  const hash = await getComposerContentHash(rootNode);
+  const ambiguous = await submitAuthorizedPrompt(hash, { root: rootNode });
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.reason, 'send-control-ambiguous');
+  assert.equal(sendA.clicked, undefined);
+  assert.equal(sendB.clicked, undefined);
 });
 
 test('fillComposerText falls back to contenteditable composer', async () => {
@@ -351,11 +425,44 @@ test('fillComposerText does not write clipboard by default when post-fill verifi
     root: createFakeRoot([composer]),
     clipboard,
     timeoutMs: 0,
+    verifyTimeoutMs: 0,
   });
 
   assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'input-verify-failed');
   assert.equal(copied, '');
+});
+
+test('fillComposerText waits for asynchronous composer verification', async () => {
+  let currentValue = 'stale residue';
+  let delayCalls = 0;
+  let now = 0;
+  const composer = new FakeElement('textarea', {
+    'data-testid': 'prompt-textarea',
+  });
+  Object.defineProperty(composer, 'value', {
+    get() {
+      return currentValue;
+    },
+    set() {},
+    configurable: true,
+  });
+
+  const result = await fillComposerText('eventual target text', {
+    root: createFakeRoot([composer]),
+    timeoutMs: 0,
+    verifyTimeoutMs: 200,
+    now: () => now,
+    delay: async (ms) => {
+      delayCalls += 1;
+      now += ms;
+      currentValue = 'eventual target text';
+    },
+  });
+
+  assert.equal(result.status, 'filled');
+  assert.equal(result.reason, null);
+  assert.equal(delayCalls, 1);
 });
 
 test('fillComposerText writes clipboard only when explicit fallback is enabled', async () => {
@@ -672,6 +779,28 @@ test('extractLastCompleteAssistantMessage returns only the last visible assistan
   });
 });
 
+test('waitForStableAssistantResponse returns only stable complete assistant text', async () => {
+  let clock = 0;
+  const assistant = new FakeElement('article', {
+    'data-message-author-role': 'assistant',
+  });
+  assistant.textContent = 'stable reply';
+  const rootNode = createFakeRoot([assistant]);
+
+  const result = await waitForStableAssistantResponse({
+    root: rootNode,
+    now: () => clock,
+    delay: async (ms) => {
+      clock += ms;
+    },
+    pollIntervalMs: 10,
+    stablePolls: 2,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.text, 'stable reply');
+});
+
 test('W2 extension source does not send, read browser secrets, or implement later scopes', async () => {
   // Files that must remain pure DOM/clipboard helpers with no server vocabulary.
   const purePaths = [
@@ -692,7 +821,6 @@ test('W2 extension source does not send, read browser secrets, or implement late
     'KeyboardEvent',
     'requestSubmit',
     '.submit(',
-    'send-button',
     'PendingPrompt',
     'BridgePacket',
     'CodexManaged',
@@ -727,7 +855,6 @@ test('W2 extension source does not send, read browser secrets, or implement late
     'KeyboardEvent',
     'requestSubmit',
     '.submit(',
-    'send-button',
     'CodexManaged',
     'MockAgent',
   ]) {

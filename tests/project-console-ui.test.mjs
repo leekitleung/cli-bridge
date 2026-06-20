@@ -40,7 +40,7 @@ test('project console HTML renders the command-first project shell', () => {
   assert.match(html, /Recent session/);
   assert.match(html, /Project history/);
   assert.match(html, /Conversation/);
-  assert.match(html, /status · history · plan · continue · verify/);
+  assert.match(html, /\/goals · \/reviews · \/project/);
   assert.match(html, /id="facts-rail"/);
   assert.match(html, /id="fact-next"/);
   assert.match(html, /id="fact-verify"/);
@@ -63,8 +63,11 @@ test('project console HTML renders the command-first project shell', () => {
   assert.equal(html.includes('Voice input'), false);
   assert.equal(html.includes('composer-mic'), false);
 
-  assert.equal(html.includes('Review console'), false);
-  assert.equal(html.includes('Goal console'), false);
+  assert.doesNotMatch(html, /href="\/console"/);
+  assert.doesNotMatch(html, /href="\/console\/goals"/);
+  assert.match(html, /\/goals · \/reviews · \/project/);
+  assert.match(html, /id="goals-context"/);
+  assert.match(html, /id="reviews-context"/);
 });
 
 test('mobile console exposes project navigation, history, and facts through a compact drawer', () => {
@@ -112,6 +115,8 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
+    '/bridge/execution-proposals?planId=',
+    '/bridge/execution-proposals/',
   ]));
 
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
@@ -122,11 +127,10 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
 // Task 15 regression: console must not fetch /console/project as a data endpoint.
 test('project console does not call /console/project for data loading', () => {
   const html = renderProjectConsoleHtml();
-  // The only /console/project references are the path constant definition and
-  // the header comment. No fetch() or api() call targets /console/project.
-  assert.equal(html.includes("'/console/project'"), false);
-  assert.equal(html.includes('"/console/project"'), false);
-  assert.equal(html.includes('`/console/project`'), false);
+  // Global navigation may link to /console/project. It must never be used as a
+  // data endpoint by fetch() or the bridge api() helper.
+  assert.doesNotMatch(html, /api\(['"`]\/console\/project/);
+  assert.doesNotMatch(html, /fetch\(['"`]\/console\/project/);
 });
 
 test('project console keeps pairing token in memory only and sends it only via header', () => {
@@ -251,6 +255,8 @@ test('project switch loading still only fetches /bridge/projects*', () => {
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
+    '/bridge/execution-proposals?planId=',
+    '/bridge/execution-proposals/',
   ]));
 });
 
@@ -314,6 +320,8 @@ test('all bridge paths in console are within the allowed set', () => {
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
+    '/bridge/execution-proposals?planId=',
+    '/bridge/execution-proposals/',
   ]);
   const paths = extractBridgePaths(html);
   const outside = paths.filter(p => !allowed.has(p));

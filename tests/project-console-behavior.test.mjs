@@ -141,6 +141,108 @@ function defaultDetailFixture(key) {
   };
 }
 
+test('/goals and /reviews open native contexts inside Project Workspace', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/execution-proposals', { ok: true, payload: { bindings: [], proposals: [] } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+
+  await runCommand(document, '/goals');
+  assert.ok(document.getElementById('goals-context'));
+  assert.equal(document.getElementById('goal-card').style.display, 'none');
+  assert.equal(document.getElementById('timeline-container').style.display, 'none');
+
+  await runCommand(document, '/reviews');
+  assert.ok(document.getElementById('reviews-context'));
+  assert.ok(document.getElementById('review-context-target'));
+  assert.ok(document.getElementById('review-context-content'));
+
+  await runCommand(document, '/project');
+  assert.equal(document.getElementById('goals-context'), null);
+  assert.equal(document.getElementById('reviews-context'), null);
+  assert.equal(document.getElementById('goal-card').style.display, '');
+  assert.equal(fetchCalls.some(call => call.path.startsWith('/console/')), false);
+});
+
+test('/reviews form dispatches through governed review APIs using the selected endpoint', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/reviews', { ok: true, payload: { review: { id: 'review-1' } } });
+  setFixture('/bridge/reviews/confirm', { ok: true, payload: { review: { id: 'review-1', status: 'confirmed' } } });
+  setFixture('/bridge/reviews/dispatch', { ok: true, payload: { review: { id: 'review-1', status: 'returned' }, result: { summary: 'reviewed' }, nextPrompt: null } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  await runCommand(document, '/reviews');
+
+  document.getElementById('review-context-target').value = 'codex-command';
+  document.getElementById('review-context-content').value = 'Review the current project plan';
+  document.getElementById('review-context-run').click();
+  await waitFor(() => document.getElementById('review-context-result'));
+
+  const create = fetchCalls.find(call => call.path === '/bridge/reviews' && call.method === 'POST');
+  assert.equal(create.body.targetEndpointId, 'codex-command');
+  assert.equal(create.body.sourceEndpointId, 'claude-code-command');
+  assert.deepEqual(
+    fetchCalls.filter(call => call.path.startsWith('/bridge/reviews')).map(call => call.path),
+    ['/bridge/reviews', '/bridge/reviews/confirm', '/bridge/reviews/dispatch'],
+  );
+  assert.match(document.getElementById('review-context-result').textContent, /reviewed/);
+});
+
+test('/goals renders binding and proposal controls, then confirms with server-owned authority fields', async () => {
+  const { document, setFixture, fetchCalls } = setupConsole();
+  const detail = defaultDetailFixture('cli-bridge');
+  detail.payload.goals = [{
+    goal: { id: 'goal-1', description: 'Ship the bounded change', status: 'executing', projectId: 'cli-bridge' },
+    plan: { id: 'plan-1', status: 'executing', steps: [{ id: 'step-1', index: 1, intent: 'Apply reviewed patch', tier: 'high', status: 'ready' }] },
+  }];
+  const proposal = {
+    id: 'proposal-1', planId: 'plan-1', stepId: 'step-1', artifactId: 'artifact-1',
+    contentHash: 'sha256:content', bindingHash: 'sha256:binding',
+    executionEndpointId: 'codex-command', executionPermissionProfile: 'workspace-write',
+    projectId: 'cli-bridge', preview: 'Apply only the reviewed patch', stdin: 'bounded input',
+    status: 'awaiting-confirmation',
+  };
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', detail);
+  setFixture('/bridge/execution-proposals', { ok: true, payload: {
+    bindings: [{
+      reasoningEndpointId: 'claude-code-command', executionEndpointId: 'codex-command',
+      reasoningTier: 'high', executionTier: 'bounded', executionWorkingDirectoryRef: 'project-root:cli-bridge',
+      executionPermissionProfile: 'workspace-write', maxSteps: 4, maxReasoningRounds: 2, deadlineAt: '2026-06-21T00:00:00Z',
+    }],
+    proposals: [proposal],
+  } });
+  setFixture('/bridge/execution-proposals/confirm', { ok: true, payload: { proposal: { ...proposal, status: 'confirmed' } } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+  await runCommand(document, '/goals');
+
+  assert.match(document.getElementById('goals-context').textContent, /claude-code-command/);
+  assert.match(document.getElementById('goals-context').textContent, /Apply only the reviewed patch/);
+  document.querySelector('[data-proposal-action="confirm"]').click();
+  await waitFor(() => fetchCalls.some(call => call.path === '/bridge/execution-proposals/confirm'));
+
+  const confirm = fetchCalls.find(call => call.path === '/bridge/execution-proposals/confirm');
+  assert.deepEqual(confirm.body, {
+    proposalId: 'proposal-1', planId: 'plan-1', stepId: 'step-1', artifactId: 'artifact-1',
+    contentHash: 'sha256:content', bindingHash: 'sha256:binding', executionEndpointId: 'codex-command',
+    executionPermissionProfile: 'workspace-write', projectId: 'cli-bridge',
+  });
+});
+
 // ════════════════════════════════════════════════════════════════════
 // §1  Project switch loads detail and clears loading state
 // ════════════════════════════════════════════════════════════════════

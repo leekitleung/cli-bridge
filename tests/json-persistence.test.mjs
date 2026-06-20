@@ -62,6 +62,46 @@ test('runtime persists and rehydrates packets, audit, and pending prompts across
   }
 });
 
+test('runtime persists web relay loops and fails uncertain submitted rounds after restart', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({ dataDir: dir });
+    const created = first.webRelayLoopStore.create({
+      projectId: 'cli-bridge',
+      goalId: 'goal-stage-c',
+      sessionId: 'loop-session',
+      endpointId: 'mock-inbound-agent',
+      initialPrompt: 'round one prompt',
+      now: 1000,
+    });
+    assert.equal(created.error, undefined);
+    const claimed = first.outboundPromptStore.claimNext(2000);
+    assert.equal(claimed.id, created.outboundPrompt.id);
+    first.outboundPromptStore.acknowledge({
+      id: created.outboundPrompt.id,
+      claimToken: claimed.claimToken,
+      ok: true,
+      now: 2001,
+    });
+    first.outboundPromptStore.markSubmitted(created.outboundPrompt.id, 2002);
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const restoredLoop = second.webRelayLoopStore.get(created.loop.id);
+    const restoredPrompt = second.outboundPromptStore.getPrompt(created.outboundPrompt.id);
+    assert.equal(restoredLoop.status, 'failed');
+    assert.equal(restoredLoop.failureReason, 'restart-uncertain-submission');
+    assert.equal(restoredPrompt.status, 'failed');
+    assert.equal(restoredPrompt.failureReason, 'restart-uncertain-submission');
+    assert.equal(second.webRelayLoopStore.list().length, 1);
+
+    const snapshotText = readFileSync(resolve(dir, SNAPSHOT_FILENAME), 'utf8');
+    assert.match(snapshotText, /"webRelayLoops"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('snapshot file never contains raw secret content', () => {
   const dir = tempDir();
   try {

@@ -28,8 +28,10 @@ import type {
   PendingPrompt,
   Plan,
   Project,
+  RunEndpointBinding,
   InboundMessage,
   RelayContext,
+  WebRelayLoop,
 } from '../../../../packages/shared/src/types.ts';
 import {
   assertAuditEvent,
@@ -39,6 +41,8 @@ import {
   assertOutboundPrompt,
   assertPlan,
   assertProject,
+  assertRunEndpointBinding,
+  assertWebRelayLoop,
 } from '../../../../packages/shared/src/schemas.ts';
 
 export const SNAPSHOT_VERSION = 3;
@@ -52,6 +56,8 @@ export interface BridgeSnapshot {
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
   outboundPrompts: OutboundPrompt[];
+  /** Stage C: server-owned bounded ChatGPT Web relay loop metadata. */
+  webRelayLoops: WebRelayLoop[];
   /** v3: durable reviewed replies and their idempotency keys. */
   inboundMessages: InboundMessage[];
   /** v3: delivered session-to-endpoint routing contexts. */
@@ -62,6 +68,8 @@ export interface BridgeSnapshot {
   plans: Plan[];
   /** v2: persisted project registry (explicitly registered projects only). */
   projects: Project[];
+  /** ADR-0024 EX-A: immutable dual-endpoint plan bindings. */
+  automationBindings: RunEndpointBinding[];
   workbuddyTaskReferences: WorkBuddyTaskReference[];
   workbuddyReviewResultSinks: WorkBuddyReviewResultSink[];
   workbuddyPromptDraftSinks: WorkBuddyPromptDraftSink[];
@@ -110,11 +118,13 @@ function parseSnapshot(text: string): SnapshotReadResult {
       auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
       pendingPrompts: Array.isArray(parsed.pendingPrompts) ? parsed.pendingPrompts : [],
       outboundPrompts: Array.isArray(parsed.outboundPrompts) ? parsed.outboundPrompts : [],
+      webRelayLoops: Array.isArray(parsed.webRelayLoops) ? parsed.webRelayLoops : [],
       inboundMessages: Array.isArray(parsed.inboundMessages) ? parsed.inboundMessages : [],
       relayContexts: Array.isArray(parsed.relayContexts) ? parsed.relayContexts : [],
       goals: Array.isArray(parsed.goals) ? parsed.goals : [],
       plans: Array.isArray(parsed.plans) ? parsed.plans : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      automationBindings: Array.isArray(parsed.automationBindings) ? parsed.automationBindings : [],
       workbuddyTaskReferences: Array.isArray(parsed.workbuddyTaskReferences) ? parsed.workbuddyTaskReferences : [],
       workbuddyReviewResultSinks: Array.isArray(parsed.workbuddyReviewResultSinks) ? parsed.workbuddyReviewResultSinks : [],
       workbuddyPromptDraftSinks: Array.isArray(parsed.workbuddyPromptDraftSinks) ? parsed.workbuddyPromptDraftSinks : [],
@@ -129,10 +139,12 @@ function parseSnapshot(text: string): SnapshotReadResult {
       snapshot.packets.forEach(assertBridgePacket);
       snapshot.auditEvents.forEach(assertAuditEvent);
       snapshot.outboundPrompts.forEach(assertOutboundPrompt);
+      snapshot.webRelayLoops.forEach(assertWebRelayLoop);
       snapshot.inboundMessages.forEach(assertInboundMessage);
       snapshot.goals.forEach(assertGoal);
       snapshot.plans.forEach(assertPlan);
       snapshot.projects.forEach(assertProject);
+      snapshot.automationBindings.forEach(assertRunEndpointBinding);
       for (const context of snapshot.relayContexts) {
         if (
           !context ||
@@ -265,11 +277,13 @@ export interface BuildSnapshotInput {
   auditEvents: AuditEvent[];
   pendingPrompts: PendingPrompt[];
   outboundPrompts?: OutboundPrompt[];
+  webRelayLoops?: WebRelayLoop[];
   inboundMessages?: InboundMessage[];
   relayContexts?: RelayContext[];
   goals?: Goal[];
   plans?: Plan[];
   projects?: Project[];
+  automationBindings?: RunEndpointBinding[];
   workbuddyTaskReferences?: WorkBuddyTaskReference[];
   workbuddyReviewResultSinks?: WorkBuddyReviewResultSink[];
   workbuddyPromptDraftSinks?: WorkBuddyPromptDraftSink[];
@@ -286,11 +300,13 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     auditEvents: input.auditEvents,
     pendingPrompts: input.pendingPrompts,
     outboundPrompts: input.outboundPrompts ?? [],
+    webRelayLoops: input.webRelayLoops ?? [],
     inboundMessages: input.inboundMessages ?? [],
     relayContexts: input.relayContexts ?? [],
     goals: input.goals ?? [],
     plans: input.plans ?? [],
     projects: input.projects ?? [],
+    automationBindings: input.automationBindings ?? [],
     workbuddyTaskReferences: input.workbuddyTaskReferences ?? [],
     workbuddyReviewResultSinks: input.workbuddyReviewResultSinks ?? [],
     workbuddyPromptDraftSinks: input.workbuddyPromptDraftSinks ?? [],

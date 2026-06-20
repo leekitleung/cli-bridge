@@ -256,6 +256,7 @@ function isAllowedProxyRoute(path: string, method: string): boolean {
     'POST /bridge/outbound',
     'GET /bridge/outbound/next',
     'POST /bridge/outbound/ack',
+    'POST /bridge/outbound/stage',
   ]);
   return allowed.has(`${method} ${path}`);
 }

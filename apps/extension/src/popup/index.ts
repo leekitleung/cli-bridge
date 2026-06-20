@@ -10,11 +10,11 @@ type ProxyResult = {
 
 const theme = document.createElement('style');
 theme.textContent = `
-  :root { color-scheme: light dark; --bg: #ffffff; --surface: #f9fafb; --text: #111827; --muted: #4b5563; --border: #d1d5db; }
+  :root { color-scheme: light dark; --bg: #f7f7f5; --surface: #ffffff; --text: #181a19; --muted: #5f6a65; --border: #d7ddd9; --accent: #10a37f; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #18181b; --surface: #27272a; --text: #f4f4f5; --muted: #a1a1aa; --border: #52525b; }
+    :root { --bg: #0d0d0d; --surface: #171717; --text: #f4f4f5; --muted: #a1a1aa; --border: #303030; }
   }
-  button:focus-visible, input:focus-visible { outline: 2px solid #14b8a6; outline-offset: 2px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 `;
 document.head.append(theme);
 

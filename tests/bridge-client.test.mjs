@@ -3,9 +3,17 @@ import test from 'node:test';
 
 import {
   createPacket,
+  cancelOutboundPrompt,
   claimNextOutboundPrompt,
   clearPairingTokenFromStorage,
   createPendingPrompt,
+  getOutboundReport,
+  getOutboundStatus,
+  getAutomationControlStatus,
+  markOutboundPromptStage,
+  pauseAutomationControl,
+  resumeAutomationControl,
+  cancelAutomationControl,
   getBridgeClientConfig,
   getMetrics,
   hasPairingToken,
@@ -120,6 +128,100 @@ test('bridge client can claim next outbound prompt with GET', async () => {
     assert.equal(call.url, 'http://127.0.0.1:31337/bridge/outbound/next');
     assert.equal(call.init.method, 'GET');
     assert.equal(call.init.body, undefined);
+  });
+});
+
+test('bridge client exposes Stage A outbound status, report, and cancel paths', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+
+  await withStubbedFetch(async (calls) => {
+    await getOutboundStatus();
+    await getOutboundReport();
+    await cancelOutboundPrompt('out-1');
+
+    assert.equal(calls[0].url, 'http://127.0.0.1:31337/bridge/outbound/status');
+    assert.equal(calls[0].init.method, 'GET');
+    assert.equal(calls[0].init.body, undefined);
+    assert.equal(calls[1].url, 'http://127.0.0.1:31337/bridge/outbound/report');
+    assert.equal(calls[1].init.method, 'GET');
+    assert.equal(calls[1].init.body, undefined);
+    assert.equal(calls[2].url, 'http://127.0.0.1:31337/bridge/outbound/cancel');
+    assert.equal(calls[2].init.method, 'POST');
+    assert.deepEqual(JSON.parse(calls[2].init.body), { outboundPromptId: 'out-1' });
+  });
+});
+
+test('bridge client exposes Stage B outbound stage path', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+
+  await withStubbedFetch(async (calls) => {
+    await markOutboundPromptStage('out-1', 'submitted');
+    await markOutboundPromptStage('out-1', 'failed', 'streaming');
+    const [call] = calls;
+    assert.equal(call.url, 'http://127.0.0.1:31337/bridge/outbound/stage');
+    assert.equal(call.init.method, 'POST');
+    assert.deepEqual(JSON.parse(call.init.body), {
+      outboundPromptId: 'out-1',
+      stage: 'submitted',
+    });
+    assert.deepEqual(JSON.parse(calls[1].init.body), {
+      outboundPromptId: 'out-1',
+      stage: 'failed',
+      failureReason: 'streaming',
+    });
+  });
+});
+
+test('bridge client exposes automation status as read-only GET', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+
+  await withStubbedFetch(async (calls) => {
+    await getAutomationControlStatus('plan-1');
+    const [call] = calls;
+    assert.equal(call.url, 'http://127.0.0.1:31337/bridge/execution-proposals?planId=plan-1');
+    assert.equal(call.init.method, 'GET');
+    assert.equal(call.init.body, undefined);
+  });
+});
+
+test('bridge client automation controls only send proposal id and action reason', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+
+  await withStubbedFetch(async (calls) => {
+    await pauseAutomationControl('proposal-1', 'operator-pause');
+    await resumeAutomationControl('proposal-1');
+    await cancelAutomationControl('proposal-1', 'operator-cancel');
+
+    assert.equal(calls[0].url, 'http://127.0.0.1:31337/bridge/execution-proposals/pause');
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      proposalId: 'proposal-1',
+      reason: 'operator-pause',
+    });
+    assert.equal(calls[1].url, 'http://127.0.0.1:31337/bridge/execution-proposals/resume');
+    assert.deepEqual(JSON.parse(calls[1].init.body), { proposalId: 'proposal-1' });
+    assert.equal(calls[2].url, 'http://127.0.0.1:31337/bridge/execution-proposals/cancel');
+    assert.deepEqual(JSON.parse(calls[2].init.body), {
+      proposalId: 'proposal-1',
+      reason: 'operator-cancel',
+    });
+
+    for (const call of calls) {
+      const body = call.init.body ? JSON.parse(call.init.body) : {};
+      for (const forbidden of [
+        'endpointId',
+        'executionEndpointId',
+        'permissionProfile',
+        'executionPermissionProfile',
+        'workingDirectory',
+        'projectRoot',
+        'confirm',
+        'confirmed',
+        'preview',
+        'args',
+      ]) {
+        assert.equal(forbidden in body, false, forbidden + ' must not be sent by extension controls');
+      }
+    }
   });
 });
 

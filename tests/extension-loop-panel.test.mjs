@@ -246,6 +246,8 @@ test('Bridge Panel source implements the approved four-stage guarded utility UI'
   assert.match(source, /returnInFlight/);
   assert.match(source, /updateActionState/);
   assert.match(source, /onEvent/);
+  assert.match(source, /event\.type === 'waiting'/);
+  assert.match(source, /event\.reason === 'active-session'/);
   assert.match(source, /data-cli-bridge-host-theme/);
   assert.match(source, /isDarkHost/);
   assert.match(source, /minHeight: '44px'/);

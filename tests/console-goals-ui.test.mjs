@@ -47,17 +47,18 @@ function jsonRequest(body) {
 // §1  View assertions
 // ════════════════════════════════════════════════════════════════════
 
-test('goal console HTML is a self-contained view that only talks to /bridge/goals*', () => {
+test('legacy goal renderer returns the Project Workspace goals context', () => {
   const html = renderGoalConsoleHtml();
-  assert.match(html, /CLI Bridge Goal Console/);
+  assert.match(html, /CLI Bridge — Project Workspace/);
+  assert.match(html, /id="goals-context"/);
+  assert.match(html, /lc === '\/goals'/);
   assert.match(html, /\/bridge\/goals/);
   assert.match(html, /\/bridge\/goals\/plan/);
   assert.match(html, /\/bridge\/goals\/approve/);
   assert.match(html, /\/bridge\/goals\/step/);
   assert.match(html, /\/bridge\/goals\/gate/);
   assert.match(html, /\/bridge\/goals\/cancel/);
-  // Links back to the review console.
-  assert.match(html, /\/console/);
+  assert.doesNotMatch(html, /class="project-ui-nav"/);
 });
 
 test('goal console HTML has no shell-style endpoint and no auto-execute affordance', () => {
@@ -66,20 +67,63 @@ test('goal console HTML has no shell-style endpoint and no auto-execute affordan
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
   // No silent auto-submit.
   assert.equal(html.includes('requestSubmit'), false);
-  // The page must teach the gate boundary explicitly.
-  assert.match(html, /gate/i);
-  assert.match(html, /must be approved before any step runs/i);
+  assert.match(html, /Approve gate/i);
+  assert.match(html, /blocked-needs-gate/i);
 });
 
-test('goal console page is served as HTML at /console/goals without a token', async (t) => {
+test('Project goals context renders binding and execution proposal controls', () => {
+  const html = renderGoalConsoleHtml();
+
+  for (const text of [
+    'Automation binding',
+    'Reasoning',
+    'Execution',
+    'Roles',
+    'Project',
+    'Working directory',
+    'Permission',
+    'Step / round',
+    'Limits',
+    'Deadline',
+    'Execution proposal',
+    'Prompt preview',
+    'Content hash',
+    'Binding hash',
+    'Confirm',
+    'Edit',
+    'Pause',
+    'Resume',
+    'Cancel',
+  ]) {
+    assert.match(html, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+
+  assert.match(html, /\/bridge\/execution-proposals/);
+  assert.match(html, /data-proposal-action="confirm"/);
+  assert.match(html, /data-proposal-action="pause"/);
+  assert.match(html, /data-proposal-action="resume"/);
+  assert.match(html, /data-proposal-action="cancel"/);
+});
+
+test('Project goals context refreshes server state and keeps confirmation authority local', () => {
+  const html = renderGoalConsoleHtml();
+
+  assert.match(html, /refreshGoalAutomationContext/);
+  assert.match(html, /setContextBusy/);
+  assert.match(html, /runGoalContextAction\('\/bridge\/execution-proposals\/' \+ action/);
+  assert.match(html, /executionEndpointId: proposal\.executionEndpointId/);
+  assert.equal(/apiKey|pairing token:|cookie|raw transcript/i.test(html), false);
+  assert.equal(html.includes('requestSubmit'), false);
+  assert.equal(html.includes('KeyboardEvent'), false);
+});
+
+test('legacy goal console redirects to the Project Workspace', async (t) => {
   const handle = await startLocalServer(0);
   t.after(closer(handle));
 
-  const res = await fetch(`${handle.url}${CONSOLE_GOALS_PATH}`);
-  assert.equal(res.status, 200);
-  assert.match(res.headers.get('content-type'), /text\/html/);
-  const body = await res.text();
-  assert.match(body, /CLI Bridge Goal Console/);
+  const res = await fetch(`${handle.url}${CONSOLE_GOALS_PATH}`, { redirect: 'manual' });
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/console/project');
 });
 
 test('goal console bridge calls require the pairing token', async (t) => {

@@ -86,6 +86,23 @@ test('handleProxyFetch accepts /bridge/outbound POST and serializes the body', a
   assert.deepEqual(JSON.parse(calls[0].init.body), { sessionId: 's1', prompt: 'p' });
 });
 
+test('handleProxyFetch accepts Stage B outbound stage route', async () => {
+  const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, { outboundPrompt: { id: 'o1' } }));
+  const result = await handleProxyFetch(
+    {
+      path: '/bridge/outbound/stage',
+      method: 'POST',
+      body: { outboundPromptId: 'o1', stage: 'submitted' },
+      token: 'tok',
+    },
+    fetchImpl,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].url, `${LOCAL_SERVER_BASE_URL}/bridge/outbound/stage`);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { outboundPromptId: 'o1', stage: 'submitted' });
+});
+
 test('handleProxyFetch rejects a full URL as path', async () => {
   const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, {}));
   const result = await handleProxyFetch(

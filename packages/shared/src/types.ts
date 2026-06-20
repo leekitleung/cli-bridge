@@ -46,6 +46,7 @@ export const AUDIT_EVENT_TYPES = [
   'redact_sensitive',
   'create_outbound_prompt',
   'claim_outbound_prompt',
+  'outbound_status_report',
   'fill_chatgpt',
   'extract_chatgpt',
   'create_pending_prompt',
@@ -129,11 +130,30 @@ export const OUTBOUND_PROMPT_STATUSES = [
   'queued',
   'claimed',
   'delivered',
+  'waiting_manual_send',
+  'submitted',
+  'responding',
+  'response_ready',
+  'returned',
+  'completed',
+  'expired',
   'failed',
   'cancelled',
 ] as const;
 
 export type OutboundPromptStatus = typeof OUTBOUND_PROMPT_STATUSES[number];
+
+export const WEB_RELAY_LOOP_STATUSES = [
+  'queued',
+  'running',
+  'paused',
+  'cancelling',
+  'cancelled',
+  'done',
+  'failed',
+] as const;
+
+export type WebRelayLoopStatus = typeof WEB_RELAY_LOOP_STATUSES[number];
 
 export const AGENT_REVIEW_STATUSES = [
   'draft',
@@ -257,6 +277,8 @@ export interface OutboundPrompt {
   prompt: string;
   status: OutboundPromptStatus;
   target: 'chatgpt-web';
+  /** Stage C bounded loop correlation. Server-owned; never supplied by extension. */
+  loopId?: string;
   /**
    * Phase 3 multi-executor relay (foundation): optional originating executor
    * endpoint. Absent for the legacy single-executor / manual flow. When present
@@ -268,10 +290,59 @@ export interface OutboundPrompt {
   claimedAt?: number;
   /** Opaque fencing token for the currently active claim lease. */
   claimToken?: string;
+  authorization: {
+    target: 'chatgpt-web';
+    contentHash: string;
+    expiresAt: number;
+  };
   deliveredAt?: number;
+  waitingAt?: number;
+  submittedAt?: number;
+  respondingAt?: number;
+  responseReadyAt?: number;
+  returnedAt?: number;
+  completedAt?: number;
+  expiredAt?: number;
   failedAt?: number;
   cancelledAt?: number;
   failureReason?: string;
+  evidence?: {
+    type: string;
+    at: number;
+    reason?: string;
+  }[];
+}
+
+export interface WebRelayLoop {
+  id: string;
+  projectId: string;
+  goalId: string;
+  sessionId: string;
+  endpointId: string;
+  status: WebRelayLoopStatus;
+  round: number;
+  maxRounds: number;
+  perRoundTimeoutMs: number;
+  totalDeadlineAt: number;
+  noProgressLimit: number;
+  noProgressCount: number;
+  seenContentHashes: string[];
+  lastProgressHash?: string;
+  currentOutboundPromptId?: string;
+  createdAt: number;
+  updatedAt: number;
+  pausedAt?: number;
+  cancelledAt?: number;
+  doneAt?: number;
+  failedAt?: number;
+  failureReason?: string;
+  evidence: {
+    type: string;
+    at: number;
+    reason?: string;
+    outboundPromptId?: string;
+    round?: number;
+  }[];
 }
 
 /**
@@ -525,6 +596,7 @@ export const GOAL_STATUSES = [
   'planned',
   'approved',
   'executing',
+  'paused',
   'done',
   'cancelled',
   'failed',
@@ -537,6 +609,7 @@ export const PLAN_STATUSES = [
   'awaiting-approval',
   'approved',
   'executing',
+  'paused',
   'done',
   'cancelled',
 ] as const;
@@ -578,6 +651,21 @@ export const EXECUTION_TIERS = [
 
 export type ExecutionTier = typeof EXECUTION_TIERS[number];
 
+export const AUTOMATION_REASONING_TIERS = ['high'] as const;
+export type AutomationReasoningTier = typeof AUTOMATION_REASONING_TIERS[number];
+
+export const AUTOMATION_EXECUTION_TIERS = ['medium', 'low'] as const;
+export type AutomationExecutionTier = typeof AUTOMATION_EXECUTION_TIERS[number];
+
+export interface RunEndpointBindingEndpointRef {
+  id: string;
+  label: string;
+  transport: AgentEndpointTransport;
+  capabilities: {
+    canExecute: boolean;
+  };
+}
+
 export interface Goal {
   id: string;
   sessionId: string;
@@ -609,6 +697,8 @@ export interface PlanStep {
 export interface Plan {
   id: string;
   goalId: string;
+  /** Derived-plan lineage for immutable automation binding changes. */
+  parentPlanId?: string;
   steps: PlanStep[];
   status: PlanStatus;
   // Explicit set of execution tiers permitted within this plan. Default is
@@ -619,6 +709,100 @@ export interface Plan {
   createdAt: number;
   updatedAt: number;
   approvedAt?: number;
+  pausedAt?: number;
+  pauseReason?: string;
+}
+
+export interface RunEndpointBinding {
+  goalId: string;
+  planId: string;
+  parentPlanId?: string;
+  reasoningEndpointId: string;
+  executionEndpointId: string;
+  reasoningEndpoint: RunEndpointBindingEndpointRef;
+  executionEndpoint: RunEndpointBindingEndpointRef;
+  reasoningTier: AutomationReasoningTier;
+  executionTier: AutomationExecutionTier;
+  executionPermissionProfile: string;
+  executionWorkingDirectoryRef: string;
+  maxSteps: number;
+  maxReasoningRounds: number;
+  deadlineAt: string;
+  createdAt: number;
+  updatedAt: number;
+  bindingHash: string;
+  lockedAt?: number;
+}
+
+export const REASONING_ARTIFACT_KINDS = [
+  'plan-draft',
+  'review-result',
+  'execution-proposal',
+] as const;
+
+export type ReasoningArtifactKind = typeof REASONING_ARTIFACT_KINDS[number];
+
+export interface ReasoningArtifact {
+  artifactId: string;
+  goalId: string;
+  planId: string;
+  endpointId: string;
+  bindingHash: string;
+  kind: ReasoningArtifactKind;
+  contentHash: string;
+  summary: string;
+  createdAt: string;
+}
+
+export const EXECUTION_PROPOSAL_STATUSES = [
+  'draft',
+  'awaiting-confirmation',
+  'confirmed',
+  'dispatching',
+  'returned',
+  'failed',
+  'paused',
+  'cancelled',
+  'timed-out',
+] as const;
+
+export type ExecutionProposalStatus = typeof EXECUTION_PROPOSAL_STATUSES[number];
+
+export interface ExecutionProposal {
+  id: string;
+  goalId: string;
+  planId: string;
+  stepId: string;
+  artifactId: string;
+  contentHash: string;
+  bindingHash: string;
+  executionEndpointId: string;
+  executionPermissionProfile: string;
+  projectId: string;
+  preview: string;
+  command: 'codex' | 'claude';
+  args: string[];
+  stdin: string;
+  status: ExecutionProposalStatus;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  confirmationNonce?: string;
+  confirmedAt?: number;
+  dispatchingAt?: number;
+  returnedAt?: number;
+  failedAt?: number;
+  pausedAt?: number;
+  cancelledAt?: number;
+  timedOutAt?: number;
+  failureReason?: string;
+  result?: {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+  };
+  supersedesProposalId?: string;
+  supersededByProposalId?: string;
 }
 
 

@@ -24,6 +24,28 @@ export interface BridgePanelStatus {
   detail: string;
 }
 
+export interface AutomationMirrorState {
+  binding?: {
+    planId: string;
+    reasoningEndpointId: string;
+    executionEndpointId: string;
+    reasoningTier: string;
+    executionTier: string;
+    executionPermissionProfile: string;
+    executionWorkingDirectoryRef: string;
+    maxSteps: number;
+    maxReasoningRounds: number;
+    deadlineAt: string;
+  } | null;
+  proposal?: {
+    id: string;
+    status: string;
+    stepId: string;
+    contentHash: string;
+  } | null;
+  round?: number;
+}
+
 export const IDLE_PANEL_STATUS: BridgePanelStatus = {
   kind: 'idle',
   label: '待处理',
@@ -269,4 +291,34 @@ export function createLoopPanelStatus(stage: BridgePanelLoopStage): BridgePanelS
         detail: '请检查连接后重试',
       };
   }
+}
+
+export function createAutomationMirrorStatus(state: AutomationMirrorState): BridgePanelStatus {
+  if (!state.binding) {
+    return {
+      kind: 'idle',
+      label: '自动化未绑定',
+      detail: '等待服务器创建双端点绑定',
+    };
+  }
+  const proposalStatus = state.proposal?.status ?? 'none';
+  const kind: BridgePanelStatusKind = proposalStatus === 'awaiting-confirmation'
+    ? 'blocked'
+    : proposalStatus === 'paused'
+      ? 'blocked'
+      : proposalStatus === 'failed'
+        ? 'failed'
+        : 'idle';
+  return {
+    kind,
+    label: `自动化 ${proposalStatus}`,
+    detail: [
+      `${state.binding.reasoningEndpointId} -> ${state.binding.executionEndpointId}`,
+      `step ${state.proposal?.stepId ?? 'none'}`,
+      `round ${state.round ?? 0}`,
+      `tier ${state.binding.reasoningTier}/${state.binding.executionTier}`,
+      `profile ${state.binding.executionPermissionProfile}`,
+      `hash ${state.proposal?.contentHash ?? 'none'}`,
+    ].join(' · '),
+  };
 }

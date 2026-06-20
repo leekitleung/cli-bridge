@@ -41,12 +41,34 @@ export interface FillComposerOptions {
   now?: () => number;
   /** Injectable delay for deterministic tests. Defaults to setTimeout. */
   delay?: (ms: number) => Promise<void>;
+  /** How long to wait for the composer DOM to reflect a successful write. */
+  verifyTimeoutMs?: number;
   /** Clipboard writes are only allowed for explicit user copy/fallback actions. */
   allowClipboardFallback?: boolean;
 }
 
+export type SubmitPromptReason =
+  | 'composer-not-found'
+  | 'composer-hash-mismatch'
+  | 'send-control-not-found'
+  | 'send-control-ambiguous'
+  | 'send-control-disabled'
+  | 'send-click-failed'
+  | 'submit-not-observed'
+  | null;
+
+export interface SubmitPromptResult {
+  ok: boolean;
+  reason: SubmitPromptReason;
+  composerHash?: string;
+}
+
 export const DEFAULT_COMPOSER_LOCATE_TIMEOUT_MS = 3000;
 export const DEFAULT_COMPOSER_LOCATE_POLL_INTERVAL_MS = 150;
+export const DEFAULT_COMPOSER_VERIFY_TIMEOUT_MS = 750;
+export const DEFAULT_COMPOSER_VERIFY_POLL_INTERVAL_MS = 50;
+export const DEFAULT_SUBMIT_OBSERVE_TIMEOUT_MS = 5000;
+export const DEFAULT_SUBMIT_OBSERVE_POLL_INTERVAL_MS = 150;
 
 export interface LocateComposerOptions {
   timeoutMs?: number;
@@ -67,6 +89,14 @@ const CONTENTEDITABLE_SELECTORS = [
   '.ProseMirror[contenteditable="true"]',
   '[role="textbox"][contenteditable="true"]',
   'div[contenteditable="true"]',
+] as const;
+
+const SEND_BUTTON_SELECTORS = [
+  'button[data-testid="send-button"]',
+  'button[aria-label="Send prompt"]',
+  'button[aria-label="Send message"]',
+  'button[aria-label="发送提示"]',
+  'button[aria-label="发送消息"]',
 ] as const;
 
 function getDefaultRoot(): ParentNode | null {
@@ -251,6 +281,192 @@ function normalizeComposerText(text: string): string {
   return text.replace(/\r\n/g, '\n').trim();
 }
 
+async function waitForComposerText(
+  input: ComposerInput,
+  method: 'textarea' | 'contenteditable',
+  expectedText: string,
+  options: {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+    now?: () => number;
+    delay?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<boolean> {
+  const expected = normalizeComposerText(expectedText);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_COMPOSER_VERIFY_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_COMPOSER_VERIFY_POLL_INTERVAL_MS;
+  const now = options.now ?? (() => Date.now());
+  const delay = options.delay ?? defaultLocateDelay;
+
+  const matches = () => normalizeComposerText(readComposerText(input, method)) === expected;
+  if (matches()) {
+    return true;
+  }
+  if (timeoutMs <= 0) {
+    return false;
+  }
+
+  const start = now();
+  while (now() - start < timeoutMs) {
+    await delay(pollIntervalMs);
+    if (matches()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function createBrowserContentHash(text: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error('crypto-subtle-unavailable');
+  }
+  const bytes = new TextEncoder().encode(text);
+  const digest = await subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  return `sha256:${hex}`;
+}
+
+function getRootVisibleText(root: ParentNode | null): string {
+  if (!root) {
+    return '';
+  }
+  const element = typeof Document !== 'undefined' && root instanceof Document ? root.body : root;
+  const textSource = element as HTMLElement & { innerText?: string };
+  return typeof textSource.innerText === 'string'
+    ? textSource.innerText
+    : (element.textContent ?? '');
+}
+
+export async function getComposerContentHash(
+  root: ParentNode | null = getDefaultRoot(),
+): Promise<string | null> {
+  const input = findComposerInput(root);
+  if (!input) {
+    return null;
+  }
+  return createBrowserContentHash(normalizeComposerText(readComposerText(input, getInputMethod(input))));
+}
+
+async function waitForSubmittedPromptEvidence(
+  expectedContentHash: string,
+  expectedPromptText: string,
+  root: ParentNode | null,
+  options: {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {},
+): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SUBMIT_OBSERVE_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_SUBMIT_OBSERVE_POLL_INTERVAL_MS;
+  const start = Date.now();
+
+  while (Date.now() - start <= timeoutMs) {
+    const composerHash = await getComposerContentHash(root);
+    const composerNoLongerHoldsPrompt = composerHash !== expectedContentHash;
+    if (
+      composerNoLongerHoldsPrompt &&
+      getRootVisibleText(root).includes(expectedPromptText)
+    ) {
+      return true;
+    }
+    await defaultLocateDelay(pollIntervalMs);
+  }
+  return false;
+}
+
+function findSendButtonCandidates(root: ParentNode): HTMLElement[] {
+  const seen = new Set<Element>();
+  const candidates: HTMLElement[] = [];
+  for (const selector of SEND_BUTTON_SELECTORS) {
+    for (const element of Array.from(root.querySelectorAll(selector))) {
+      if (seen.has(element)) {
+        continue;
+      }
+      seen.add(element);
+      if (
+        element.tagName.toLowerCase() === 'button' &&
+        !isInsideBridgePanel(element) &&
+        isVisibleElement(element)
+      ) {
+        candidates.push(element as HTMLElement);
+      }
+    }
+  }
+  return candidates;
+}
+
+export function findUniqueSendButton(
+  root: ParentNode | null = getDefaultRoot(),
+): HTMLElement | SubmitPromptReason {
+  if (!root) {
+    return 'send-control-not-found';
+  }
+  const candidates = findSendButtonCandidates(root);
+  if (candidates.length === 0) {
+    return 'send-control-not-found';
+  }
+  if (candidates.length > 1) {
+    return 'send-control-ambiguous';
+  }
+  const [button] = candidates;
+  if (!button) {
+    return 'send-control-not-found';
+  }
+  if (isElementDisabled(button)) {
+    return 'send-control-disabled';
+  }
+  return button;
+}
+
+export async function submitAuthorizedPrompt(
+  expectedContentHash: string,
+  options: {
+    root?: ParentNode;
+    expectedPromptText?: string;
+    submitObserveTimeoutMs?: number;
+    submitObservePollIntervalMs?: number;
+  } = {},
+): Promise<SubmitPromptResult> {
+  const root = options.root ?? getDefaultRoot();
+  const composerHash = await getComposerContentHash(root);
+  if (!composerHash) {
+    return { ok: false, reason: 'composer-not-found' };
+  }
+  if (composerHash !== expectedContentHash) {
+    return { ok: false, reason: 'composer-hash-mismatch', composerHash };
+  }
+  const button = findUniqueSendButton(root);
+  if (!button) {
+    return { ok: false, reason: 'send-control-not-found', composerHash };
+  }
+  if (typeof button === 'string') {
+    return { ok: false, reason: button, composerHash };
+  }
+  try {
+    button.click();
+  } catch {
+    return { ok: false, reason: 'send-click-failed', composerHash };
+  }
+  if (options.expectedPromptText) {
+    const observed = await waitForSubmittedPromptEvidence(
+      expectedContentHash,
+      options.expectedPromptText,
+      root,
+      {
+        timeoutMs: options.submitObserveTimeoutMs,
+        pollIntervalMs: options.submitObservePollIntervalMs,
+      },
+    );
+    if (!observed) {
+      return { ok: false, reason: 'submit-not-observed', composerHash };
+    }
+  }
+  return { ok: true, reason: null, composerHash };
+}
+
 async function fallbackToClipboard(
   text: string,
   reason: Exclude<FillComposerReason, null>,
@@ -319,7 +535,12 @@ export async function fillComposerText(
   // Verify the text actually landed in the composer rather than trusting that
   // the write path ran. If the DOM rejected or transformed our input, fall
   // back to the clipboard so the content is never silently lost.
-  if (normalizeComposerText(readComposerText(input, method)) !== normalizeComposerText(text)) {
+  const verified = await waitForComposerText(input, method, text, {
+    timeoutMs: options.verifyTimeoutMs,
+    now: options.now,
+    delay: options.delay,
+  });
+  if (!verified) {
     return fallbackToClipboard(
       text,
       'input-verify-failed',

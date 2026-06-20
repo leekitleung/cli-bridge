@@ -15,11 +15,9 @@ import {
 import { createHealthPayload } from './routes/health.ts';
 import {
   CONSOLE_PATH,
-  renderConsoleHtml,
 } from './routes/console.ts';
 import {
   CONSOLE_GOALS_PATH,
-  renderGoalConsoleHtml,
 } from './routes/console-goals.ts';
 import {
   CONSOLE_PROJECT_PATH,
@@ -137,16 +135,16 @@ export async function startLocalServer(
     }
 
     if (request.method === 'GET' && url.pathname === CONSOLE_PATH) {
-      response.statusCode = 200;
-      response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(renderConsoleHtml());
+      response.statusCode = 302;
+      response.setHeader('location', CONSOLE_PROJECT_PATH);
+      response.end();
       return;
     }
 
     if (request.method === 'GET' && url.pathname === CONSOLE_GOALS_PATH) {
-      response.statusCode = 200;
-      response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(renderGoalConsoleHtml());
+      response.statusCode = 302;
+      response.setHeader('location', CONSOLE_PROJECT_PATH);
+      response.end();
       return;
     }
 

@@ -71,7 +71,7 @@ test('full outbound→deliver→extract-return chain uses the server-configured 
     jsonRequest({ outboundPromptId, claimToken: claim.payload.outboundPrompt.claimToken, ok: true }),
   );
   assert.equal(ack.statusCode, 200);
-  assert.equal(ack.payload.outboundPrompt.status, 'delivered');
+  assert.equal(ack.payload.outboundPrompt.status, 'waiting_manual_send');
 
   // Relay context now resolves the originating endpoint for this session.
   const ctx = runtime.relayContextStore.getRelayContext(sessionId);

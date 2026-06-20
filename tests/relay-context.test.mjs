@@ -157,7 +157,7 @@ test('POST /bridge/outbound rejects client-selected endpoint routing', async (t)
   assert.match((await first.json()).message, /server-owned/i);
 });
 
-test('server-configured outbound endpoint round-trips through claim and delivered ack', async (t) => {
+test('server-configured outbound endpoint round-trips through claim and manual-send wait ack', async (t) => {
   const handle = await startLocalServer(0, {
     inboundRelayEndpointId: 'mock-inbound-agent',
   });
@@ -181,6 +181,6 @@ test('server-configured outbound endpoint round-trips through claim and delivere
     body: JSON.stringify({ outboundPromptId: id, claimToken: claimed.claimToken, ok: true }),
   });
   const acked = await ack.json();
-  assert.equal(acked.outboundPrompt.status, 'delivered');
+  assert.equal(acked.outboundPrompt.status, 'waiting_manual_send');
   assert.equal(acked.outboundPrompt.endpointId, 'mock-inbound-agent');
 });

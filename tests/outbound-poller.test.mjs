@@ -10,6 +10,7 @@ import {
 import {
   clearActiveRelaySession,
   getActiveRelaySession,
+  getRelaySessionSnapshot,
   setActiveRelaySession,
 } from '../apps/extension/src/content/active-relay-session.ts';
 
@@ -121,6 +122,7 @@ test('outbound poller fills composer and acknowledges delivery without submittin
     });
     assert.equal(timers.length, 1);
     assert.deepEqual(events.map((event) => event.type), ['claimed', 'delivered']);
+    assert.equal(getRelaySessionSnapshot().stage, 'waiting-manual-send');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -181,9 +183,11 @@ test('outbound poller skips claiming and filling while ChatGPT is streaming', as
   };
 
   try {
+    const events = [];
     const poller = startOutboundPromptPoller({
       root: createFakeRoot([composer]),
       isStreaming: () => true,
+      onEvent: (event) => events.push(event),
       setIntervalFn() {
         return 1;
       },
@@ -196,6 +200,7 @@ test('outbound poller skips claiming and filling while ChatGPT is streaming', as
     assert.equal(result, null);
     assert.equal(calls.length, 0, 'must not hit the bridge while streaming');
     assert.equal(composer.value, '', 'must not fill the composer while streaming');
+    assert.deepEqual(events, [{ type: 'waiting', reason: 'streaming' }]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -224,6 +229,65 @@ test('outbound poller does not claim another prompt while a reply route is pendi
     });
     assert.equal(await poller.tick(), null);
     poller.stop();
+    assert.equal(calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearActiveRelaySession();
+  }
+});
+
+test('outbound poller reports unpaired wait state without claiming', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: null });
+  clearActiveRelaySession();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    calls.push(args);
+    throw new Error('must not claim');
+  };
+  try {
+    const events = [];
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([]),
+      onEvent: (event) => events.push(event),
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    assert.equal(await poller.tick(), null);
+    poller.stop();
+    assert.deepEqual(events[0], { type: 'waiting', reason: 'unpaired' });
+    assert.equal(calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('outbound poller reports active-session wait state without claiming', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  clearActiveRelaySession();
+  setActiveRelaySession({
+    sessionId: 's-active',
+    outboundPromptId: 'out-active',
+    packetId: 'pk-active',
+    updatedAt: Date.now(),
+  });
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    calls.push(args);
+    throw new Error('must not claim');
+  };
+  try {
+    const events = [];
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([]),
+      onEvent: (event) => events.push(event),
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    assert.equal(await poller.tick(), null);
+    poller.stop();
+    assert.deepEqual(events[0], { type: 'waiting', reason: 'active-session' });
     assert.equal(calls.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
@@ -266,6 +330,133 @@ test('outbound poller records the active relay session after successful fill + a
     globalThis.fetch = originalFetch;
     clearActiveRelaySession();
   }
+});
+
+test('outbound poller auto relay submits once and returns stable assistant response', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  clearActiveRelaySession();
+  const composer = new FakeElement('textarea', { 'data-testid': 'prompt-textarea' });
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(String(url)).pathname;
+    calls.push({ path, body: init.body ? JSON.parse(init.body) : null });
+    if (path === '/bridge/outbound/next') {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: {
+        id: 'out-auto',
+        sessionId: 's-auto',
+        packetId: 'pk-auto',
+        claimToken: 'claim-auto',
+        prompt: 'auto relay prompt',
+        status: 'claimed',
+        target: 'chatgpt-web',
+        authorization: {
+          target: 'chatgpt-web',
+          contentHash: 'sha256:auto',
+          expiresAt: Date.now() + 60_000,
+        },
+      } }) };
+    }
+    if (path === '/bridge/outbound/ack') {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: { id: 'out-auto', status: 'waiting_manual_send' } }) };
+    }
+    if (path === '/bridge/outbound/stage') {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: { id: 'out-auto', status: init.body ? JSON.parse(init.body).stage : 'unknown' } }) };
+    }
+    if (path === '/bridge/extract-return') {
+      return { ok: true, status: 201, json: async () => ({ routedTo: 'inbound' }) };
+    }
+    throw new Error(`unexpected fetch path ${path}`);
+  };
+  try {
+    const events = [];
+    const poller = startOutboundPromptPoller({
+      root: createFakeRoot([composer]),
+      autoRelay: true,
+      submitPrompt: async (contentHash, options) => ({
+        ok: contentHash === 'sha256:auto' && options.expectedPromptText === 'auto relay prompt',
+        reason: null,
+      }),
+      waitForAssistantResponse: async () => ({ ok: true, text: 'assistant reply', reason: null }),
+      onEvent: (event) => events.push(event),
+      setIntervalFn() { return 1; },
+      clearIntervalFn() {},
+    });
+    await poller.tick();
+    poller.stop();
+
+    assert.deepEqual(events.map((event) => event.type), ['claimed', 'delivered', 'submitted', 'returned']);
+    assert.deepEqual(
+      calls.filter((call) => call.path === '/bridge/outbound/stage').map((call) => call.body.stage),
+      ['submitted', 'responding', 'response-ready', 'returned'],
+    );
+    assert.deepEqual(calls.find((call) => call.path === '/bridge/extract-return').body, {
+      sessionId: 's-auto',
+      content: 'assistant reply',
+      operationId: 'out-auto',
+    });
+    assert.equal(getActiveRelaySession(), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearActiveRelaySession();
+  }
+});
+
+test('outbound poller marks Stage B prompt failed when response never stabilizes', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'tok-123' });
+  const composer = new FakeElement('textarea', {
+    'data-testid': 'prompt-textarea',
+  });
+  composer.value = '';
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ path, body });
+    if (path === '/bridge/outbound/next') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          outboundPrompt: {
+            id: 'out-timeout',
+            sessionId: 's-timeout',
+            packetId: 'packet-timeout',
+            prompt: 'timeout prompt',
+            claimToken: 'claim-timeout',
+            authorization: { contentHash: 'sha256:timeout' },
+          },
+        }),
+      };
+    }
+    if (path === '/bridge/outbound/ack') {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: { id: 'out-timeout', status: 'waiting_manual_send' } }) };
+    }
+    if (path === '/bridge/outbound/stage') {
+      return { ok: true, status: 200, json: async () => ({ outboundPrompt: { id: 'out-timeout', status: body.stage } }) };
+    }
+    throw new Error(`unexpected fetch path ${path}`);
+  };
+
+  const poller = startOutboundPromptPoller({
+    root: createFakeRoot([composer]),
+    autoRelay: true,
+    submitPrompt: async () => ({ ok: true, reason: null }),
+    waitForAssistantResponse: async () => ({ ok: false, text: '', reason: 'streaming' }),
+    setIntervalFn() { return 1; },
+    clearIntervalFn() {},
+  });
+  await poller.tick();
+  poller.stop();
+
+  assert.deepEqual(
+    calls.filter((call) => call.path === '/bridge/outbound/stage').map((call) => [call.body.stage, call.body.failureReason]),
+    [
+      ['submitted', undefined],
+      ['responding', undefined],
+      ['failed', 'streaming'],
+    ],
+  );
 });
 
 test('outbound poller does not record an active relay session while streaming', async () => {

@@ -6,11 +6,15 @@ import {
 } from '../content/extraction.ts';
 import { fillComposerText, type FillComposerResult } from '../content/chatgpt-dom.ts';
 import {
+  cancelAutomationControl,
   clearPairingTokenFromStorage,
   createExtractReturn,
   createPacket,
+  getAutomationControlStatus,
   hasPairingToken,
   loadPairingTokenFromStorage,
+  pauseAutomationControl,
+  resumeAutomationControl,
   testPrivateHealth,
 } from '../content/bridge-client.ts';
 import {
@@ -18,7 +22,7 @@ import {
   stopActiveOutboundPoller,
 } from '../content/outbound-poller.ts';
 import {
-  clearActiveRelaySession,
+  cancelActiveRelaySession,
   getActiveRelaySession,
   submitExtractReturn,
 } from '../content/active-relay-session.ts';
@@ -28,6 +32,7 @@ import {
   createExtractPanelStatus,
   createExtractRoutePanelStatus,
   createFillPanelStatus,
+  createAutomationMirrorStatus,
   createLocatingPanelStatus,
   createLoopPanelStatus,
   createNetworkErrorPanelStatus,
@@ -55,38 +60,40 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   let latestPanelStatus: BridgePanelStatus = IDLE_PANEL_STATUS;
   let latestLoopStage: BridgePanelLoopStage = 'codex-output-ready';
   let pendingExtractText = '';
+  let latestAutomationProposalId = '';
   let isConnected = false;
   let returnInFlight = false;
 
   const theme = root.createElement('style');
   theme.textContent = `
     #${PANEL_ROOT_ID} {
-      --cb-panel-bg: rgba(255, 255, 255, 0.98);
-      --cb-surface: #f3f4f6;
-      --cb-text: #111827;
-      --cb-muted: #4b5563;
-      --cb-border: #d1d5db;
+      --cb-panel-bg: #ffffff;
+      --cb-surface: #f1f3f2;
+      --cb-text: #181a19;
+      --cb-muted: #5f6a65;
+      --cb-border: #d7ddd9;
+      --cb-accent: #10a37f;
       color-scheme: light dark;
     }
     #${PANEL_ROOT_ID}[data-cli-bridge-host-theme="dark"] {
-      --cb-panel-bg: rgba(24, 24, 27, 0.98);
-      --cb-surface: #27272a;
+      --cb-panel-bg: #171717;
+      --cb-surface: #202020;
       --cb-text: #f4f4f5;
       --cb-muted: #a1a1aa;
-      --cb-border: #52525b;
+      --cb-border: #303030;
     }
     @media (prefers-color-scheme: dark) {
       #${PANEL_ROOT_ID} {
-        --cb-panel-bg: rgba(24, 24, 27, 0.98);
-        --cb-surface: #27272a;
+        --cb-panel-bg: #171717;
+        --cb-surface: #202020;
         --cb-text: #f4f4f5;
         --cb-muted: #a1a1aa;
-        --cb-border: #52525b;
+        --cb-border: #303030;
       }
     }
     #${PANEL_ROOT_ID} button:focus-visible,
     #${PANEL_ROOT_ID} textarea:focus-visible {
-      outline: 2px solid #14b8a6;
+      outline: 2px solid var(--cb-accent);
       outline-offset: 2px;
     }
   `;
@@ -215,7 +222,36 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     gap: '8px',
   });
 
-  for (const button of [testTokenButton, clearTokenButton, fillButton, extractButton, returnButton, copyButton]) {
+  const pauseAutomationButton = root.createElement('button');
+  pauseAutomationButton.type = 'button';
+  pauseAutomationButton.textContent = '暂停自动化';
+
+  const resumeAutomationButton = root.createElement('button');
+  resumeAutomationButton.type = 'button';
+  resumeAutomationButton.textContent = '恢复自动化';
+
+  const cancelAutomationButton = root.createElement('button');
+  cancelAutomationButton.type = 'button';
+  cancelAutomationButton.textContent = '取消自动化';
+
+  const automationActions = root.createElement('div');
+  Object.assign(automationActions.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gap: '8px',
+  });
+
+  for (const button of [
+    testTokenButton,
+    clearTokenButton,
+    fillButton,
+    extractButton,
+    returnButton,
+    copyButton,
+    pauseAutomationButton,
+    resumeAutomationButton,
+    cancelAutomationButton,
+  ]) {
     Object.assign(button.style, {
       minHeight: '44px',
       color: 'var(--cb-text)',
@@ -258,6 +294,16 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     overflowWrap: 'anywhere',
   });
 
+  const automationStatus = root.createElement('output');
+  automationStatus.setAttribute('data-cli-bridge-automation-status', 'true');
+  automationStatus.setAttribute('role', 'status');
+  automationStatus.setAttribute('aria-live', 'polite');
+  Object.assign(automationStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    overflowWrap: 'anywhere',
+  });
+
   const preview = root.createElement('pre');
   preview.textContent = '';
   Object.assign(preview.style, {
@@ -289,8 +335,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const setPrimary = (button: HTMLButtonElement, primary: boolean) => {
     button.style.color = primary ? '#ffffff' : 'var(--cb-text)';
-    button.style.background = primary ? '#0f766e' : 'var(--cb-surface)';
-    button.style.borderColor = primary ? '#0f766e' : 'var(--cb-border)';
+    button.style.background = primary ? 'var(--cb-accent)' : 'var(--cb-surface)';
+    button.style.borderColor = primary ? 'var(--cb-accent)' : 'var(--cb-border)';
     button.style.fontWeight = primary ? '700' : '500';
   };
 
@@ -301,7 +347,18 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     extractButton.disabled = !isConnected || !canPreviewReturn;
     returnButton.disabled = !isConnected || !pendingExtractText || returnInFlight;
     copyButton.disabled = preview.textContent?.length === 0;
-    for (const button of [fillButton, extractButton, returnButton, copyButton]) {
+    pauseAutomationButton.disabled = !isConnected || !latestAutomationProposalId;
+    resumeAutomationButton.disabled = !isConnected || !latestAutomationProposalId;
+    cancelAutomationButton.disabled = !isConnected || !latestAutomationProposalId;
+    for (const button of [
+      fillButton,
+      extractButton,
+      returnButton,
+      copyButton,
+      pauseAutomationButton,
+      resumeAutomationButton,
+      cancelAutomationButton,
+    ]) {
       button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
       button.style.opacity = button.disabled ? '0.55' : '1';
     }
@@ -309,6 +366,9 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     setPrimary(extractButton, !extractButton.disabled && latestLoopStage === 'chatgpt-awaiting-user-send');
     setPrimary(returnButton, !returnButton.disabled);
     setPrimary(copyButton, false);
+    setPrimary(pauseAutomationButton, false);
+    setPrimary(resumeAutomationButton, false);
+    setPrimary(cancelAutomationButton, false);
   };
 
   const renderStatus = (nextStatus: BridgePanelStatus) => {
@@ -338,6 +398,38 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   renderRelayStatus();
 
+  const refreshAutomationMirror = async () => {
+    if (!hasPairingToken()) {
+      latestAutomationProposalId = '';
+      const next = createAutomationMirrorStatus({});
+      automationStatus.textContent = `${next.label}: ${next.detail}`;
+      updateActionState();
+      return;
+    }
+    const result = await getAutomationControlStatus();
+    if (!result.ok) {
+      latestAutomationProposalId = '';
+      const next = createAutomationMirrorStatus({});
+      automationStatus.textContent = `${next.label}: ${next.detail}`;
+      updateActionState();
+      return;
+    }
+    const data = result.data as {
+      bindings?: Parameters<typeof createAutomationMirrorStatus>[0]['binding'][];
+      proposals?: Parameters<typeof createAutomationMirrorStatus>[0]['proposal'][];
+    };
+    const proposal = data.proposals?.[0] ?? null;
+    latestAutomationProposalId = proposal?.id ?? '';
+    const next = createAutomationMirrorStatus({
+      binding: data.bindings?.[0] ?? null,
+      proposal,
+      round: 0,
+    });
+    automationStatus.textContent = `${next.label}: ${next.detail}`;
+    updateActionState();
+  };
+  refreshAutomationMirror();
+
   const renderConnection = (state: Parameters<typeof createConnectionPanelStatus>[0]) => {
     const next = createConnectionPanelStatus(state);
     connectionStatus.textContent = `${next.label}: ${next.detail}`;
@@ -359,15 +451,31 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     const probe = await testPrivateHealth();
     renderConnection(probe);
     if (probe === 'connected') {
+      await refreshAutomationMirror();
       ensureOutboundPromptPoller({
         root,
         clipboard: globalThis.navigator?.clipboard,
+        autoRelay: true,
         onEvent(event) {
           if (event.type === 'claimed') {
             renderStatus({ kind: 'idle', label: '正在填入', detail: '已领取本地交接内容' });
           } else if (event.type === 'delivered') {
             renderStatus({ kind: 'success', label: '已填入', detail: '请在 ChatGPT 中手动发送' });
             renderLoopStatus('chatgpt-awaiting-user-send');
+            renderRelayStatus();
+          } else if (event.type === 'waiting') {
+            if (event.reason === 'streaming') {
+              renderStatus(createStreamingBlockedPanelStatus());
+            } else if (event.reason === 'unpaired') {
+              renderConnection('unpaired');
+            } else if (event.reason === 'active-session') {
+              renderRelayStatus();
+            }
+          } else if (event.type === 'submitted') {
+            renderStatus({ kind: 'idle', label: '已提交', detail: '正在等待 ChatGPT 回复' });
+          } else if (event.type === 'returned') {
+            renderStatus({ kind: 'success', label: '已回传', detail: '回复已进入本地回程队列' });
+            renderLoopStatus('codex-delivered');
             renderRelayStatus();
           } else {
             renderStatus({ kind: 'failed', label: '自动填入失败', detail: '请检查连接后重试' });
@@ -391,9 +499,28 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   clearTokenButton.addEventListener('click', async () => {
     await clearPairingTokenFromStorage();
     stopActiveOutboundPoller();
-    clearActiveRelaySession();
+    cancelActiveRelaySession('pairing-cleared');
     renderConnection('unpaired');
     renderRelayStatus();
+    await refreshAutomationMirror();
+  });
+
+  pauseAutomationButton.addEventListener('click', async () => {
+    if (!latestAutomationProposalId) return;
+    await pauseAutomationControl(latestAutomationProposalId, 'operator-pause');
+    await refreshAutomationMirror();
+  });
+
+  resumeAutomationButton.addEventListener('click', async () => {
+    if (!latestAutomationProposalId) return;
+    await resumeAutomationControl(latestAutomationProposalId);
+    await refreshAutomationMirror();
+  });
+
+  cancelAutomationButton.addEventListener('click', async () => {
+    if (!latestAutomationProposalId) return;
+    await cancelAutomationControl(latestAutomationProposalId, 'operator-cancel');
+    await refreshAutomationMirror();
   });
 
   const sessionId = `panel-${Date.now()}`;
@@ -486,6 +613,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   connectionActions.append(testTokenButton, clearTokenButton);
   returnActions.append(extractButton, returnButton, copyButton);
+  automationActions.append(pauseAutomationButton, resumeAutomationButton, cancelAutomationButton);
 
   const panelBody = root.createElement('div');
   Object.assign(panelBody.style, { display: 'grid', gap: '8px' });
@@ -498,6 +626,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     returnActions,
     loopStatus,
     relayStatus,
+    automationStatus,
+    automationActions,
     status,
     preview,
   );

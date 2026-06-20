@@ -182,6 +182,11 @@ export interface OutboundPromptPayload {
   status: string;
   target: 'chatgpt-web';
   claimToken: string;
+  authorization: {
+    target: 'chatgpt-web';
+    contentHash: string;
+    expiresAt: number;
+  };
 }
 
 export function createOutboundPrompt(sessionId: string, prompt: string) {
@@ -206,6 +211,53 @@ export function acknowledgeOutboundPrompt(
     claimToken,
     ok,
     ...(failureReason ? { failureReason } : {}),
+  });
+}
+
+export function cancelOutboundPrompt(outboundPromptId: string) {
+  return bridgeFetch('/bridge/outbound/cancel', 'POST', { outboundPromptId });
+}
+
+export function markOutboundPromptStage(
+  outboundPromptId: string,
+  stage: 'submitted' | 'responding' | 'response-ready' | 'returned' | 'failed',
+  failureReason?: string,
+) {
+  return bridgeFetch('/bridge/outbound/stage', 'POST', {
+    outboundPromptId,
+    stage,
+    ...(failureReason ? { failureReason } : {}),
+  });
+}
+
+export function getOutboundStatus() {
+  return bridgeFetch('/bridge/outbound/status', 'GET');
+}
+
+export function getOutboundReport() {
+  return bridgeFetch('/bridge/outbound/report', 'GET');
+}
+
+export function getAutomationControlStatus(planId?: string) {
+  const suffix = planId ? `?planId=${encodeURIComponent(planId)}` : '';
+  return bridgeFetch(`/bridge/execution-proposals${suffix}`, 'GET');
+}
+
+export function pauseAutomationControl(proposalId: string, reason?: string) {
+  return bridgeFetch('/bridge/execution-proposals/pause', 'POST', {
+    proposalId,
+    ...(reason ? { reason } : {}),
+  });
+}
+
+export function resumeAutomationControl(proposalId: string) {
+  return bridgeFetch('/bridge/execution-proposals/resume', 'POST', { proposalId });
+}
+
+export function cancelAutomationControl(proposalId: string, reason?: string) {
+  return bridgeFetch('/bridge/execution-proposals/cancel', 'POST', {
+    proposalId,
+    ...(reason ? { reason } : {}),
   });
 }
 

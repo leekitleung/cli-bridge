@@ -67,6 +67,13 @@ export interface AttachPlanInput {
   now?: number;
 }
 
+export interface DerivePlanInput {
+  id?: string;
+  goalId: string;
+  parentPlanId: string;
+  now?: number;
+}
+
 // Data-layer helper: the orchestrator uses this to reject dispatching a step
 // whose tier is not in the plan's approved scope before any process is spawned.
 export function isStepTierPermitted(plan: Plan, step: PlanStep): boolean {
@@ -155,6 +162,46 @@ export class InMemoryGoalStore {
     return clone(plan);
   }
 
+  derivePlan(input: DerivePlanInput): Plan | undefined {
+    const goal = this.goals.get(input.goalId);
+    const parent = this.plans.get(input.parentPlanId);
+    if (!goal || !parent || parent.goalId !== goal.id) {
+      return undefined;
+    }
+    const now = input.now ?? Date.now();
+    const planId = input.id ?? randomUUID();
+    const steps: PlanStep[] = parent.steps.map((step, index) => ({
+      id: randomUUID(),
+      planId,
+      index,
+      intent: step.intent,
+      kind: step.kind,
+      targetEndpointId: step.targetEndpointId,
+      tier: step.tier,
+      isStateMutating: step.isStateMutating,
+      status: 'pending',
+    }));
+    const plan: Plan = {
+      id: planId,
+      goalId: goal.id,
+      parentPlanId: parent.id,
+      steps,
+      status: 'awaiting-approval',
+      permittedTiers: parent.permittedTiers,
+      createdAt: now,
+      updatedAt: now,
+    };
+    assertPlan(plan);
+    this.plans.set(plan.id, clone(plan));
+    this.plansByGoal.set(goal.id, plan.id);
+
+    goal.status = 'planned';
+    goal.updatedAt = now;
+    this.goals.set(goal.id, clone(goal));
+
+    return clone(plan);
+  }
+
   // Returns the next runnable step for an approved plan, or undefined when none.
   // A state-mutating step is returned but the caller must route it to the gate;
   // the store does not auto-run anything.
@@ -235,6 +282,24 @@ export class InMemoryGoalStore {
     return clone(goal);
   }
 
+  pausePlan(goalId: string, reason: string, now: number = Date.now()): Plan | undefined {
+    const goal = this.goals.get(goalId);
+    const plan = this.getPlanByGoal(goalId);
+    if (!goal || !plan || plan.status === 'done' || plan.status === 'cancelled') {
+      return undefined;
+    }
+    goal.status = 'paused';
+    goal.updatedAt = now;
+    this.goals.set(goal.id, clone(goal));
+
+    plan.status = 'paused';
+    plan.pausedAt = now;
+    plan.pauseReason = reason;
+    plan.updatedAt = now;
+    this.plans.set(plan.id, clone(plan));
+    return clone(plan);
+  }
+
   getGoal(goalId: string): Goal | undefined {
     const goal = this.goals.get(goalId);
     return goal ? clone(goal) : undefined;
@@ -245,6 +310,11 @@ export class InMemoryGoalStore {
     if (!planId) {
       return undefined;
     }
+    const plan = this.plans.get(planId);
+    return plan ? clone(plan) : undefined;
+  }
+
+  getPlanById(planId: string): Plan | undefined {
     const plan = this.plans.get(planId);
     return plan ? clone(plan) : undefined;
   }

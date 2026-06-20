@@ -187,13 +187,214 @@ test('bridge outbound queue claims redacted prompts and records fill acknowledge
     }),
   });
   assert.equal(ack.status, 200);
-  assert.equal((await ack.json()).outboundPrompt.status, 'delivered');
+  const ackBody = await ack.json();
+  assert.equal(ackBody.outboundPrompt.status, 'waiting_manual_send');
+  assert.equal(ackBody.outboundPrompt.evidence.at(-1).type, 'waiting-manual-send');
 
   const emptyClaim = await fetch(`${handle.url}/bridge/outbound/next`, {
     headers: authHeaders(handle),
   });
   assert.equal(emptyClaim.status, 200);
   assert.equal((await emptyClaim.json()).outboundPrompt, null);
+});
+
+test('bridge outbound Stage A status, report, and cancel are sanitized', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const createOutbound = await fetch(`${handle.url}/bridge/outbound`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      sessionId: 's-stage-a',
+      prompt: 'SECRET_TOKEN=super-secret stage a evidence',
+    }),
+  });
+  assert.equal(createOutbound.status, 201);
+  const created = (await createOutbound.json()).outboundPrompt;
+
+  const statusBefore = await fetch(`${handle.url}/bridge/outbound/status`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(statusBefore.status, 200);
+  assert.equal((await statusBefore.json()).outboundStatus.queued, 1);
+
+  const cancel = await fetch(`${handle.url}/bridge/outbound/cancel`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: created.id }),
+  });
+  assert.equal(cancel.status, 200);
+  assert.equal((await cancel.json()).outboundPrompt.status, 'cancelled');
+
+  const report = await fetch(`${handle.url}/bridge/outbound/report`, {
+    headers: authHeaders(handle),
+  });
+  assert.equal(report.status, 200);
+  const body = await report.json();
+  assert.equal(body.outboundReport.status.cancelled, 1);
+  assert.equal(body.outboundReport.prompts[0].status, 'cancelled');
+  assert.equal('prompt' in body.outboundReport.prompts[0], false);
+  assert.equal(JSON.stringify(body).includes('super-secret'), false);
+  assert.equal(JSON.stringify(body).includes(handle.pairingToken), false);
+});
+
+test('bridge outbound Stage B stage endpoint advances one-round states in order', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const create = await fetch(`${handle.url}/bridge/outbound`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ sessionId: 's-stage-b', prompt: 'auto relay' }),
+  });
+  assert.equal(create.status, 201);
+  const created = (await create.json()).outboundPrompt;
+  assert.match(created.authorization.contentHash, /^sha256:/);
+
+  const claim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
+  const claimed = (await claim.json()).outboundPrompt;
+  const earlyResponding = await fetch(`${handle.url}/bridge/outbound/stage`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: created.id, stage: 'responding' }),
+  });
+  assert.equal(earlyResponding.status, 409);
+
+  const ack = await fetch(`${handle.url}/bridge/outbound/ack`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: created.id, claimToken: claimed.claimToken, ok: true }),
+  });
+  assert.equal(ack.status, 200);
+
+  for (const [stage, expected] of [
+    ['submitted', 'submitted'],
+    ['responding', 'responding'],
+    ['response-ready', 'response_ready'],
+    ['returned', 'returned'],
+  ]) {
+    const response = await fetch(`${handle.url}/bridge/outbound/stage`, {
+      method: 'POST',
+      headers: authHeaders(handle),
+      body: JSON.stringify({ outboundPromptId: created.id, stage }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).outboundPrompt.status, expected);
+  }
+
+  const failCreate = await fetch(`${handle.url}/bridge/outbound`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ sessionId: 's-stage-b-fail', prompt: 'auto relay timeout' }),
+  });
+  const failCreated = (await failCreate.json()).outboundPrompt;
+  const failClaim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
+  const failClaimed = (await failClaim.json()).outboundPrompt;
+  await fetch(`${handle.url}/bridge/outbound/ack`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: failCreated.id, claimToken: failClaimed.claimToken, ok: true }),
+  });
+  const failed = await fetch(`${handle.url}/bridge/outbound/stage`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: failCreated.id, stage: 'failed', failureReason: 'streaming' }),
+  });
+  assert.equal(failed.status, 200);
+  const failedBody = await failed.json();
+  assert.equal(failedBody.outboundPrompt.status, 'failed');
+  assert.equal(failedBody.outboundPrompt.failureReason, 'streaming');
+});
+
+test('bridge Stage C loop routes create, advance, report, pause and cancel', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const create = await fetch(`${handle.url}/bridge/loops`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      projectId: 'cli-bridge',
+      goalId: 'goal-stage-c',
+      sessionId: 'loop-http',
+      initialPrompt: 'round one',
+      maxRounds: 2,
+    }),
+  });
+  assert.equal(create.status, 201);
+  const created = await create.json();
+  assert.equal(created.loop.status, 'running');
+  assert.equal(created.loop.round, 1);
+  assert.equal(created.outboundPrompt.loopId, created.loop.id);
+
+  const claim = await fetch(`${handle.url}/bridge/outbound/next`, { headers: authHeaders(handle) });
+  const claimed = (await claim.json()).outboundPrompt;
+  await fetch(`${handle.url}/bridge/outbound/ack`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ outboundPromptId: claimed.id, claimToken: claimed.claimToken, ok: true }),
+  });
+  for (const stage of ['submitted', 'responding', 'response-ready', 'returned']) {
+    await fetch(`${handle.url}/bridge/outbound/stage`, {
+      method: 'POST',
+      headers: authHeaders(handle),
+      body: JSON.stringify({ outboundPromptId: claimed.id, stage }),
+    });
+  }
+
+  const advance = await fetch(`${handle.url}/bridge/loops/advance`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      loopId: created.loop.id,
+      inboundContent: 'first reply',
+      nextPrompt: 'round two',
+    }),
+  });
+  assert.equal(advance.status, 200);
+  const advanced = await advance.json();
+  assert.equal(advanced.loop.round, 2);
+  assert.equal(advanced.outboundPrompt.loopId, created.loop.id);
+
+  const report = await fetch(`${handle.url}/bridge/loops/report`, { headers: authHeaders(handle) });
+  assert.equal(report.status, 200);
+  assert.equal((await report.json()).loopReport.loops.length, 1);
+
+  const pause = await fetch(`${handle.url}/bridge/loops/pause`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ loopId: created.loop.id }),
+  });
+  assert.equal(pause.status, 200);
+  assert.equal((await pause.json()).loop.status, 'paused');
+
+  const cancel = await fetch(`${handle.url}/bridge/loops/cancel`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({ loopId: created.loop.id }),
+  });
+  assert.equal(cancel.status, 200);
+  assert.equal((await cancel.json()).loop.status, 'cancelled');
+});
+
+test('bridge Stage C loop route rejects maxRounds beyond hard cap', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const create = await fetch(`${handle.url}/bridge/loops`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      projectId: 'cli-bridge',
+      goalId: 'goal-stage-c',
+      sessionId: 'loop-http',
+      initialPrompt: 'round one',
+      maxRounds: 11,
+    }),
+  });
+  assert.equal(create.status, 400);
+  assert.match((await create.json()).message, /hard maximum/);
 });
 
 test('bridge does not expose any shell-style endpoint', async (t) => {

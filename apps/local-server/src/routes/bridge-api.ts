@@ -19,6 +19,15 @@ import {
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
+import {
+  normalizeChatGptReturnArtifact,
+  normalizeReasoningArtifact,
+} from '../reasoning/reasoning-artifact.ts';
+import { InMemoryReasoningArtifactStore } from '../reasoning/reasoning-artifact-store.ts';
+import {
+  dispatchExecutionProposal,
+  validateExecutionInvocation,
+} from '../execution/execution-dispatcher.ts';
 import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
@@ -38,7 +47,7 @@ import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
 import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
-import { validateProviderCapability } from '../storage/provider-capability.ts';
+import { KNOWN_PROVIDER_CAPABILITIES, validateProviderCapability } from '../storage/provider-capability.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
 import type { CommandRunOptions } from '../adapters/command-runner.ts';
@@ -55,6 +64,9 @@ import {
 } from '../storage/json-snapshot-store.ts';
 import { createMetricsSummary } from '../storage/metrics-summary.ts';
 import { InMemoryOutboundPromptStore } from '../storage/outbound-prompt-store.ts';
+import { InMemoryAutomationBindingStore } from '../storage/automation-binding-store.ts';
+import { InMemoryExecutionProposalStore } from '../storage/execution-proposal-store.ts';
+import { InMemoryWebRelayLoopStore } from '../storage/web-relay-loop-store.ts';
 import { InMemoryRelayContextStore } from '../storage/relay-context-store.ts';
 import { InMemoryInboundMessageStore } from '../storage/inbound-message-store.ts';
 import { InMemoryPacketStore } from '../storage/packet-store.ts';
@@ -68,6 +80,7 @@ import {
 } from '../storage/project-store.ts';
 import { InMemoryAuditLog } from '../storage/audit-log.ts';
 import type {
+  AgentEndpoint,
   AgentReviewRequest,
   AuditEvent,
   DerivedMemoryEntry,
@@ -75,6 +88,9 @@ import type {
   PendingPrompt,
   Plan,
   ProjectSummary,
+  AutomationExecutionTier,
+  AutomationReasoningTier,
+  ReasoningArtifactKind,
 } from '../../../../packages/shared/src/types.ts';
 import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
 
@@ -103,6 +119,10 @@ export interface BridgeRuntime {
   auditLog: InMemoryAuditLog;
   pendingPromptStore: InMemoryPendingPromptStore;
   outboundPromptStore: InMemoryOutboundPromptStore;
+  automationBindingStore: InMemoryAutomationBindingStore;
+  reasoningArtifactStore: InMemoryReasoningArtifactStore;
+  executionProposalStore: InMemoryExecutionProposalStore;
+  webRelayLoopStore: InMemoryWebRelayLoopStore;
   /** Phase 3 multi-executor relay (foundation): endpoint/session routing context. */
   relayContextStore: InMemoryRelayContextStore;
   /** Phase 3 multi-executor relay (inbound queue core): server-side return queue. */
@@ -124,6 +144,8 @@ export interface BridgeRuntime {
   projectStore: InMemoryProjectStore;
   /** Command runner override for goal→plan generation (test injection). */
   goalPlanCommandOptions?: CommandRunOptions;
+  /** Command runner override for confirmed execution proposals (test injection). */
+  commandRunOptions?: CommandRunOptions;
   // v2.2 WorkBuddy non-executing task system.
   workbuddyStore: InMemoryWorkBuddyStateStore;
   teamStore: InMemoryTeamSpecStore;
@@ -146,6 +168,7 @@ export interface BridgeRuntime {
   // v2.14 ADR-0019-b: injectable fetch for tests.
   readonly githubChecksFetchFn?: typeof fetch;
   readonly projectWorkspaceRoots?: Record<string, string>;
+  readonly additionalEndpoints?: readonly AgentEndpoint[];
 }
 
 export interface BridgeRuntimeOptions {
@@ -160,6 +183,8 @@ export interface BridgeRuntimeOptions {
   // Override the command runner used by goal→plan generation (used by tests to
   // avoid spawning a real CLI). When omitted, the default runner is used.
   goalPlanCommandOptions?: CommandRunOptions;
+  // Override the command runner used by confirmed execution proposals.
+  commandRunOptions?: CommandRunOptions;
   // v2.4a: model provider factory for test injection. Default: OpenAiAdapter.
   modelProviderFactory?: (apiKey: string) => ModelProvider;
   // v2.5: workspace apply root directory (default: temp dir for tests).
@@ -182,6 +207,7 @@ export interface BridgeRuntimeOptions {
   githubTokenStore?: GithubTokenStore;
   // v2.14 ADR-0019-b: injectable fetch for tests.
   githubChecksFetchFn?: typeof fetch;
+  additionalEndpoints?: readonly AgentEndpoint[];
 }
 
 
@@ -1372,6 +1398,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const auditLog = new InMemoryAuditLog();
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
   const outboundPromptStore = new InMemoryOutboundPromptStore(packetStore, auditLog);
+  const webRelayLoopStore = new InMemoryWebRelayLoopStore(outboundPromptStore);
   const relayContextStore = new InMemoryRelayContextStore(auditLog);
   const inboundMessageStore = new InMemoryInboundMessageStore(packetStore, auditLog);
   const endpointRegistry = new InMemoryEndpointRegistry([
@@ -1379,6 +1406,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
     CODEX_REVIEW_COMMAND_ENDPOINT,
     MOCK_INBOUND_AGENT_ENDPOINT,
+    ...(options.additionalEndpoints ?? []),
   ]);
   const inboundRelayEndpointId = options.inboundRelayEndpointId;
   if (inboundRelayEndpointId) {
@@ -1398,6 +1426,14 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const agent = new MockAgentAdapter();
   const goalStore = new InMemoryGoalStore();
   const projectStore = new InMemoryProjectStore();
+  const reasoningArtifactStore = new InMemoryReasoningArtifactStore();
+  const executionProposalStore = new InMemoryExecutionProposalStore();
+  const automationBindingStore = new InMemoryAutomationBindingStore({
+    endpointRegistry,
+    projectExists(projectRef) {
+      return projectStore.get(projectRef) !== undefined;
+    },
+  });
 
   const dataDir = options.dataDir ?? resolveDataDirFromEnv();
   const snapshotStore = dataDir ? new JsonSnapshotStore(dataDir) : null;
@@ -1431,6 +1467,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       auditLog.hydrateEvents(read.snapshot.auditEvents);
       pendingPromptStore.hydratePrompts(read.snapshot.pendingPrompts);
       outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
+      webRelayLoopStore.hydrateLoops(read.snapshot.webRelayLoops ?? []);
+      webRelayLoopStore.recoverAfterRestart();
       inboundMessageStore.hydrateMessages(read.snapshot.inboundMessages ?? []);
       relayContextStore.hydrateContexts(read.snapshot.relayContexts ?? []);
       // Hydrate v2 goal/plan/project state (fail-open: skip invalid records).
@@ -1442,6 +1480,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       }
       for (const plan of read.snapshot.plans ?? []) {
         goalStore.hydratePlan(plan);
+      }
+      for (const binding of read.snapshot.automationBindings ?? []) {
+        automationBindingStore.hydrateBinding(binding);
       }
       // v2.2 WorkBuddy state: fail-open hydration.
       for (const t of read.snapshot.workbuddyTaskReferences ?? []) {
@@ -1480,11 +1521,13 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       auditEvents: auditLog.exportEvents(),
       pendingPrompts: pendingPromptStore.exportPrompts(),
       outboundPrompts: outboundPromptStore.exportPrompts(),
+      webRelayLoops: webRelayLoopStore.exportLoops(),
       inboundMessages: inboundMessageStore.exportMessages(),
       relayContexts: relayContextStore.exportContexts(),
       goals: goalStore.exportGoals(),
       plans: goalStore.exportPlans(),
       projects: projectStore.exportProjects(),
+      automationBindings: automationBindingStore.exportBindings(),
       verificationRunRecords: verificationRunStore.list(),
       workbuddyTaskReferences: workbuddyStore.listTaskReferences(),
       workbuddyReviewResultSinks: workbuddyStore.listReviewResultSinks(),
@@ -1504,6 +1547,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     auditLog,
     pendingPromptStore,
     outboundPromptStore,
+    automationBindingStore,
+    reasoningArtifactStore,
+    executionProposalStore,
+    webRelayLoopStore,
     relayContextStore,
     inboundMessageStore,
     endpointRegistry,
@@ -1520,6 +1567,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     goalStore,
     projectStore,
     goalPlanCommandOptions: options.goalPlanCommandOptions,
+    commandRunOptions: options.commandRunOptions,
     workbuddyStore,
     teamStore,
     modelApiKeyStore,
@@ -1871,6 +1919,46 @@ export async function readJsonBody(request: IncomingMessage): Promise<
   }
 }
 
+function recordReasoningArtifactOrPause(
+  runtime: BridgeRuntime,
+  input: {
+    planId: string;
+    endpointId?: string;
+    kind: ReasoningArtifactKind;
+    content: unknown;
+    summary: string;
+    source: 'generic' | 'chatgpt-web';
+  },
+): { ok: true; artifact: ReturnType<InMemoryReasoningArtifactStore['record']> } | { ok: false; message: string } {
+  const binding = runtime.automationBindingStore.getBinding(input.planId);
+  const plan = runtime.goalStore.getPlanById(input.planId);
+  if (!binding || !plan) {
+    return { ok: false, message: 'reasoning-artifact-correlation-missing' };
+  }
+  const result = input.source === 'chatgpt-web'
+    ? normalizeChatGptReturnArtifact({
+      binding,
+      plan,
+      endpointId: input.endpointId ?? binding.reasoningEndpointId,
+      kind: input.kind,
+      sanitizedContent: input.content,
+      summary: input.summary,
+    })
+    : normalizeReasoningArtifact({
+      binding,
+      plan,
+      endpointId: input.endpointId ?? binding.reasoningEndpointId,
+      kind: input.kind,
+      content: input.content,
+      summary: input.summary,
+    });
+  if (!result.ok) {
+    runtime.goalStore.pausePlan(binding.goalId, result.failureReason);
+    return { ok: false, message: result.failureReason };
+  }
+  return { ok: true, artifact: runtime.reasoningArtifactStore.record(result.artifact) };
+}
+
 export const BRIDGE_PACKETS_PATH = '/bridge/packets';
 export const BRIDGE_PENDING_PROMPTS_PATH = '/bridge/pending-prompts';
 export const BRIDGE_PENDING_PROMPTS_CONFIRM_PATH = '/bridge/pending-prompts/confirm';
@@ -1879,6 +1967,16 @@ export const BRIDGE_PENDING_PROMPTS_CANCEL_PATH = '/bridge/pending-prompts/cance
 export const BRIDGE_OUTBOUND_PATH = '/bridge/outbound';
 export const BRIDGE_OUTBOUND_NEXT_PATH = '/bridge/outbound/next';
 export const BRIDGE_OUTBOUND_ACK_PATH = '/bridge/outbound/ack';
+export const BRIDGE_OUTBOUND_CANCEL_PATH = '/bridge/outbound/cancel';
+export const BRIDGE_OUTBOUND_STATUS_PATH = '/bridge/outbound/status';
+export const BRIDGE_OUTBOUND_REPORT_PATH = '/bridge/outbound/report';
+export const BRIDGE_OUTBOUND_STAGE_PATH = '/bridge/outbound/stage';
+export const BRIDGE_LOOPS_PATH = '/bridge/loops';
+export const BRIDGE_LOOPS_ADVANCE_PATH = '/bridge/loops/advance';
+export const BRIDGE_LOOPS_PAUSE_PATH = '/bridge/loops/pause';
+export const BRIDGE_LOOPS_RESUME_PATH = '/bridge/loops/resume';
+export const BRIDGE_LOOPS_CANCEL_PATH = '/bridge/loops/cancel';
+export const BRIDGE_LOOPS_REPORT_PATH = '/bridge/loops/report';
 // Phase 3 multi-executor relay (inbound queue core).
 export const BRIDGE_INBOUND_PATH = '/bridge/inbound';
 export const BRIDGE_INBOUND_NEXT_PATH = '/bridge/inbound/next';
@@ -1900,6 +1998,15 @@ export const BRIDGE_GOALS_APPROVE_PATH = '/bridge/goals/approve';
 export const BRIDGE_GOALS_STEP_PATH = '/bridge/goals/step';
 export const BRIDGE_GOALS_GATE_PATH = '/bridge/goals/gate';
 export const BRIDGE_GOALS_CANCEL_PATH = '/bridge/goals/cancel';
+export const BRIDGE_AUTOMATION_BINDINGS_PATH = '/bridge/automation/bindings';
+export const BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH = '/bridge/automation/bindings/derive';
+export const BRIDGE_EXECUTION_PROPOSALS_PATH = '/bridge/execution-proposals';
+export const BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH = '/bridge/execution-proposals/confirm';
+export const BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH = '/bridge/execution-proposals/dispatch';
+export const BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH = '/bridge/execution-proposals/edit';
+export const BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH = '/bridge/execution-proposals/pause';
+export const BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH = '/bridge/execution-proposals/resume';
+export const BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH = '/bridge/execution-proposals/cancel';
 
 // v2.1 Read-only project observability endpoints.
 export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
@@ -1955,6 +2062,16 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_OUTBOUND_PATH ||
     pathname === BRIDGE_OUTBOUND_NEXT_PATH ||
     pathname === BRIDGE_OUTBOUND_ACK_PATH ||
+    pathname === BRIDGE_OUTBOUND_CANCEL_PATH ||
+    pathname === BRIDGE_OUTBOUND_STATUS_PATH ||
+    pathname === BRIDGE_OUTBOUND_REPORT_PATH ||
+    pathname === BRIDGE_OUTBOUND_STAGE_PATH ||
+    pathname === BRIDGE_LOOPS_PATH ||
+    pathname === BRIDGE_LOOPS_ADVANCE_PATH ||
+    pathname === BRIDGE_LOOPS_PAUSE_PATH ||
+    pathname === BRIDGE_LOOPS_RESUME_PATH ||
+    pathname === BRIDGE_LOOPS_CANCEL_PATH ||
+    pathname === BRIDGE_LOOPS_REPORT_PATH ||
     pathname === BRIDGE_INBOUND_PATH ||
     pathname === BRIDGE_INBOUND_NEXT_PATH ||
     pathname === BRIDGE_INBOUND_ACK_PATH ||
@@ -1972,6 +2089,15 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_GOALS_STEP_PATH ||
     pathname === BRIDGE_GOALS_GATE_PATH ||
     pathname === BRIDGE_GOALS_CANCEL_PATH ||
+    pathname === BRIDGE_AUTOMATION_BINDINGS_PATH ||
+    pathname === BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH ||
     pathname === BRIDGE_GOALS_PATH;
 }
 
@@ -1982,6 +2108,11 @@ export async function handleBridgeRequest(
   request: IncomingMessage,
   query?: URLSearchParams,
 ): Promise<BridgeResult> {
+  if (!query && pathname.includes('?')) {
+    const parsedPath = new URL(`http://cli-bridge.local${pathname}`);
+    pathname = parsedPath.pathname;
+    query = parsedPath.searchParams;
+  }
   if (runtime.getPersistenceFailure()) {
     return error(503, 'Runtime persistence fault; restart after repairing storage');
   }
@@ -2016,6 +2147,14 @@ export async function handleBridgeRequest(
 
   if (pathname === BRIDGE_OUTBOUND_PATH && method === 'GET') {
     return ok({ outboundPrompts: runtime.outboundPromptStore.listPrompts() });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_STATUS_PATH && method === 'GET') {
+    return ok({ outboundStatus: runtime.outboundPromptStore.createStatusView() });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_REPORT_PATH && method === 'GET') {
+    return ok({ outboundReport: runtime.outboundPromptStore.createAcceptanceReport() });
   }
 
   if (pathname === BRIDGE_OUTBOUND_PATH && method === 'POST') {
@@ -2072,7 +2211,7 @@ export async function handleBridgeRequest(
     // Phase 3 relay (foundation): only a delivered outbound carrying an
     // endpointId establishes a routing context. ack failures and
     // endpointId-less outbounds never write a relay context.
-    if (outboundPrompt.status === 'delivered' && outboundPrompt.endpointId) {
+    if (outboundPrompt.status === 'waiting_manual_send' && outboundPrompt.endpointId) {
       runtime.relayContextStore.recordDelivered(
         outboundPrompt.sessionId,
         outboundPrompt.endpointId,
@@ -2081,6 +2220,135 @@ export async function handleBridgeRequest(
     }
     runtime.persist();
     return ok({ outboundPrompt });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_CANCEL_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const outboundPromptId = requireString(parsed.body, 'outboundPromptId');
+    if (!outboundPromptId) {
+      return error(400, 'outboundPromptId is required');
+    }
+    const outboundPrompt = runtime.outboundPromptStore.cancel(outboundPromptId);
+    if (!outboundPrompt) {
+      return error(409, 'Outbound prompt cannot be cancelled');
+    }
+    runtime.persist();
+    return ok({ outboundPrompt });
+  }
+
+  if (pathname === BRIDGE_OUTBOUND_STAGE_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const outboundPromptId = requireString(parsed.body, 'outboundPromptId');
+    const stage = requireString(parsed.body, 'stage');
+    if (!outboundPromptId || !stage) {
+      return error(400, 'outboundPromptId and stage are required');
+    }
+    let outboundPrompt;
+    if (stage === 'submitted') {
+      outboundPrompt = runtime.outboundPromptStore.markSubmitted(outboundPromptId);
+    } else if (stage === 'responding') {
+      outboundPrompt = runtime.outboundPromptStore.markResponding(outboundPromptId);
+    } else if (stage === 'response-ready') {
+      outboundPrompt = runtime.outboundPromptStore.markResponseReady(outboundPromptId);
+    } else if (stage === 'returned') {
+      outboundPrompt = runtime.outboundPromptStore.markReturned(outboundPromptId);
+    } else if (stage === 'failed') {
+      const failureReason = requireString(parsed.body, 'failureReason') ?? 'stage-b-failed';
+      outboundPrompt = runtime.outboundPromptStore.markFailed(outboundPromptId, failureReason);
+    } else {
+      return error(400, 'unsupported outbound stage');
+    }
+    if (!outboundPrompt) {
+      return error(409, 'Outbound prompt cannot transition to requested stage');
+    }
+    runtime.persist();
+    return ok({ outboundPrompt });
+  }
+
+  if (pathname === BRIDGE_LOOPS_PATH && method === 'GET') {
+    return ok({ loops: runtime.webRelayLoopStore.list() });
+  }
+
+  if (pathname === BRIDGE_LOOPS_REPORT_PATH && method === 'GET') {
+    return ok({ loopReport: runtime.webRelayLoopStore.report() });
+  }
+
+  if (pathname === BRIDGE_LOOPS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const sessionId = requireString(parsed.body, 'sessionId');
+    const projectId = requireString(parsed.body, 'projectId');
+    const goalId = requireString(parsed.body, 'goalId');
+    const initialPrompt = requireString(parsed.body, 'initialPrompt');
+    if (!sessionId || !projectId || !goalId || !initialPrompt) {
+      return error(400, 'sessionId, projectId, goalId and initialPrompt are required');
+    }
+    const result = runtime.webRelayLoopStore.create({
+      sessionId,
+      projectId,
+      goalId,
+      initialPrompt,
+      endpointId: runtime.inboundRelayEndpointId ?? 'mock-inbound-agent',
+      maxRounds: typeof parsed.body.maxRounds === 'number' ? parsed.body.maxRounds : undefined,
+      perRoundTimeoutMs: typeof parsed.body.perRoundTimeoutMs === 'number' ? parsed.body.perRoundTimeoutMs : undefined,
+      totalDeadlineMs: typeof parsed.body.totalDeadlineMs === 'number' ? parsed.body.totalDeadlineMs : undefined,
+      noProgressLimit: typeof parsed.body.noProgressLimit === 'number' ? parsed.body.noProgressLimit : undefined,
+    });
+    if (result.error || !result.loop || !result.outboundPrompt) {
+      return error(400, result.error ?? 'Loop could not be created');
+    }
+    runtime.persist();
+    return created({ loop: result.loop, outboundPrompt: result.outboundPrompt });
+  }
+
+  if (pathname === BRIDGE_LOOPS_ADVANCE_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const loopId = requireString(parsed.body, 'loopId');
+    const inboundContent = requireString(parsed.body, 'inboundContent');
+    if (!loopId || !inboundContent) {
+      return error(400, 'loopId and inboundContent are required');
+    }
+    const result = runtime.webRelayLoopStore.advance({
+      loopId,
+      inboundContent,
+      progressHash: typeof parsed.body.progressHash === 'string' ? parsed.body.progressHash : undefined,
+      nextPrompt: typeof parsed.body.nextPrompt === 'string' ? parsed.body.nextPrompt : undefined,
+    });
+    if (result.error && !result.loop) return error(409, result.error);
+    runtime.persist();
+    return ok({
+      loop: result.loop,
+      outboundPrompt: result.outboundPrompt ?? null,
+      stopped: !result.outboundPrompt,
+      error: result.error,
+    });
+  }
+
+  if (
+    pathname === BRIDGE_LOOPS_PAUSE_PATH ||
+    pathname === BRIDGE_LOOPS_RESUME_PATH ||
+    pathname === BRIDGE_LOOPS_CANCEL_PATH
+  ) {
+    if (method !== 'POST') return error(405, 'Method not allowed');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const loopId = requireString(parsed.body, 'loopId');
+    if (!loopId) return error(400, 'loopId is required');
+    const loop = pathname === BRIDGE_LOOPS_PAUSE_PATH
+      ? runtime.webRelayLoopStore.pause(loopId)
+      : pathname === BRIDGE_LOOPS_RESUME_PATH
+        ? runtime.webRelayLoopStore.resume(loopId)
+        : runtime.webRelayLoopStore.cancel(loopId);
+    if (!loop) return error(409, 'Loop cannot transition to requested state');
+    runtime.persist();
+    return ok({ loop });
   }
 
   // ── Phase 3 multi-executor relay: inbound return queue ──
@@ -2213,6 +2481,28 @@ export async function handleBridgeRequest(
     if (!sessionId || !content) {
       return error(400, 'sessionId and content are required');
     }
+    const automationPlanId = typeof parsed.body.planId === 'string' ? parsed.body.planId : undefined;
+    const artifactKind = typeof parsed.body.artifactKind === 'string'
+      ? parsed.body.artifactKind as ReasoningArtifactKind
+      : 'review-result';
+    const artifactSummary = typeof parsed.body.summary === 'string'
+      ? parsed.body.summary
+      : 'ChatGPT Web return';
+    const recordChatGptArtifact = (): ReturnType<InMemoryReasoningArtifactStore['record']> | null | BridgeResult => {
+      if (!automationPlanId) return null;
+      const normalized = recordReasoningArtifactOrPause(runtime, {
+        planId: automationPlanId,
+        kind: artifactKind,
+        content: redactSensitiveContent(content).processedContent,
+        summary: artifactSummary,
+        source: 'chatgpt-web',
+      });
+      if (!normalized.ok) {
+        runtime.persist();
+        return error(409, normalized.message);
+      }
+      return normalized.artifact;
+    };
 
     const relayContext = runtime.relayContextStore.getRelayContext(sessionId);
     const endpointId = relayContext?.endpointId;
@@ -2221,6 +2511,8 @@ export async function handleBridgeRequest(
       if (!operationId || operationId !== relayContext.lastOutboundPromptId) {
         return error(409, 'operationId does not match the delivered outbound prompt');
       }
+      const reasoningArtifact = recordChatGptArtifact();
+      if (reasoningArtifact && 'statusCode' in reasoningArtifact) return reasoningArtifact;
       const creation = runtime.inboundMessageStore.createIdempotent({
         endpointId,
         sessionId,
@@ -2233,7 +2525,7 @@ export async function handleBridgeRequest(
       }
       const inboundMessage = creation.message;
       if (creation.replayed) {
-        return ok({ routedTo: 'inbound', inboundMessage, replayed: true });
+        return ok({ routedTo: 'inbound', inboundMessage, replayed: true, artifact: reasoningArtifact });
       }
       runtime.auditLog.createAndAppend({
         sessionId,
@@ -2245,12 +2537,14 @@ export async function handleBridgeRequest(
         result: { ok: true },
       });
       runtime.persist();
-      return created({ routedTo: 'inbound', inboundMessage, replayed: false });
+      return created({ routedTo: 'inbound', inboundMessage, replayed: false, artifact: reasoningArtifact });
     }
 
     const fallbackReason = endpointId
       ? 'endpoint-cannot-receive-inbound'
       : 'no-relay-context';
+    const reasoningArtifact = recordChatGptArtifact();
+    if (reasoningArtifact && 'statusCode' in reasoningArtifact) return reasoningArtifact;
     const pendingPrompt = runtime.pendingPromptStore.createPendingPrompt({
       sessionId,
       prompt: content,
@@ -2266,7 +2560,7 @@ export async function handleBridgeRequest(
       result: { ok: true, metadata: { fallbackReason } },
     });
     runtime.persist();
-    return created({ routedTo: 'pending-prompt', pendingPrompt, fallbackReason });
+    return created({ routedTo: 'pending-prompt', pendingPrompt, fallbackReason, artifact: reasoningArtifact });
   }
 
   if (pathname === BRIDGE_PENDING_PROMPTS_PATH && method === 'POST') {
@@ -2442,6 +2736,13 @@ export async function handleBridgeRequest(
     if (!reviewId) {
       return error(400, 'reviewId is required');
     }
+    const automationPlanId = typeof parsed.body.planId === 'string' ? parsed.body.planId : undefined;
+    const artifactKind = parsed.body.artifactKind === undefined
+      ? 'review-result'
+      : parsed.body.artifactKind;
+    if (artifactKind !== 'review-result' && artifactKind !== 'execution-proposal') {
+      return error(400, 'artifactKind must be review-result or execution-proposal');
+    }
     const review = runtime.pendingReviewStore.get(reviewId);
     if (!review) {
       return error(409, 'Review not found');
@@ -2469,12 +2770,37 @@ export async function handleBridgeRequest(
     );
     runtime.persist();
     if (!runResult.ok) {
+      if (automationPlanId) {
+        const binding = runtime.automationBindingStore.getBinding(automationPlanId);
+        if (binding) runtime.goalStore.pausePlan(binding.goalId, runResult.failureReason ?? 'review-run-failed');
+        runtime.persist();
+      }
       return error(409, runResult.failureReason ?? 'Review run failed');
+    }
+    let reasoningArtifact = null;
+    if (automationPlanId && runResult.returned?.result) {
+      const normalized = recordReasoningArtifactOrPause(runtime, {
+        planId: automationPlanId,
+        endpointId: review.targetEndpointId,
+        kind: artifactKind,
+        content: {
+          summary: runResult.returned.result.summary,
+          findings: runResult.returned.result.findings,
+        },
+        summary: runResult.returned.result.summary,
+        source: 'generic',
+      });
+      if (!normalized.ok) {
+        runtime.persist();
+        return error(409, normalized.message);
+      }
+      reasoningArtifact = normalized.artifact;
     }
     return ok({
       review: runtime.pendingReviewStore.get(reviewId),
       result: runResult.returned?.result,
       nextPrompt: runResult.returned?.nextPrompt,
+      artifact: reasoningArtifact,
     });
   }
 
@@ -2924,7 +3250,15 @@ export async function handleBridgeRequest(
     if (plannerSource === 'model-api') {
       const goal = runtime.goalStore.getGoal(goalId);
       if (!goal) return error(400, 'Goal not found');
-      if (goal.status !== 'draft') return error(400, 'Goal must be in draft status for model plan');
+      const automationPlanId = typeof parsed.body.planId === 'string' ? parsed.body.planId : undefined;
+      if (!automationPlanId && goal.status !== 'draft') return error(400, 'Goal must be in draft status for model plan');
+      if (automationPlanId) {
+        const plan = runtime.goalStore.getPlanById(automationPlanId);
+        const binding = runtime.automationBindingStore.getBinding(automationPlanId);
+        if (!plan || !binding || plan.goalId !== goalId || binding.goalId !== goalId) {
+          return error(409, 'Locked automation plan binding is required');
+        }
+      }
 
       const projectId = goal.projectId ?? 'cli-bridge';
 
@@ -3013,6 +3347,10 @@ export async function handleBridgeRequest(
       });
 
       if (!modelResult.ok) {
+        if (automationPlanId) {
+          runtime.goalStore.pausePlan(goalId, modelResult.reason);
+          runtime.persist();
+        }
         // Fail-closed: schema/policy rejection, provider error, or budget exceeded.
         // Return generic error — do not expose internal rejection details via HTTP.
         let httpMessage = 'Model plan generation failed';
@@ -3021,6 +3359,25 @@ export async function handleBridgeRequest(
         else if (modelResult.kind === 'budget-exceeded') httpMessage += ': input exceeds token budget';
         else httpMessage += ': provider error';
         return error(409, httpMessage);
+      }
+
+      let reasoningArtifact = null;
+      if (automationPlanId) {
+        const normalized = recordReasoningArtifactOrPause(runtime, {
+          planId: automationPlanId,
+          endpointId: typeof parsed.body.reasoningEndpointId === 'string'
+            ? parsed.body.reasoningEndpointId
+            : undefined,
+          kind: 'plan-draft',
+          content: modelResult.draft,
+          summary: modelResult.draft.rationale ?? 'Model plan draft',
+          source: 'generic',
+        });
+        if (!normalized.ok) {
+          runtime.persist();
+          return error(409, normalized.message);
+        }
+        reasoningArtifact = normalized.artifact;
       }
 
       let critiquePayload: unknown = null;
@@ -3108,6 +3465,7 @@ export async function handleBridgeRequest(
         draft: modelResult.draft,
         critique: critiquePayload,
         plan: null,
+        artifact: reasoningArtifact,
         meta: {
           source: 'model-api',
           modelSuggested: true,
@@ -3158,6 +3516,101 @@ export async function handleBridgeRequest(
     return created({ plan: result.plan, meta: result.meta, downgrades: result.downgrades });
   }
 
+  if (pathname === BRIDGE_AUTOMATION_BINDINGS_PATH && method === 'GET') {
+    const planId = query?.get('planId');
+    if (!planId) {
+      return ok({ bindings: runtime.automationBindingStore.listBindings() });
+    }
+    const binding = runtime.automationBindingStore.getBinding(planId);
+    if (!binding) {
+      return error(404, 'Automation binding not found');
+    }
+    return ok({ binding });
+  }
+
+  if (pathname === BRIDGE_AUTOMATION_BINDINGS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const goalId = requireString(parsed.body, 'goalId');
+    const planId = requireString(parsed.body, 'planId');
+    if (!goalId || !planId) {
+      return error(400, 'goalId and planId are required');
+    }
+    const goal = runtime.goalStore.getGoal(goalId);
+    const plan = runtime.goalStore.getPlanById(planId);
+    if (!goal || !plan || plan.goalId !== goalId) {
+      return error(404, 'Goal or plan not found');
+    }
+    const executionWorkingDirectoryRef = requireString(parsed.body, 'executionWorkingDirectoryRef');
+    if (executionWorkingDirectoryRef && resolveProjectKey(goal.projectId) !== executionWorkingDirectoryRef) {
+      return error(409, 'Binding project reference must match goal project');
+    }
+    try {
+      const binding = runtime.automationBindingStore.createBinding({
+        goalId,
+        planId,
+        reasoningEndpointId: requireString(parsed.body, 'reasoningEndpointId') ?? '',
+        executionEndpointId: requireString(parsed.body, 'executionEndpointId') ?? '',
+        reasoningTier: requireString(parsed.body, 'reasoningTier') as AutomationReasoningTier,
+        executionTier: requireString(parsed.body, 'executionTier') as AutomationExecutionTier,
+        executionPermissionProfile: requireString(parsed.body, 'executionPermissionProfile') ?? '',
+        executionWorkingDirectoryRef: executionWorkingDirectoryRef ?? '',
+        maxSteps: typeof parsed.body.maxSteps === 'number' ? parsed.body.maxSteps : NaN,
+        maxReasoningRounds: typeof parsed.body.maxReasoningRounds === 'number' ? parsed.body.maxReasoningRounds : NaN,
+        deadlineAt: requireString(parsed.body, 'deadlineAt') ?? '',
+      });
+      runtime.persist();
+      return created({ binding });
+    } catch (err) {
+      return error(409, err instanceof Error ? err.message : 'Automation binding rejected');
+    }
+  }
+
+  if (pathname === BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return error(400, parsed.message);
+    }
+    const parentPlanId = requireString(parsed.body, 'parentPlanId');
+    const goalId = requireString(parsed.body, 'goalId');
+    const planId = requireString(parsed.body, 'planId');
+    if (!parentPlanId || !goalId || !planId) {
+      return error(400, 'parentPlanId, goalId and planId are required');
+    }
+    const goal = runtime.goalStore.getGoal(goalId);
+    const parentPlan = runtime.goalStore.getPlanById(parentPlanId);
+    if (!goal || !parentPlan || parentPlan.goalId !== goalId) {
+      return error(404, 'Goal or parent plan not found');
+    }
+    try {
+      const bindingDraft = runtime.automationBindingStore.previewDerivedBinding({
+        parentPlanId,
+        goalId,
+        planId,
+        reasoningEndpointId: typeof parsed.body.reasoningEndpointId === 'string' ? parsed.body.reasoningEndpointId : undefined,
+        executionEndpointId: typeof parsed.body.executionEndpointId === 'string' ? parsed.body.executionEndpointId : undefined,
+        reasoningTier: typeof parsed.body.reasoningTier === 'string' ? parsed.body.reasoningTier as AutomationReasoningTier : undefined,
+        executionTier: typeof parsed.body.executionTier === 'string' ? parsed.body.executionTier as AutomationExecutionTier : undefined,
+        executionPermissionProfile: typeof parsed.body.executionPermissionProfile === 'string' ? parsed.body.executionPermissionProfile : undefined,
+        executionWorkingDirectoryRef: typeof parsed.body.executionWorkingDirectoryRef === 'string' ? parsed.body.executionWorkingDirectoryRef : undefined,
+        maxSteps: typeof parsed.body.maxSteps === 'number' ? parsed.body.maxSteps : undefined,
+        maxReasoningRounds: typeof parsed.body.maxReasoningRounds === 'number' ? parsed.body.maxReasoningRounds : undefined,
+        deadlineAt: typeof parsed.body.deadlineAt === 'string' ? parsed.body.deadlineAt : undefined,
+      });
+      const derivedPlan = runtime.goalStore.derivePlan({ goalId, parentPlanId, id: planId });
+      if (!derivedPlan) {
+        return error(409, 'Derived plan could not be created');
+      }
+      const binding = runtime.automationBindingStore.commitBinding(bindingDraft);
+      runtime.persist();
+      return created({ plan: derivedPlan, binding });
+    } catch (err) {
+      return error(409, err instanceof Error ? err.message : 'Automation binding derivation rejected');
+    }
+  }
+
   if (pathname === BRIDGE_GOALS_APPROVE_PATH && method === 'POST') {
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
@@ -3171,8 +3624,168 @@ export async function handleBridgeRequest(
     if (!plan) {
       return error(409, 'Goal not found or plan cannot be approved');
     }
+    const binding = runtime.automationBindingStore.lockBinding(plan.id);
     runtime.persist();
-    return ok({ goal: runtime.goalStore.getGoal(goalId), plan });
+    return ok({ goal: runtime.goalStore.getGoal(goalId), plan, binding: binding ?? null });
+  }
+
+  if (pathname === BRIDGE_EXECUTION_PROPOSALS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const planId = requireString(parsed.body, 'planId');
+    const stepId = requireString(parsed.body, 'stepId');
+    const artifactId = requireString(parsed.body, 'artifactId');
+    const preview = requireString(parsed.body, 'preview');
+    const command = requireString(parsed.body, 'command');
+    const stdin = requireString(parsed.body, 'stdin');
+    const args = Array.isArray(parsed.body.args)
+      ? parsed.body.args.filter((arg: unknown): arg is string => typeof arg === 'string')
+      : null;
+    const expiresAt = typeof parsed.body.expiresAt === 'number' ? parsed.body.expiresAt : Date.now() + 15 * 60_000;
+    if (!planId || !stepId || !artifactId || !preview || !command || !stdin || !args) {
+      return error(400, 'planId, stepId, artifactId, preview, command, args and stdin are required');
+    }
+    const binding = runtime.automationBindingStore.getBinding(planId);
+    const plan = runtime.goalStore.getPlanById(planId);
+    const artifact = runtime.reasoningArtifactStore.list({ planId })
+      .find(item => item.artifactId === artifactId);
+    if (!binding || !plan || !artifact) {
+      return error(404, 'Plan binding or artifact not found');
+    }
+    const providerCapability = Object.values(KNOWN_PROVIDER_CAPABILITIES)
+      .find(capability => capability.endpointId === binding.executionEndpointId);
+    const invocationFailure = validateExecutionInvocation(
+      providerCapability,
+      command as 'codex' | 'claude',
+      args,
+    );
+    if (invocationFailure) return error(409, invocationFailure);
+    try {
+      const draft = runtime.executionProposalStore.createDraft({
+        binding,
+        plan,
+        stepId,
+        artifact,
+        preview,
+        command: command as 'codex' | 'claude',
+        args,
+        stdin,
+        expiresAt,
+      });
+      const proposal = runtime.executionProposalStore.requestConfirmation(draft.id);
+      runtime.persist();
+      return created({ proposal });
+    } catch (err) {
+      return error(409, err instanceof Error ? err.message : 'Execution proposal rejected');
+    }
+  }
+
+  if (pathname === BRIDGE_EXECUTION_PROPOSALS_PATH && method === 'GET') {
+    const planId = query?.get('planId') ?? undefined;
+    const bindings = planId
+      ? (runtime.automationBindingStore.getBinding(planId)
+        ? [runtime.automationBindingStore.getBinding(planId)]
+        : [])
+      : runtime.automationBindingStore.listBindings();
+    return ok({
+      bindings: bindings.filter(Boolean),
+      proposals: runtime.executionProposalStore.list({ planId }),
+    });
+  }
+
+  if (pathname === BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const proposalId = requireString(parsed.body, 'proposalId');
+    if (!proposalId) return error(400, 'proposalId is required');
+    const result = runtime.executionProposalStore.confirm({
+      proposalId,
+      planId: requireString(parsed.body, 'planId') ?? '',
+      stepId: requireString(parsed.body, 'stepId') ?? '',
+      artifactId: requireString(parsed.body, 'artifactId') ?? '',
+      contentHash: requireString(parsed.body, 'contentHash') ?? '',
+      bindingHash: requireString(parsed.body, 'bindingHash') ?? '',
+      executionEndpointId: requireString(parsed.body, 'executionEndpointId') ?? '',
+      executionPermissionProfile: requireString(parsed.body, 'executionPermissionProfile') ?? '',
+      projectId: requireString(parsed.body, 'projectId') ?? '',
+    });
+    if (!result.ok) return error(409, result.failureReason);
+    runtime.persist();
+    return ok({ proposal: result.proposal });
+  }
+
+  if (pathname === BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const proposalId = requireString(parsed.body, 'proposalId');
+    const artifactId = requireString(parsed.body, 'artifactId');
+    const preview = requireString(parsed.body, 'preview');
+    const stdin = requireString(parsed.body, 'stdin');
+    if (!proposalId || !artifactId || !preview || !stdin) {
+      return error(400, 'proposalId, artifactId, preview and stdin are required');
+    }
+    const existing = runtime.executionProposalStore.get(proposalId);
+    if (!existing) return error(404, 'Proposal not found');
+    const artifact = runtime.reasoningArtifactStore.list({ planId: existing.planId })
+      .find(item => item.artifactId === artifactId);
+    if (!artifact) return error(404, 'Artifact not found');
+    try {
+      const proposal = runtime.executionProposalStore.edit(proposalId, { artifact, preview, stdin });
+      const awaiting = runtime.executionProposalStore.requestConfirmation(proposal.id);
+      runtime.persist();
+      return created({ proposal: awaiting });
+    } catch (err) {
+      return error(409, err instanceof Error ? err.message : 'Execution proposal edit rejected');
+    }
+  }
+
+  if (
+    pathname === BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH ||
+    pathname === BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH
+  ) {
+    if (method !== 'POST') return error(405, 'Method not allowed');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const proposalId = requireString(parsed.body, 'proposalId');
+    if (!proposalId) return error(400, 'proposalId is required');
+    const reason = requireString(parsed.body, 'reason') ?? 'operator-control';
+    try {
+      const proposal = pathname === BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH
+        ? runtime.executionProposalStore.pause(proposalId, reason)
+        : pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH
+          ? runtime.executionProposalStore.resume(proposalId)
+          : runtime.executionProposalStore.cancel(proposalId);
+      runtime.persist();
+      return ok({ proposal });
+    } catch (err) {
+      return error(409, err instanceof Error ? err.message : 'Execution proposal control rejected');
+    }
+  }
+
+  if (pathname === BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const proposalId = requireString(parsed.body, 'proposalId');
+    if (!proposalId) return error(400, 'proposalId is required');
+    const proposal = runtime.executionProposalStore.get(proposalId);
+    if (!proposal) return error(404, 'Proposal not found');
+    const binding = runtime.automationBindingStore.getBinding(proposal.planId);
+    const plan = runtime.goalStore.getPlanById(proposal.planId);
+    if (!binding || !plan) return error(404, 'Plan binding not found');
+    const providerCapability = Object.values(KNOWN_PROVIDER_CAPABILITIES)
+      .find(capability => capability.endpointId === binding.executionEndpointId);
+    const result = await dispatchExecutionProposal({
+      store: runtime.executionProposalStore,
+      proposalId,
+      binding,
+      plan,
+      providerCapability,
+      ...(runtime.commandRunOptions ?? {}),
+    });
+    runtime.persist();
+    if (!result.ok) return error(409, result.failureReason);
+    return ok({ proposal: result.proposal });
   }
 
   if (pathname === BRIDGE_GOALS_STEP_PATH && method === 'POST') {

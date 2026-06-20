@@ -13,7 +13,43 @@ export interface ActiveRelaySession {
   updatedAt: number;
 }
 
+export type RelaySessionStage =
+  | 'unpaired'
+  | 'paired'
+  | 'claiming'
+  | 'claimed'
+  | 'filling'
+  | 'acknowledging'
+  | 'waiting-manual-send'
+  | 'submitted'
+  | 'responding'
+  | 'response-ready'
+  | 'returned'
+  | 'failed'
+  | 'cancelled'
+  | 'completed';
+
+export interface RelaySessionEvidence {
+  stage: RelaySessionStage;
+  at: number;
+  reason?: string;
+}
+
+export interface RelaySessionSnapshot {
+  stage: RelaySessionStage;
+  sessionId?: string;
+  outboundPromptId?: string;
+  packetId?: string;
+  updatedAt: number;
+  evidence: RelaySessionEvidence[];
+}
+
 let activeRelaySession: ActiveRelaySession | null = null;
+let relaySessionSnapshot: RelaySessionSnapshot = {
+  stage: 'unpaired',
+  updatedAt: Date.now(),
+  evidence: [],
+};
 export const ACTIVE_RELAY_SESSION_TTL_MS = 10 * 60 * 1000;
 
 export interface ActiveRelaySessionReadOptions {
@@ -39,6 +75,45 @@ export type ExtractReturnSender = (
 
 export function setActiveRelaySession(session: ActiveRelaySession): void {
   activeRelaySession = { ...session };
+  recordRelaySessionStage('waiting-manual-send', {
+    sessionId: session.sessionId,
+    outboundPromptId: session.outboundPromptId,
+    packetId: session.packetId,
+    now: session.updatedAt,
+  });
+}
+
+export function recordRelaySessionStage(
+  stage: RelaySessionStage,
+  options: {
+    sessionId?: string;
+    outboundPromptId?: string;
+    packetId?: string;
+    reason?: string;
+    now?: number;
+  } = {},
+): RelaySessionSnapshot {
+  const now = options.now ?? Date.now();
+  relaySessionSnapshot = {
+    stage,
+    sessionId: options.sessionId ?? relaySessionSnapshot.sessionId,
+    outboundPromptId: options.outboundPromptId ?? relaySessionSnapshot.outboundPromptId,
+    packetId: options.packetId ?? relaySessionSnapshot.packetId,
+    updatedAt: now,
+    evidence: [
+      ...relaySessionSnapshot.evidence,
+      {
+        stage,
+        at: now,
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    ].slice(-50),
+  };
+  return getRelaySessionSnapshot();
+}
+
+export function getRelaySessionSnapshot(): RelaySessionSnapshot {
+  return structuredClone(relaySessionSnapshot);
 }
 
 function isFresh(session: ActiveRelaySession, options: ActiveRelaySessionReadOptions = {}): boolean {
@@ -74,6 +149,11 @@ export async function submitExtractReturn(
     active?.outboundPromptId,
   );
   if (result.ok && active) {
+    recordRelaySessionStage('completed', {
+      sessionId: active.sessionId,
+      outboundPromptId: active.outboundPromptId,
+      packetId: active.packetId,
+    });
     const current = getActiveRelaySession();
     if (current?.outboundPromptId === active.outboundPromptId) {
       clearActiveRelaySession();
@@ -84,4 +164,9 @@ export async function submitExtractReturn(
 
 export function clearActiveRelaySession(): void {
   activeRelaySession = null;
+}
+
+export function cancelActiveRelaySession(reason?: string): void {
+  activeRelaySession = null;
+  recordRelaySessionStage('cancelled', { reason });
 }

@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "start": "node --experimental-strip-types scripts/start.ts",
+    "web-auto:e2e": "node --experimental-strip-types scripts/web-auto-release-e2e.ts",
+    "dual-endpoint:e2e": "node --experimental-strip-types scripts/dual-endpoint-release-e2e.ts",
     "build-extension": "node ./scripts/build-extension.mjs",
     "lint": "node ./scripts/lint.mjs",
     "remote-review-gate": "node ./scripts/remote-review-gate.mjs --pretty",
