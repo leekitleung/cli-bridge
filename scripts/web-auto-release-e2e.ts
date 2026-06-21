@@ -106,6 +106,10 @@ class ScenarioFailureError extends Error {
 }
 
 const DEFAULT_OUTPUT_DIR = 'output/playwright/web-auto-release';
+const DEFAULT_CFT_ROOT = resolve(
+  process.env.HOME ?? '',
+  'Library/Caches/ms-playwright/chromium-1226/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+);
 const EXPECTED_SEQUENCE = [
   'queued',
   'claimed',
@@ -341,43 +345,12 @@ async function loadPlaywright(): Promise<any> {
   }
 }
 
-async function discoverChromePath(input?: string): Promise<string> {
-  if (input) {
-    if (!existsSync(input)) {
-      throw new Error(`Chrome path missing or not executable: ${input}`);
-    }
-    return input;
+function discoverChromePath(input?: string): string {
+  const chromePath = input ?? DEFAULT_CFT_ROOT;
+  if (!existsSync(chromePath)) {
+    throw new Error(`Chrome path missing or not executable: ${chromePath}`);
   }
-  // Prefer Playwright's bundled Chrome For Testing — branded Chrome 137+
-  // removed --load-extension support (security deprecation). Only Chromium and
-  // Chrome For Testing still honour the flag.
-  try {
-    const playwright = await loadPlaywright();
-    const cftPath = playwright.chromium.executablePath();
-    if (cftPath && existsSync(cftPath)) {
-      return cftPath;
-    }
-  } catch {
-    // Playwright unavailable; fall through to platform candidates.
-  }
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-  const candidates: string[] = [];
-  if (process.platform === 'win32') {
-    candidates.push(resolve(home, 'AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'));
-  } else if (process.platform === 'darwin') {
-    candidates.push(
-      resolve(home, 'Library/Caches/ms-playwright/chromium-1226/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-    );
-  } else {
-    candidates.push(resolve(home, '.cache/ms-playwright/chromium-1228/chrome-linux/chrome'));
-  }
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  throw new Error(
-    'Chrome For Testing not found. Branded Chrome 137+ does not support --load-extension. ' +
-      'Run: npx playwright install chromium',
-  );
+  return chromePath;
 }
 
 export async function disconnectConnectedBrowser(browser: any): Promise<void> {
@@ -414,7 +387,7 @@ export async function launchBrowser(args: WebAutoHarnessArgs, extensionDist: str
     throw new Error('profile-dir is required when not using connect-cdp or connect-active-chrome');
   }
   const remotePort = await findAvailablePort(args.remoteDebuggingPort);
-  const chromePath = await discoverChromePath(args.chromePath);
+  const chromePath = discoverChromePath(args.chromePath);
   const context = await playwright.chromium.launchPersistentContext(args.profileDir, {
     headless: false,
     executablePath: chromePath,
@@ -458,7 +431,6 @@ export async function selectCliBridgeExtensionId(workers: any[]): Promise<string
 }
 
 export async function discoverExtensionId(context: any): Promise<string> {
-  // Method 1: serviceWorkers() — reliable in launchPersistentContext mode.
   let workers = context.serviceWorkers();
   if (workers.length === 0) {
     try {
@@ -469,62 +441,10 @@ export async function discoverExtensionId(context: any): Promise<string> {
     }
   }
   const extensionId = await selectCliBridgeExtensionId(workers);
-  if (extensionId) {
-    return extensionId;
+  if (!extensionId) {
+    throw new Error('extension id could not be discovered');
   }
-
-  // Method 2: CDP Target.getTargets — connectOverCDP mode does not report
-  // pre-existing service workers via serviceWorkers(), but the raw CDP
-  // Target.getTargets command lists all targets including dormant SWs.
-  try {
-    const pages = context.pages();
-    if (pages.length > 0) {
-      const session = await context.newCDPSession(pages[0]);
-      const result = await session.send('Target.getTargets');
-      await session.detach();
-      const swTargets = (result.targetInfos as any[]).filter(
-        (t) => t.type === 'service_worker' && t.url?.startsWith('chrome-extension://'),
-      );
-      for (const target of swTargets) {
-        const match = String(target.url).match(/^chrome-extension:\/\/([a-z]+)\//);
-        if (match) {
-          return match[1];
-        }
-      }
-    }
-  } catch {
-    // CDP session unavailable; fall through to DOM detection.
-  }
-
-  // Method 3: DOM detection — the content script injects a panel element.
-  // If the panel is present, try to extract the extension ID from an
-  // extension-hosted iframe or injected attribute.
-  try {
-    const pages = context.pages();
-    for (const page of pages) {
-      const extId = await page
-        .evaluate(() => {
-          const iframe = document.querySelector('iframe[src^="chrome-extension://"]');
-          if (iframe) {
-            const m = iframe
-              .getAttribute('src')
-              ?.match(/^chrome-extension:\/\/([a-z]+)\//);
-            if (m) return m[1];
-          }
-          return null;
-        })
-        .catch(() => null);
-      if (extId) return extId;
-    }
-  } catch {
-    // DOM detection failed.
-  }
-
-  throw new Error(
-    'extension id could not be discovered; ' +
-      'branded Chrome 137+ removed --load-extension support — use Chrome For Testing ' +
-      '(npx playwright install chromium) and ensure the CLI Bridge extension is loaded',
-  );
+  return extensionId;
 }
 
 export async function ensureChatGptPage(ctx: RuntimeContext): Promise<void> {

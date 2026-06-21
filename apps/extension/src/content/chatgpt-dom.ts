@@ -246,33 +246,6 @@ function fillTextarea(input: ComposerInput, text: string): void {
 function fillContentEditable(input: ComposerInput, text: string): void {
   input.focus();
 
-  // ProseMirror (used by ChatGPT) manages its own state via beforeinput
-  // event handlers. Direct DOM manipulation (insertNode, textContent) does
-  // not trigger ProseMirror's transaction system, so the React layer never
-  // sees the new content and the send button stays disabled.
-  //
-  // document.execCommand('insertText') fires a real beforeinput event with
-  // inputType 'insertText' that ProseMirror captures, making the fill
-  // behave identically to a user typing. execCommand is deprecated but
-  // remains the only synchronous API that triggers ProseMirror's input
-  // pipeline from a content script.
-  try {
-    const selection = globalThis.getSelection?.();
-    if (selection) {
-      selection.removeAllRanges();
-      const range = document.createRange();
-      range.selectNodeContents(input);
-      selection.addRange(range);
-    }
-    if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, text)) {
-      return;
-    }
-  } catch {
-    // execCommand not available or failed; fall through to DOM fallback.
-  }
-
-  // Fallback: direct DOM manipulation. This works for simple contenteditable
-  // elements but will NOT trigger ProseMirror state updates.
   if (!globalThis.document?.createRange) {
     input.textContent = text;
     return;

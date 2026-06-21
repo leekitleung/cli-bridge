@@ -26,27 +26,6 @@ npm run dual-endpoint:e2e -- --scenario chatgpt-route --profile-dir output/playw
 npm run dual-endpoint:e2e -- --scenario chatgpt-route --connect-cdp http://127.0.0.1:9224 --execution-cli codex-medium
 ```
 
-> **Chrome For Testing required.** Branded Chrome 137+ removed `--load-extension`
-> command-line support (security deprecation). Only Chromium and Chrome For
-> Testing still honour the flag. The harness auto-detects the Playwright-bundled
-> Chrome For Testing for `--profile-dir` mode; for `--connect-cdp` mode, launch
-> Chrome For Testing manually:
->
-> ```bash
-> npx playwright install chromium   # one-time install
-> CFT=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
-> "$CFT" --remote-debugging-port=9222 \
->   --user-data-dir=output/cft-cdp-profile \
->   --load-extension=apps/extension/dist \
->   --no-first-run \
->   https://chatgpt.com/?temporary-chat=true
-> ```
->
-> Then log into ChatGPT in that window before running the harness. Do **not**
-> use `"C:\Program Files\Google\Chrome\Application\chrome.exe"` — it silently
-> ignores `--load-extension` and the harness will fail with
-> "extension id could not be discovered".
-
 The harness also accepts an explicit active Chrome mode for environments that
 provide a Node-accessible Chrome DevTools MCP / active browser session adapter:
 

@@ -23,7 +23,6 @@
     "@types/node": "^22.13.0",
     "esbuild": "^0.28.0",
     "jsdom": "^29.1.1",
-    "playwright": "^1.61.0",
     "typescript": "^5.8.3"
   }
 }
