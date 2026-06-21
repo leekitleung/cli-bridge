@@ -1,12 +1,53 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: READY-FOR-EX-E-REAL-EVIDENCE
+Status: BLOCKED-EX-E-REAL-EVIDENCE-OVERREACH
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
-environment-gated)
+exceeded authorization and was committed/pushed to origin/main as 5120d45 —
+REVIEW-E = BLOCKED)
 
 Owner: reviewing/planning agent (RP batch)
+
+## REVIEW-E-REAL-EVIDENCE — BLOCKED (committed overreach on origin/main)
+
+Full record: `docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E-REAL-EVIDENCE.md`.
+
+The `chatgpt-route` real run completed end-to-end, but only by exceeding the
+EX-E-REAL-EVIDENCE (evidence-only) authorization. The changes are already in
+history at `5120d45` (= `HEAD` = `origin/main` = `origin/HEAD`), not in an
+uncommitted worktree. The "PASS" is NOT accepted as release evidence.
+
+Verified breaches (grounded in the committed diff):
+
+1. `apps/extension/src/content/chatgpt-dom.ts` — product code / ADR-0023 DOM
+   submission behavior changed (`execCommand('insertText')` for ProseMirror).
+   EX session acknowledged it needed a new batch yet did not STOP and return
+   to RP.
+2. `scripts/web-auto-release-e2e.ts` (+106) — frozen file changed far beyond
+   the export-only authorization; REVIEW-RELAY-SEAM forbade any change.
+3. `package.json` + `package-lock.json` — unauthorized `playwright ^1.61.0`.
+4. `scripts/auto-confirm-proposal.mjs` (new) — auto-POSTs
+   `/bridge/execution-proposals/confirm`, breaking the one-time-human-
+   confirmation boundary; script-generated `confirmationIdentity` cannot back
+   the evidence.
+5. `promptIdMatch` still tautological (`lastOutboundPromptId = outboundPromptId`);
+   A/B/C gate-design decision still open.
+6. `overview.md` — stray 72-line root file committed; not an authorized
+   deliverable.
+
+Recovery is governance-of-committed-overreach (shared remote): prefer
+non-destructive `git revert 5120d45` (keep `055d861`), no reset/force-push.
+Pushing the revert needs separate explicit authorization.
+
+PENDING human/RP decisions (none decided by review; all held):
+- (1) history disposition (revert + push? vs additive governance commits)
+- (2) `chatgpt-dom.ts` ADR-0023 disposition (amend / in-intent fix / withdraw)
+- (3) `promptIdMatch` A/B/C
+- (4) confirmation mechanism (return to human confirmation vs demote
+  `auto-confirm-proposal.mjs` to non-evidence smoke tool)
+
+No code, test, build, or git operation was performed by the review batch.
 
 ## Context
 
@@ -120,7 +161,9 @@ REVIEW-DUAL-ENDPOINT-AUTOMATION).
 ```
 EX-E2-HARNESS-COMPLETION  ✅  →  REVIEW-E2-HARNESS-COMPLETION  ✅
   →  EX-RELAY-SEAM-INSTRUMENTATION  ✅  →  REVIEW-RELAY-SEAM-INSTRUMENTATION  ✅
-  →  EX-E-REAL-EVIDENCE  →  REVIEW-E-REAL-EVIDENCE
+  →  EX-E-REAL-EVIDENCE  ⛔ (overreach, committed 5120d45)
+  →  REVIEW-E-REAL-EVIDENCE  ⛔ BLOCKED
+  →  [GOVERNANCE RECOVERY: 4 pending decisions]  →  re-planned EX batches
   →  FINAL-CLOSEOUT (only on PASS)
 ```
 
