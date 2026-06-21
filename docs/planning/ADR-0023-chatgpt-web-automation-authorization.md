@@ -131,7 +131,10 @@ Allowed:
 - a single native click on the approved send control after authorization and
   composer-hash verification;
 - read-only observation of visible ChatGPT page state needed to prove
-  submitted/responding/response-ready/returned transitions.
+  submitted/responding/response-ready/returned transitions;
+- composer fill may use `document.execCommand('insertText')` (or an equivalent
+  `beforeinput`-firing API) to trigger the framework's input pipeline, provided
+  no submission mechanism is invoked.
 
 Forbidden:
 

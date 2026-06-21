@@ -378,6 +378,103 @@ test('fillComposerText fills a composer that mounts after a few retries', async 
   assert.equal(composer.value, 'late composer');
 });
 
+test('fillComposerText uses execCommand insertText to drive ProseMirror beforeinput pipeline', async () => {
+  const composer = new FakeElement('div', {
+    contenteditable: 'true',
+    role: 'textbox',
+  });
+  const rootNode = createFakeRoot([composer]);
+
+  const execCommandCalls = [];
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    execCommand(command, showDefaultUI, value) {
+      execCommandCalls.push({ command, value });
+      if (command === 'insertText') {
+        composer.textContent = value;
+      }
+      return true;
+    },
+  };
+
+  try {
+    const result = await fillComposerText('prosemirror text', { root: rootNode });
+    assert.equal(result.ok, true);
+    assert.equal(result.method, 'contenteditable');
+    assert.equal(composer.textContent, 'prosemirror text');
+    assert.ok(
+      execCommandCalls.some((call) => call.command === 'insertText' && call.value === 'prosemirror text'),
+      'fillComposerText must call execCommand("insertText") for contenteditable composers',
+    );
+  } finally {
+    if (originalDocument === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = originalDocument;
+    }
+  }
+});
+
+test('fillComposerText contenteditable fill fires beforeinput via execCommand or InputEvent dispatch', async () => {
+  // The fillContentEditable path must use execCommand('insertText') (which
+  // fires a native beforeinput) OR the dispatchBeforeInput helper must fire a
+  // beforeinput InputEvent. Either way, the beforeinput pipeline is triggered.
+  // This test verifies the execCommand path; when execCommand is unavailable,
+  // dispatchBeforeInput is called unconditionally before the fill.
+  const composer = new FakeElement('div', {
+    contenteditable: 'true',
+    role: 'textbox',
+  });
+  const rootNode = createFakeRoot([composer]);
+
+  const originalDocument = globalThis.document;
+  let insertTextCalled = false;
+  globalThis.document = {
+    execCommand(command) {
+      if (command === 'insertText') {
+        insertTextCalled = true;
+        composer.textContent = 'beforeinput proof';
+      }
+      return true;
+    },
+  };
+
+  try {
+    const result = await fillComposerText('beforeinput proof', { root: rootNode });
+    assert.equal(result.ok, true);
+    assert.equal(insertTextCalled, true, 'execCommand("insertText") must be invoked for ProseMirror beforeinput');
+  } finally {
+    if (originalDocument === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = originalDocument;
+    }
+  }
+});
+
+test('chatgpt-dom.ts source contains no submission or keyboard simulation patterns', async () => {
+  const source = await readFile(resolve(root, 'apps/extension/src/content/chatgpt-dom.ts'), 'utf8');
+
+  // Forbidden patterns: submission mechanisms and keyboard simulation.
+  // Do NOT scan for bare "Enter" — it produces false positives on words like
+  // "center", "enter", "EnterText", and comments.
+  const forbiddenPatterns = [
+    { name: 'KeyboardEvent', regex: /KeyboardEvent/ },
+    { name: 'keydown', regex: /keydown/ },
+    { name: 'keypress', regex: /keypress/ },
+    { name: 'requestSubmit', regex: /requestSubmit/ },
+    { name: '.submit(', regex: /\.submit\(/ },
+    { name: 'form.submit', regex: /form\.submit/ },
+    { name: 'click.*send', regex: /click.*send/ },
+    { name: 'dispatchEvent.*submit', regex: /dispatchEvent.*submit/ },
+  ];
+
+  for (const { name, regex } of forbiddenPatterns) {
+    const matches = source.match(new RegExp(regex.source, 'g'));
+    assert.equal(matches, null, `chatgpt-dom.ts must not contain forbidden pattern: ${name}`);
+  }
+});
+
 test('fillComposerText does not write clipboard by default when direct fill throws', async () => {
   let copied = '';
   const composer = new FakeElement('textarea', {
