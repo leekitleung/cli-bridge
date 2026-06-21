@@ -1118,7 +1118,7 @@ dependency.
   behavior change.
 - No commit, push, merge, or PR.
 
-### Required Implementation (re-land exactly these four)
+### Required Implementation (re-land exactly these six)
 
 1. **CFT Chrome discovery.** Make `discoverChromePath` resolve a
    Chrome-For-Testing executable (via `loadPlaywright()` →
@@ -1137,6 +1137,19 @@ dependency.
 4. **CDP extension-id fallback.** In `discoverExtensionId`, add a CDP
    `Target.getTargets` fallback for `connectOverCDP` mode (service-worker
    discovery is unreliable there). Read-only target enumeration; no injection.
+5. **Cross-platform handoff path.** `ACTIVE_HANDOFF_PATH` in
+   `dual-endpoint-release-e2e.ts` (line ~107) is currently the hardcoded POSIX
+   `'/tmp/cli-bridge-dual-endpoint-active.json'`, which does not exist on
+   Windows. Restore `resolve(tmpdir(), 'cli-bridge-dual-endpoint-active.json')`
+   (import `tmpdir` from `node:os`). Windows-compat fix that 5120d45 made and
+   the revert removed.
+6. **Cross-platform entry-point check.** Both
+   `dual-endpoint-release-e2e.ts` (line ~1410) and `web-auto-release-e2e.ts`
+   (line ~933) compare `resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)`.
+   On Windows `new URL(...).pathname` yields a drive-letter-doubled path
+   (`/H:/...` → `H:\H:\...` after resolve), breaking the main-module guard.
+   Restore `fileURLToPath(import.meta.url)` (import `fileURLToPath` from
+   `node:url`) in BOTH files. Windows-compat fix reverted with 5120d45.
 
 ### ANTI SCOPE-CREEP STOP (hard clause)
 
@@ -1180,7 +1193,9 @@ Re-land exactly:
 1. CFT Chrome discovery (playwright.chromium.executablePath), honor --chrome-path first;
 2. skip buildWebAutoExtension() in --connect-cdp / --connect-active-chrome mode;
 3. runRealChatgptRoute starts server with port: DEFAULT_LOCAL_SERVER_PORT (import existing constant);
-4. discoverExtensionId CDP Target.getTargets fallback (read-only).
+4. discoverExtensionId CDP Target.getTargets fallback (read-only);
+5. ACTIVE_HANDOFF_PATH = resolve(tmpdir(), '...') (node:os) instead of POSIX '/tmp/...' (Windows-compat);
+6. entry-point guard uses fileURLToPath(import.meta.url) (node:url) in BOTH dual-endpoint + web-auto (Windows drive-letter fix).
 
 Forbidden:
 - any apps/ change (chatgpt-dom.ts is EX-ADR0023-PROSEMIRROR's), any packages/ source edit;
