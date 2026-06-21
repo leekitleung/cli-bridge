@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: BLOCKED-EX-E-REAL-EVIDENCE-OVERREACH
+Status: RECOVERY-IN-PROGRESS (RP-RECOVERY-1 DONE, local revert c96742e unpushed; decisions (c)/(e)/(f) locked, (d) recommended option-2 pending final confirm; EX follow-ups pending)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
@@ -48,6 +48,118 @@ PENDING human/RP decisions (none decided by review; all held):
   `auto-confirm-proposal.mjs` to non-evidence smoke tool)
 
 No code, test, build, or git operation was performed by the review batch.
+
+## Governance Recovery Plan (RP, post-overreach)
+
+Order is fixed: restore `main`'s authorization boundary FIRST, then re-plan
+legitimate batches. Do not resume EX-E evidence capture until every gate below
+is cleared.
+
+History context on `main`:
+- `055d861` relaySeam instrumentation (legitimate; `promptIdMatch` quality open)
+- `5120d45` EX-E overreach (unauthorized product/infra/dep/auto-confirm)
+- `d6643b0` REVIEW-E BLOCKED governance record
+
+### RP-RECOVERY-1 — neutralize the pushed overreach
+- Action: non-destructive `git revert 5120d45` (single revert commit; no
+  reset, no force-push, no history rewrite). Keep `055d861` and `d6643b0`.
+- Gate REVIEW-RECOVERY-1: confirm the revert diff ONLY reverses `5120d45`
+  (`chatgpt-dom.ts`, `web-auto-release-e2e.ts`, `package.json`/lock,
+  `auto-confirm-proposal.mjs`, `overview.md`, harness/runbook lines) and leaves
+  `055d861`/`d6643b0` intact. `main` must no longer carry the unauthorized
+  ADR-0023 behavior, frozen-harness change, new dependency, auto-confirm
+  helper, or root `overview.md`.
+- Push of the revert to `origin/main`: separate explicit human authorization.
+- **DONE 2026-06-21:** `git revert 5120d45` → `c96742e` (local-only, not pushed).
+  REVIEW-RECOVERY-1 PASS — proof: `git diff 055d861 HEAD` is ONLY the two
+  governance docs (RP doc + REVIEW-E record); all of `5120d45`'s product /
+  harness / dependency / auto-confirm / `overview.md` changes are fully
+  reversed and `055d861` relaySeam instrumentation is intact. `overview.md` and
+  `scripts/auto-confirm-proposal.mjs` deleted. Push remains gated on separate
+  human authorization. Observed: `origin/main` is at `d6643b0` (governance
+  record was pushed out-of-band); revert `c96742e` is local-only.
+
+### RP-RELAY-SEAM-FOLLOWUP — close the promptIdMatch gate design
+- Must precede the next real-evidence run.
+- Decision: **A recommended** — REVIEW-E gate stops treating `promptIdMatch` as
+  seam proof; instead relies on extract-return first 200/201, repeat 409 /
+  idempotent-replay semantics, non-empty `artifactId`, non-empty
+  `outboundPromptId`, and a complete transition sequence. (B = product endpoint,
+  more surface; C = status quo, unacceptable.) A needs no product code.
+- Output: update RP doc + REVIEW-E gate wording; adjust harness tests so
+  `promptIdMatch` is asserted as present-only, not as strong proof.
+- Pending: human confirmation of A.
+
+### RP-ADR0023-PROSEMIRROR — disposition of the ChatGPT fill fix
+- The `execCommand('insertText')` change may be a real bug fix but must be its
+  own batch with explicit ADR disposition (human/RP decision, NOT review's):
+  (1) ADR-0023 amendment, (2) in-intent bug fix, or (3) withdraw.
+- Allowed files (once disposition chosen): `apps/extension/src/content/chatgpt-dom.ts`,
+  content-fill tests if feasible, ADR/runbook updates if the ADR path requires.
+- Pending: ADR disposition decision.
+
+### RP-HARNESS-INFRA-CFT — Chrome 137 / CFT / CDP infra
+- Re-authorize the legitimate infra findings (Chrome For Testing discovery,
+  CDP `Target.getTargets`, port mismatch, CDP-mode build skip) as a
+  harness-only EX batch.
+- Allowed: `scripts/web-auto-release-e2e.ts`, `scripts/dual-endpoint-release-e2e.ts`,
+  `docs/runbooks/dual-endpoint-automation.md`, and `package.json`/lock ONLY if
+  the dependency decision is explicitly approved.
+- Open decision: is a `playwright` devDependency justified, or does the harness
+  run via ambient/npx Playwright? Dependency addition must be justified
+  separately.
+
+### RP-CONFIRMATION-MECHANISM — define auto-confirm's place
+- Hard rule to adopt:
+  - Real evidence: auto-confirm FORBIDDEN; human must confirm the console card.
+  - Smoke / local unattended: auto-confirm allowed ONLY if the filename, docs,
+    and evidence schema mark it non-evidence.
+- If `auto-confirm-proposal.mjs` is retained, it is its own batch and REVIEW-E
+  must never read a confirmation identity it produced as PASS evidence.
+
+### EX-E-REAL-EVIDENCE-RERUN — only after all gates above clear
+- Success conditions: clean working tree; `HEAD` free of unauthorized
+  product/harness/auto-confirm overreach; both cli-route and chatgpt-route
+  have sanitized real evidence; confirmation step is human; relay-seam gate
+  uses the corrected (non-tautological) criteria; no dirty worktree after the
+  run except expected `output/` artifacts.
+
+### Immediate next step
+RP-RECOVERY-1 is DONE (local revert `c96742e`). Next gated action is the push
+authorization (b) and the dependent EX follow-up batches.
+
+## Locked Governance Decisions (2026-06-21)
+
+- **(c) promptIdMatch = OPTION A (LOCKED).** REVIEW-E gate no longer treats
+  `promptIdMatch` as seam proof. Seam validity instead relies on: extract-return
+  first response 200/201, repeat/idempotent-replay 409 semantics, non-empty
+  `artifactId`, non-empty `outboundPromptId`, and a complete transition
+  sequence. No product code; RP-RELAY-SEAM-FOLLOWUP updates gate wording +
+  demotes the `promptIdMatch` harness assertion to presence-only.
+- **(d) chatgpt-dom.ts = OPTION 2 in-intent bug fix (RP-RECOMMENDED, ADR-grounded; pending final human confirm).**
+  ADR-0023 forbids SEND/SUBMISSION mechanisms (send-button click, keyboard/Enter
+  simulation, `requestSubmit`, `.submit()`, form submission) but explicitly
+  ALLOWS the composer FILL path ("locates and fills the composer"; Stage A may
+  improve "the existing automatic-fill path" reliability).
+  `execCommand('insertText')` is a fill (fires `beforeinput`), not a send.
+  Guardrails for the dedicated `EX-ADR0023-PROSEMIRROR` batch: (1) source-
+  boundary tests proving the new fill introduces NO send/keyboard/requestSubmit/
+  form path; (2) append a one-line clarification to ADR-0023 "ChatGPT DOM Rules
+  > Allowed" permitting `execCommand('insertText')` fill provided it performs no
+  submission.
+- **(e) playwright devDependency = NOT ADDED by default (LOCKED).** Harness runs
+  via ambient/`npx` Playwright. A `devDependencies` entry is added only on a
+  concrete CI "Playwright not found" failure, justified separately, inside
+  RP-HARNESS-INFRA-CFT.
+- **(f) confirmation mechanism hard rule = ADOPTED (LOCKED).** Real evidence:
+  auto-confirm FORBIDDEN, human must confirm the console card. Smoke/local
+  unattended: auto-confirm allowed ONLY if filename + docs + evidence schema
+  mark it non-evidence. REVIEW-E must never accept a confirmation identity
+  produced by `auto-confirm-proposal.mjs` (or any auto-confirmer) as PASS
+  evidence.
+
+Pending human confirmations: (b) push authorization; (d) final lock of
+option 2.
 
 ## Context
 
