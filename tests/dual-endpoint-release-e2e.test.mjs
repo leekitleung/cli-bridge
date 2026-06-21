@@ -331,6 +331,12 @@ test('dual endpoint release evidence relaySeam field shape matches the instrumen
     artifactId: 'artifact-def-456',
   };
   // Compile-time shape: assert each subfield exists with the expected type.
+  // NOTE (RP-RELAY-SEAM-FOLLOWUP, decision A): promptIdMatch and
+  // lastOutboundPromptId are asserted PRESENCE/TYPE ONLY. They are id echoes
+  // (lastOutboundPromptId := outboundPromptId), so promptIdMatch is always
+  // true and must NOT be treated as seam proof. The real seam signals are
+  // idempotentReplayHit (server replayed flag) + extract-return 200/201-vs-409
+  // throw semantics. Do not add assertions that rely on promptIdMatch as proof.
   assert.equal(typeof relaySeam.firstExtractReturnStatus, 'number');
   assert.equal(typeof relaySeam.secondExtractReturnStatus, 'number');
   assert.equal(typeof relaySeam.lastOutboundPromptId, 'string');

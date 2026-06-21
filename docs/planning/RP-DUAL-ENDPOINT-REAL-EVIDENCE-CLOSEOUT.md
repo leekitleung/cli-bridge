@@ -81,14 +81,19 @@ History context on `main`:
 
 ### RP-RELAY-SEAM-FOLLOWUP — close the promptIdMatch gate design
 - Must precede the next real-evidence run.
-- Decision: **A recommended** — REVIEW-E gate stops treating `promptIdMatch` as
+- Decision: **OPTION A LOCKED** — REVIEW-E gate stops treating `promptIdMatch` as
   seam proof; instead relies on extract-return first 200/201, repeat 409 /
   idempotent-replay semantics, non-empty `artifactId`, non-empty
   `outboundPromptId`, and a complete transition sequence. (B = product endpoint,
   more surface; C = status quo, unacceptable.) A needs no product code.
 - Output: update RP doc + REVIEW-E gate wording; adjust harness tests so
   `promptIdMatch` is asserted as present-only, not as strong proof.
-- Pending: human confirmation of A.
+- **DONE 2026-06-21:** REVIEW-E gate wording in this doc + the runbook
+  "Evidence fields" section already mark `promptIdMatch`/`lastOutboundPromptId`
+  as id echoes ("Always `true`", "do not use as a gate signal") and name
+  `idempotentReplayHit` + 200/201-vs-409 throw semantics as the real signals.
+  Harness shape test carries an explicit presence-only comment for
+  `promptIdMatch`. No product code touched. Local commit; push gated separately.
 
 ### RP-ADR0023-PROSEMIRROR — disposition of the ChatGPT fill fix
 - The `execCommand('insertText')` change may be a real bug fix but must be its
@@ -614,7 +619,9 @@ browser dependency.
 - [ ] **Update runbook:** In `docs/runbooks/dual-endpoint-automation.md`, add a
   short "Evidence fields" section documenting that `chatgpt-route` evidence
   includes `relaySeam` with the listed subfields, and that REVIEW-E inspects
-  `promptIdMatch` and `idempotentReplayHit` to validate the relay seam.
+  `idempotentReplayHit` (+ extract-return 200/201-vs-409 throw semantics) to
+  validate the relay seam. (Per decision A, `promptIdMatch`/`lastOutboundPromptId`
+  are id echoes and are NOT seam-validation signals.)
 
 ### Verification
 
