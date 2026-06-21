@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: RECOVERY-IN-PROGRESS (RP-RECOVERY-1 DONE, local revert c96742e unpushed; decisions (c)/(e)/(f) locked, (d) recommended option-2 pending final confirm; EX follow-ups pending)
+Status: RECOVERY-IN-PROGRESS (RP-RECOVERY-1 DONE; revert c96742e + decisions pushed; (c)/(d)/(e)/(f) all locked; next: RP-RELAY-SEAM-FOLLOWUP then EX-ADR0023-PROSEMIRROR)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
@@ -136,7 +136,7 @@ authorization (b) and the dependent EX follow-up batches.
   `artifactId`, non-empty `outboundPromptId`, and a complete transition
   sequence. No product code; RP-RELAY-SEAM-FOLLOWUP updates gate wording +
   demotes the `promptIdMatch` harness assertion to presence-only.
-- **(d) chatgpt-dom.ts = OPTION 2 in-intent bug fix (RP-RECOMMENDED, ADR-grounded; pending final human confirm).**
+- **(d) chatgpt-dom.ts = OPTION 2 in-intent bug fix (LOCKED 2026-06-21, ADR-0023-grounded).**
   ADR-0023 forbids SEND/SUBMISSION mechanisms (send-button click, keyboard/Enter
   simulation, `requestSubmit`, `.submit()`, form submission) but explicitly
   ALLOWS the composer FILL path ("locates and fills the composer"; Stage A may
@@ -158,8 +158,9 @@ authorization (b) and the dependent EX follow-up batches.
   produced by `auto-confirm-proposal.mjs` (or any auto-confirmer) as PASS
   evidence.
 
-Pending human confirmations: (b) push authorization; (d) final lock of
-option 2.
+Pending human confirmations: none. (b) push AUTHORIZED 2026-06-21; (d) option 2
+LOCKED. Next batch order: RP-RELAY-SEAM-FOLLOWUP first, then
+EX-ADR0023-PROSEMIRROR.
 
 ## Context
 
