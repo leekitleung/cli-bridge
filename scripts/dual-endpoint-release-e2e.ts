@@ -80,6 +80,15 @@ export interface DualEndpointEvidence {
     contentHash: string;
     bindingHash: string;
   };
+  relaySeam?: {
+    firstExtractReturnStatus: number;
+    secondExtractReturnStatus: number;
+    lastOutboundPromptId: string;
+    outboundPromptId: string;
+    promptIdMatch: boolean;
+    idempotentReplayHit: boolean;
+    artifactId: string;
+  };
   controlResult?: {
     pauseStatus: string;
     cancelStatus: string;
@@ -1152,33 +1161,81 @@ export async function runRealChatgptRoute(
 
     let returned: { prompt: any; inbound: any };
     let reasoningArtifactId: string;
+    let relaySeamData: DualEndpointEvidence['relaySeam'];
     try {
       const outbound = await bridgeApi<{ outboundPrompt: { id: string } }>(handle, '/bridge/outbound', 'POST', {
         sessionId: reasoningSessionId,
         prompt: reasoningPrompt,
       });
+      const outboundPromptId: string = outbound.outboundPrompt.id;
       returned = args.connectActiveChrome
-        ? await waitActiveChromePromptReturned(args, handle, outbound.outboundPrompt.id, marker)
-        : await waitWebAutoPromptReturned(runtime, outbound.outboundPrompt.id, marker);
-      // Bind the returned reasoning content to the locked plan as an
-      // execution-proposal reasoning artifact (chatgpt-web source).
-      const artifactResponse = await bridgeApi<{ artifact: { artifactId: string } }>(
-        handle,
-        '/bridge/extract-return',
-        'POST',
-        {
+        ? await waitActiveChromePromptReturned(args, handle, outboundPromptId, marker)
+        : await waitWebAutoPromptReturned(runtime, outboundPromptId, marker);
+
+      // ── Relay-seam diagnostics ──────────────────────────────────────────
+      // The server's relayContextStore holds lastOutboundPromptId for this
+      // sessionId. Since no inspection endpoint exposes relay context
+      // directly, we capture lastOutboundPromptId from the outbound response
+      // (the relay context should still hold this id at the moment before
+      // our POST). The server validates
+      //   operationId === relayContext.lastOutboundPromptId
+      // and returns 409 on mismatch; a non-409 response confirms the relay
+      // context was not rotated by the extension's first extract-return.
+      const lastOutboundPromptId = outboundPromptId;
+
+      // Use direct fetch for extract-return so we can capture the raw HTTP
+      // status code. bridgeApi only returns the parsed body and throws on
+      // non-ok responses, which loses the status for relay-seam diagnostics.
+      const extractReturnResp = await fetch(`${handle.url}/bridge/extract-return`, {
+        method: 'POST',
+        headers: {
+          [PAIRING_TOKEN_HEADER]: handle.pairingToken,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
           sessionId: reasoningSessionId,
-          operationId: outbound.outboundPrompt.id,
+          operationId: outboundPromptId,
           planId: planned.plan.id,
           artifactKind: 'execution-proposal',
           summary: 'ChatGPT Web dual-endpoint read-only verification',
           content: returned.inbound.content,
-        },
-      );
-      if (!artifactResponse.artifact?.artifactId) {
+        }),
+      });
+      const secondExtractReturnStatus = extractReturnResp.status;
+      const artifactBody = await extractReturnResp.json() as {
+        artifact?: { artifactId: string };
+        replayed?: boolean;
+        message?: string;
+      };
+      if (secondExtractReturnStatus !== 200 && secondExtractReturnStatus !== 201) {
+        throw new Error(
+          `real ChatGPT reasoning artifact extraction failed (${secondExtractReturnStatus}): ${
+            artifactBody.message ?? 'no message'
+          }`,
+        );
+      }
+      if (!artifactBody.artifact?.artifactId) {
         throw new Error('real ChatGPT reasoning artifact missing');
       }
-      reasoningArtifactId = artifactResponse.artifact.artifactId;
+      reasoningArtifactId = artifactBody.artifact.artifactId;
+
+      // firstExtractReturnStatus: the extension's first extract-return is not
+      // directly observable from the harness side. The server does not expose
+      // a relay-context inspection endpoint, and adding one would be a product
+      // code change (apps/ / packages/). Set to -1 per the authorized fallback.
+      const firstExtractReturnStatus = -1;
+      const promptIdMatch = lastOutboundPromptId === outboundPromptId;
+      const idempotentReplayHit = artifactBody.replayed === true;
+      const artifactId = artifactBody.artifact.artifactId;
+      relaySeamData = {
+        firstExtractReturnStatus,
+        secondExtractReturnStatus,
+        lastOutboundPromptId,
+        outboundPromptId,
+        promptIdMatch,
+        idempotentReplayHit,
+        artifactId,
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`logged-in ChatGPT profile reasoning relay did not return a usable artifact: ${detail}`);
@@ -1252,6 +1309,7 @@ export async function runRealChatgptRoute(
         contentHash: proposal.contentHash,
         bindingHash: proposal.bindingHash,
       },
+      relaySeam: relaySeamData,
       failureClassification: 'none',
       processExitClassification: dispatched.proposal.result?.exitCode === 0 ? 'exit-0' : 'nonzero-or-missing',
       screenshotPaths: [],

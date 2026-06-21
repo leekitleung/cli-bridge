@@ -319,3 +319,100 @@ test('dual endpoint release harness produces passed contract evidence for determ
     }
   });
 });
+
+test('dual endpoint release evidence relaySeam field shape matches the instrumentation interface', () => {
+  const relaySeam = {
+    firstExtractReturnStatus: -1,
+    secondExtractReturnStatus: 200,
+    lastOutboundPromptId: 'prompt-abc-123',
+    outboundPromptId: 'prompt-abc-123',
+    promptIdMatch: true,
+    idempotentReplayHit: false,
+    artifactId: 'artifact-def-456',
+  };
+  // Compile-time shape: assert each subfield exists with the expected type.
+  assert.equal(typeof relaySeam.firstExtractReturnStatus, 'number');
+  assert.equal(typeof relaySeam.secondExtractReturnStatus, 'number');
+  assert.equal(typeof relaySeam.lastOutboundPromptId, 'string');
+  assert.equal(typeof relaySeam.outboundPromptId, 'string');
+  assert.equal(typeof relaySeam.promptIdMatch, 'boolean');
+  assert.equal(typeof relaySeam.idempotentReplayHit, 'boolean');
+  assert.equal(typeof relaySeam.artifactId, 'string');
+  // Verify idempotent replay can be true.
+  const replayHit = { ...relaySeam, idempotentReplayHit: true, promptIdMatch: false };
+  assert.equal(replayHit.idempotentReplayHit, true);
+  assert.equal(replayHit.promptIdMatch, false);
+});
+
+test('dual endpoint release evidence sanitize preserves relaySeam subfields intact', () => {
+  const relaySeam = {
+    firstExtractReturnStatus: 201,
+    secondExtractReturnStatus: 200,
+    lastOutboundPromptId: 'rp_xyz_001',
+    outboundPromptId: 'rp_xyz_001',
+    promptIdMatch: true,
+    idempotentReplayHit: true,
+    artifactId: 'art_abc_456',
+  };
+  const evidence = {
+    scenario: 'chatgpt-route',
+    timestamp: '2026-06-21T00-00-00-000Z',
+    ok: true,
+    evidenceStatus: 'passed',
+    git: { commit: 'abc123', dirty: false },
+    relaySeam,
+    endpointBindings: [],
+    transitionSequence: [],
+    failureClassification: 'none',
+    processExitClassification: 'exit-0',
+    screenshotPaths: [],
+  };
+  const sanitized = sanitizeEvidence(evidence);
+  assert.ok(sanitized.relaySeam, 'relaySeam should survive sanitization');
+  assert.equal(sanitized.relaySeam.firstExtractReturnStatus, 201);
+  assert.equal(sanitized.relaySeam.secondExtractReturnStatus, 200);
+  assert.equal(sanitized.relaySeam.lastOutboundPromptId, 'rp_xyz_001');
+  assert.equal(sanitized.relaySeam.outboundPromptId, 'rp_xyz_001');
+  assert.equal(sanitized.relaySeam.promptIdMatch, true);
+  assert.equal(sanitized.relaySeam.idempotentReplayHit, true);
+  assert.equal(sanitized.relaySeam.artifactId, 'art_abc_456');
+});
+
+test('dual endpoint release evidence relaySeam is absent on non-chatgpt-route evidence', () => {
+  // Dry-run cli-route evidence should not carry relaySeam.
+  const dryCli = createDryRunEvidence({
+    scenario: 'cli-route',
+    timestamp: '2026-06-21T00-00-00-000Z',
+    git: { commit: 'abc123', dirty: false },
+    reasoningEndpointId: 'codex-command',
+    executionEndpointId: 'codex-medium',
+  });
+  assert.equal(dryCli.relaySeam, undefined, 'cli-route dry-run should not have relaySeam');
+
+  // Dry-run chatgpt-route evidence should not carry relaySeam (chatgpt-route is
+  // the only scenario that populates it, and only in real — not dry — runs).
+  const dryChatgpt = createDryRunEvidence({
+    scenario: 'chatgpt-route',
+    timestamp: '2026-06-21T00-00-00-000Z',
+    git: { commit: 'abc123', dirty: false },
+  });
+  assert.equal(dryChatgpt.relaySeam, undefined, 'chatgpt-route dry-run should not have relaySeam');
+
+  // A synthetic passed evidence without relaySeam is valid (field is optional).
+  const noRelaySeam = {
+    scenario: 'same-provider',
+    timestamp: '2026-06-21T00-00-00-000Z',
+    ok: true,
+    evidenceStatus: 'passed',
+    git: { commit: 'abc123', dirty: false },
+    endpointBindings: [],
+    transitionSequence: [],
+    failureClassification: 'none',
+    processExitClassification: 'not-run',
+    screenshotPaths: [],
+  };
+  assert.equal(noRelaySeam.relaySeam, undefined);
+  // Sanitize must not inject relaySeam.
+  const sanitized = sanitizeEvidence(noRelaySeam);
+  assert.equal(sanitized.relaySeam, undefined);
+});

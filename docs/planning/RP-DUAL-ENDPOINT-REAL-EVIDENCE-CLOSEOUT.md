@@ -1,9 +1,10 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: READY-FOR-EX-RELAY-SEAM-INSTRUMENTATION
+Status: READY-FOR-EX-E-REAL-EVIDENCE
 
-Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-E-REAL-EVIDENCE split — relay-seam
-instrumentation extracted as prerequisite batch)
+Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
+RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
+environment-gated)
 
 Owner: reviewing/planning agent (RP batch)
 
@@ -118,7 +119,7 @@ REVIEW-DUAL-ENDPOINT-AUTOMATION).
 
 ```
 EX-E2-HARNESS-COMPLETION  ✅  →  REVIEW-E2-HARNESS-COMPLETION  ✅
-  →  EX-RELAY-SEAM-INSTRUMENTATION  →  REVIEW-RELAY-SEAM-INSTRUMENTATION
+  →  EX-RELAY-SEAM-INSTRUMENTATION  ✅  →  REVIEW-RELAY-SEAM-INSTRUMENTATION  ✅
   →  EX-E-REAL-EVIDENCE  →  REVIEW-E-REAL-EVIDENCE
   →  FINAL-CLOSEOUT (only on PASS)
 ```
@@ -508,6 +509,14 @@ asks.
 
 - PASS: update RP status to `READY-FOR-EX-E-REAL-EVIDENCE`; the next real run
   will automatically capture relay-seam diagnostics for REVIEW-E.
+  **Gate design note (REVIEW-RELAY-SEAM finding):** `relaySeam.promptIdMatch`
+  and `relaySeam.lastOutboundPromptId` are id echoes (always `true` / always
+  equals `outboundPromptId`), not server relay-context values. The real
+  rotation signal is the 409-vs-200/201 throw semantics (absence of
+  `relaySeam` in evidence = extract-return threw = rotation detected).
+  REVIEW-E gate has been updated to reflect this. A future product-scope
+  batch could add a relay-context inspection endpoint to make
+  `promptIdMatch` falsifiable, but that is out of scope for this closeout.
 - BLOCKED: enumerate findings; define a bounded follow-up EX patch.
 
 ---
@@ -579,15 +588,18 @@ and clean shutdown.
   evidence or `blocked` with a real environment reason.
 - [ ] **Capture relay-seam diagnostics in the `chatgpt-route` evidence** (REVIEW-E
   gate item): the harness now captures these automatically (EX-RELAY-SEAM-
-  INSTRUMENTATION). Record every `/bridge/extract-return` HTTP response code
-  and the `lastOutboundPromptId` value at the moment of the harness-side second
-  POST. REVIEW-E must inspect `relaySeam.promptIdMatch` and
-  `relaySeam.idempotentReplayHit`, not just the final scenario verdict — a relay
-  double-fire or prompt-id mismatch yields a silent stale artifact or a
-  duplicate-proposal rejection that the contract tests cannot detect. If the
-  real run exposes a harness bug (e.g., `promptIdMatch: false`), the seam
-  adjustment described in the precondition must be recorded as an authorized
-  real-run harness fix (per this batch's Allowed Files).
+  INSTRUMENTATION). The evidence must include a `relaySeam` object; its absence
+  means the extract-return POST threw (likely 409 mismatch = relay-context
+  rotation, a valid `blocked` signal). When present, REVIEW-E inspects
+  `relaySeam.idempotentReplayHit` (server's `replayed` flag — `true` confirms
+  extension already processed this prompt) and `relaySeam.artifactId` (must be
+  non-empty). Note: `relaySeam.promptIdMatch` and `relaySeam.lastOutboundPromptId`
+  are id echoes, NOT server relay-context values — `promptIdMatch` is always
+  `true` and is not a rotation indicator. The real rotation signal is the
+  409-vs-200/201 throw semantics (absence of `relaySeam` = throw = rotation
+  detected). If the real run exposes a harness bug (e.g., `relaySeam` absent on
+  a `passed` verdict), the seam adjustment described in the precondition must be
+  recorded as an authorized real-run harness fix (per this batch's Allowed Files).
 - [ ] Verify the default run leaves no harness-owned server, browser, or child
   CLI process. Record any intentionally retained external CDP browser as an
   exception.
@@ -626,11 +638,35 @@ explicitly asks.
 
 - [ ] Both the CLI route and the ChatGPT route have real (non-blocked, non-`dry-*`)
   sanitized evidence.
-- [ ] **Relay seam validated:** the ChatGPT-route evidence shows the
-  `/bridge/extract-return` response codes and the `lastOutboundPromptId` at the
-  harness-side second POST, proving no double-fire and a matching prompt id (no
-  silent stale artifact or duplicate-proposal rejection). A `passed` verdict
-  without these diagnostics is insufficient.
+- [ ] **Relay seam validated:** the ChatGPT-route evidence includes a
+  `relaySeam` object (its absence means the extract-return POST threw —
+  likely a 409 prompt-id mismatch from relay-context rotation, which is
+  itself a valid `blocked` signal). When `relaySeam` is present, REVIEW-E
+  must inspect:
+  - `idempotentReplayHit`: `true` means the artifact was served from
+    idempotent replay (server's `creation.replayed` flag) — confirms the
+    extension's first extract-return already processed this prompt. `false`
+    means the harness-side POST created a new artifact — possible
+    double-fire if the extension also processed it.
+  - `secondExtractReturnStatus`: must be 200/201. A 409 here is impossible
+    in the current harness flow (it throws before `relaySeam` is populated),
+    but if the harness is later refactored to capture 409s inline, a 409
+    would indicate relay-context rotation.
+  - `artifactId`: must be a non-empty string matching the proposal's
+    `artifactId`.
+  - **Note on `promptIdMatch` and `lastOutboundPromptId`:** these are id
+    echoes (the harness captures `outboundPromptId` from the `/bridge/outbound`
+    response and assigns it to `lastOutboundPromptId`), NOT the server's
+    relay-context value. `promptIdMatch` is therefore always `true` and
+    must NOT be used as a rotation indicator. The real rotation signal is
+    the 409-vs-200/201 throw semantics described above. A future product-
+    scope batch could add a relay-context inspection endpoint to make
+    `promptIdMatch` falsifiable, but that is out of scope for this closeout.
+  - `firstExtractReturnStatus`: always `-1` (extension's first extract-return
+    is not observable from the harness side without a server inspection
+    endpoint). Documented as an authorized fallback.
+  A `passed` verdict without `relaySeam` present in the evidence is
+  insufficient.
 - [ ] Fixed bindings were not replaced after approval (lineage/hash stable).
 - [ ] Every dispatch carried a unique, single-use human confirmation.
 - [ ] `failure-timeout`, `control-pause-cancel`, and `uncertain-dispatch` all

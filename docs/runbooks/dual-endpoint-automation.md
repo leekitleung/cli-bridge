@@ -118,6 +118,41 @@ For each execution proposal, inspect the console card before confirming:
 Confirm only once per proposal. Do not confirm a stale, edited, paused,
 cancelled, expired, or wrong-binding proposal.
 
+## Evidence fields
+
+`chatgpt-route` evidence includes a `relaySeam` diagnostic block that REVIEW-E
+uses to validate the `/bridge/extract-return` relay seam:
+
+| Field | Type | Description |
+|---|---|---|
+| `relaySeam.firstExtractReturnStatus` | `number` | Always `-1` — the extension's first extract-return is not observable from the harness side without a server relay-context inspection endpoint (out of scope for this closeout) |
+| `relaySeam.secondExtractReturnStatus` | `number` | HTTP status of the harness-side `/bridge/extract-return` POST. Always 200/201 when `relaySeam` is present (a 409 throws before `relaySeam` is populated, producing evidence without `relaySeam`) |
+| `relaySeam.lastOutboundPromptId` | `string` | **Id echo** — the `outboundPromptId` from the `/bridge/outbound` response, NOT the server's relay-context value. Always equals `outboundPromptId` |
+| `relaySeam.outboundPromptId` | `string` | The `outbound.outboundPrompt.id` from the `/bridge/outbound` response |
+| `relaySeam.promptIdMatch` | `boolean` | **Always `true`** — compares `lastOutboundPromptId` (id echo) to `outboundPromptId` (same value). Not a rotation indicator; do not use as a gate signal |
+| `relaySeam.idempotentReplayHit` | `boolean` | `true` if the extract-return artifact was served from a prior idempotent create (server's `creation.replayed` flag). **This is the real double-fire diagnostic** — `true` confirms the extension already processed this prompt |
+| `relaySeam.artifactId` | `string` | The reasoning artifact id returned by `/bridge/extract-return` |
+
+The field is optional (`relaySeam?`) — only `chatgpt-route` real-run evidence
+populates it. Non-chatgpt-route scenarios and dry-run evidence omit it entirely.
+**Absence of `relaySeam` in `chatgpt-route` evidence means the extract-return
+POST threw** — likely a 409 prompt-id mismatch from relay-context rotation,
+which is itself a valid `blocked` signal.
+
+REVIEW-E validates the relay seam using:
+1. **Presence of `relaySeam`** — confirms the extract-return POST succeeded
+   (200/201). Absence = throw = rotation or other failure.
+2. **`relaySeam.idempotentReplayHit`** — `true` confirms the extension's first
+   extract-return already processed this prompt (idempotent replay). `false`
+   means the harness-side POST created a new artifact — possible double-fire.
+3. **`relaySeam.artifactId`** — must be non-empty and match the proposal's
+   `artifactId`.
+
+`promptIdMatch` and `lastOutboundPromptId` are id echoes and must not be used
+as rotation indicators. A future product-scope batch could add a relay-context
+inspection endpoint to make `promptIdMatch` falsifiable, but that is out of
+scope for this closeout.
+
 ## Expected Evidence
 
 Evidence is written under:
