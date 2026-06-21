@@ -3,10 +3,12 @@ import { existsSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 import { startLocalServer, type LocalServerHandle } from '../apps/local-server/src/server.ts';
 import { CODEX_REVIEW_ARGS } from '../apps/local-server/src/adapters/command-review-adapter.ts';
-import { PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
+import { PAIRING_TOKEN_HEADER, DEFAULT_LOCAL_SERVER_PORT } from '../packages/shared/src/constants.ts';
 import type { AgentEndpoint } from '../packages/shared/src/types.ts';
 import {
   buildExtension as buildWebAutoExtension,
@@ -104,7 +106,7 @@ export interface DualEndpointEvidence {
 
 const DEFAULT_OUTPUT_DIR = 'output/playwright/dual-endpoint-automation';
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 10 * 60_000;
-const ACTIVE_HANDOFF_PATH = '/tmp/cli-bridge-dual-endpoint-active.json';
+const ACTIVE_HANDOFF_PATH = resolve(tmpdir(), 'cli-bridge-dual-endpoint-active.json');
 // Server-side inbound relay endpoint reused by the ChatGPT route so the
 // reasoning reply returns through the same relay queue the Web automation
 // harness uses. It is inbound-capable and non-executing by design.
@@ -625,9 +627,9 @@ async function runRealCliRoute(
 }
 
 async function startDualEndpointServer(
-  extra: { inboundRelayEndpointId?: string } = {},
+  extra: { inboundRelayEndpointId?: string; port?: number } = {},
 ): Promise<LocalServerHandle> {
-  return startLocalServer(0, {
+  return startLocalServer(extra.port ?? 0, {
     additionalEndpoints: [CODEX_MEDIUM_ENDPOINT],
     ...extra,
     goalPlanCommandOptions: {
@@ -1040,7 +1042,13 @@ async function createChatgptRuntime(
     keepBrowser: false,
     dryRun: false,
   };
-  await buildWebAutoExtension();
+  // Only rebuild the extension when launching our own browser (profile-dir
+  // mode). In CDP / active-chrome mode the extension is already loaded by the
+  // externally-launched Chrome; rebuilding dist overwrites the in-use files
+  // and causes Chrome to unload the extension, making discoverExtensionId fail.
+  if (!args.connectCdp && !args.connectActiveChrome) {
+    await buildWebAutoExtension();
+  }
   const extensionDist = resolve(process.cwd(), 'apps/extension/dist');
   if (!existsSync(extensionDist)) {
     throw new Error('extension dist missing; run npm run build-extension');
@@ -1110,7 +1118,7 @@ export async function runRealChatgptRoute(
   let handle: LocalServerHandle | undefined;
   let runtime: WebAutoRuntimeContext | undefined;
   try {
-    handle = await startDualEndpointServer({ inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID });
+    handle = await startDualEndpointServer({ inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID, port: DEFAULT_LOCAL_SERVER_PORT });
 
     const goal = await bridgeApi<{ goal: { id: string } }>(handle, '/bridge/goals', 'POST', {
       sessionId: `dual-endpoint-chatgpt-${Date.now()}`,
@@ -1168,9 +1176,33 @@ export async function runRealChatgptRoute(
         prompt: reasoningPrompt,
       });
       const outboundPromptId: string = outbound.outboundPrompt.id;
-      returned = args.connectActiveChrome
-        ? await waitActiveChromePromptReturned(args, handle, outboundPromptId, marker)
-        : await waitWebAutoPromptReturned(runtime, outboundPromptId, marker);
+      try {
+        returned = args.connectActiveChrome
+          ? await waitActiveChromePromptReturned(args, handle, outboundPromptId, marker)
+          : await waitWebAutoPromptReturned(runtime, outboundPromptId, marker);
+      } catch (relayError) {
+        // Fallback: if the prompt reached 'returned' status but the marker
+        // was not found in inbound messages (ChatGPT may format the marker
+        // differently, or the extension may truncate the extracted content),
+        // accept the latest inbound for this session as the reasoning reply.
+        const report = await bridgeApi<{ outboundReport?: { prompts?: any[] } }>(
+          handle,
+          `/bridge/outbound/report`,
+        );
+        const promptState = report.outboundReport?.prompts?.find((p: any) => p.id === outboundPromptId);
+        if (promptState?.status !== 'returned') {
+          throw relayError;
+        }
+        const inboundResp = await bridgeApi<{ inboundMessages?: any[] }>(
+          handle,
+          `/bridge/inbound?endpointId=${INBOUND_RELAY_ENDPOINT_ID}`,
+        );
+        const latestInbound = inboundResp.inboundMessages?.at(-1);
+        if (!latestInbound) {
+          throw relayError;
+        }
+        returned = { prompt: promptState, inbound: latestInbound };
+      }
 
       // ── Relay-seam diagnostics ──────────────────────────────────────────
       // The server's relayContextStore holds lastOutboundPromptId for this
@@ -1407,7 +1439,7 @@ async function main(): Promise<void> {
   process.exitCode = ok ? 0 : 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
