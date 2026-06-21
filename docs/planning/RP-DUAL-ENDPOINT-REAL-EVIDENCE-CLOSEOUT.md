@@ -1069,10 +1069,10 @@ Return control to REVIEW-ADR0023-PROSEMIRROR.
 
 **Owner:** execution agent (independent session, NOT this RP session).
 
-**Outcome:** Re-land the four harness-only infra fixes that `5120d45`
+**Outcome:** Re-land the six harness-only infra fixes that `5120d45`
 introduced and `c96742e` reverted, so the dual-endpoint harness can launch a
-Chrome-For-Testing browser with the extension, connect over CDP, and reach the
-local server on the extension's expected port. Harness/tooling only — NO
+Chrome-For-Testing browser with the extension, connect over CDP, reach the
+local server on the extension's expected port, and run on Windows. Harness/tooling only — NO
 `apps/` product behavior, NO ADR-0023 DOM/relay change, NO auto-confirm, NO new
 dependency.
 
@@ -1181,7 +1181,7 @@ source-avoidance scan output, confirmation the four fixes are scoped exactly as
 above, and any STOP-triggering findings.
 
 ```text
-EX-HARNESS-INFRA-CFT - Re-land 4 harness-only infra fixes reverted with 5120d45.
+EX-HARNESS-INFRA-CFT - Re-land 6 harness-only infra fixes reverted with 5120d45.
 
 Allowed files:
 - scripts/web-auto-release-e2e.ts
