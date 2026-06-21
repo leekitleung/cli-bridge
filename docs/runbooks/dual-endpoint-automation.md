@@ -12,7 +12,7 @@ selection, proposal edit, proposal confirmation, or execution dispatch authority
   endpoint and a distinct medium/low execution CLI endpoint:
 
 ```bash
-npm run dual-endpoint:e2e -- --scenario cli-route --reasoning-cli codex-high --execution-cli codex-medium
+npm run dual-endpoint:e2e -- --scenario cli-route --reasoning-cli codex-command --execution-cli codex-medium
 ```
 
 - For ChatGPT-route evidence, provide either a logged-in Chrome profile or an
@@ -34,7 +34,7 @@ Register endpoint identities before running real evidence:
 - Execution endpoint role: `bounded-executor`, tier `medium` or `low`,
   `canExecute=true`.
 - Same-provider evidence must use two visibly distinct profiles from one
-  provider, for example `codex-high` and `codex-medium`.
+  provider, for example `codex-command` and `codex-medium`.
 - Mixed-provider evidence may pair compatible tools at start, but the binding
   must lock after approval and must not be swapped later.
 
@@ -43,13 +43,13 @@ Register endpoint identities before running real evidence:
 Run all scenarios:
 
 ```bash
-npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-high --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile
+npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-command --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile
 ```
 
 Dry-run the evidence writer and scenario contract:
 
 ```bash
-npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-high --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile --dry-run
+npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-command --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile --dry-run
 ```
 
 Run focused harness tests:

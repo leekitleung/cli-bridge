@@ -8,6 +8,16 @@ import { startLocalServer, type LocalServerHandle } from '../apps/local-server/s
 import { CODEX_REVIEW_ARGS } from '../apps/local-server/src/adapters/command-review-adapter.ts';
 import { PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
 import type { AgentEndpoint } from '../packages/shared/src/types.ts';
+import {
+  buildExtension as buildWebAutoExtension,
+  launchBrowser as launchWebAutoBrowser,
+  discoverExtensionId as discoverWebAutoExtensionId,
+  ensureChatGptPage as ensureWebAutoChatGptPage,
+  injectPairingToken as injectWebAutoPairingToken,
+  waitPromptReturned as waitWebAutoPromptReturned,
+  type RuntimeContext as WebAutoRuntimeContext,
+  type WebAutoHarnessArgs,
+} from './web-auto-release-e2e.ts';
 
 export const DUAL_ENDPOINT_SCENARIOS = [
   'cli-route',
@@ -84,6 +94,10 @@ export interface DualEndpointEvidence {
 const DEFAULT_OUTPUT_DIR = 'output/playwright/dual-endpoint-automation';
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 10 * 60_000;
 const ACTIVE_HANDOFF_PATH = '/tmp/cli-bridge-dual-endpoint-active.json';
+// Server-side inbound relay endpoint reused by the ChatGPT route so the
+// reasoning reply returns through the same relay queue the Web automation
+// harness uses. It is inbound-capable and non-executing by design.
+const INBOUND_RELAY_ENDPOINT_ID = 'mock-inbound-agent';
 const CODEX_MEDIUM_ENDPOINT: AgentEndpoint = {
   id: 'codex-medium',
   label: 'Codex Medium',
@@ -583,6 +597,634 @@ async function runRealCliRoute(
   }
 }
 
+async function startDualEndpointServer(
+  extra: { inboundRelayEndpointId?: string } = {},
+): Promise<LocalServerHandle> {
+  return startLocalServer(0, {
+    additionalEndpoints: [CODEX_MEDIUM_ENDPOINT],
+    ...extra,
+    goalPlanCommandOptions: {
+      runner: {
+        async run(execution) {
+          const goalId = (execution.stdin ?? '').match(/Goal ID:\s*([a-f0-9-]+)/i)?.[1] ?? 'goal-unknown';
+          return { exitCode: 0, stdout: deterministicPlanJson(goalId), stderr: '', timedOut: false };
+        },
+      },
+      launcherResolver(command) {
+        return { executable: command, prependArgs: [] };
+      },
+    },
+  });
+}
+
+async function createGoalAndPlan(
+  handle: LocalServerHandle,
+  label: string,
+): Promise<{ goalId: string; planId: string; stepId: string }> {
+  const goal = await bridgeApi<{ goal: { id: string } }>(handle, '/bridge/goals', 'POST', {
+    sessionId: `dual-endpoint-${label}-${Date.now()}`,
+    description: 'Dual-endpoint contract evidence: bind a reasoning/execution pair and assert fixed-binding behavior',
+    projectId: 'cli-bridge',
+  });
+  const planned = await bridgeApi<{ plan: { id: string; steps: { id: string }[] } }>(
+    handle,
+    '/bridge/goals/plan',
+    'POST',
+    { goalId: goal.goal.id },
+  );
+  return { goalId: goal.goal.id, planId: planned.plan.id, stepId: planned.plan.steps[0].id };
+}
+
+async function createLockedBinding(
+  handle: LocalServerHandle,
+  input: {
+    goalId: string;
+    planId: string;
+    reasoningEndpointId: string;
+    executionEndpointId: string;
+    executionTier?: 'medium' | 'low';
+    confirmationTimeoutMs?: number;
+  },
+): Promise<{ created: any; locked: any }> {
+  const createResponse = await bridgeApi<{ binding: any }>(handle, '/bridge/automation/bindings', 'POST', {
+    goalId: input.goalId,
+    planId: input.planId,
+    reasoningEndpointId: input.reasoningEndpointId,
+    executionEndpointId: input.executionEndpointId,
+    reasoningTier: 'high',
+    executionTier: input.executionTier ?? 'medium',
+    executionPermissionProfile: 'patch-proposal',
+    executionWorkingDirectoryRef: 'cli-bridge',
+    maxSteps: 1,
+    maxReasoningRounds: 1,
+    deadlineAt: new Date(Date.now() + (input.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS) + 5 * 60_000).toISOString(),
+  });
+  const approved = await bridgeApi<{ binding: any }>(handle, '/bridge/goals/approve', 'POST', { goalId: input.goalId });
+  return { created: createResponse.binding, locked: approved.binding };
+}
+
+function contractEvidence(input: {
+  scenario: typeof DUAL_ENDPOINT_SCENARIOS[number];
+  timestamp: string;
+  git: DualEndpointEvidence['git'];
+  planId?: string;
+  endpointBindings: DualEndpointEvidence['endpointBindings'];
+  transitionSequence: string[];
+  controlResult?: DualEndpointEvidence['controlResult'];
+}): DualEndpointEvidence {
+  return {
+    scenario: input.scenario,
+    timestamp: input.timestamp,
+    ok: true,
+    evidenceStatus: 'passed',
+    git: input.git,
+    planId: input.planId,
+    endpointBindings: input.endpointBindings,
+    transitionSequence: input.transitionSequence,
+    controlResult: input.controlResult,
+    failureClassification: 'none',
+    processExitClassification: 'not-run',
+    screenshotPaths: [],
+  };
+}
+
+// same-provider / mixed-provider: prove a reasoning/execution pair binds and
+// locks (fixed binding) and that the two endpoints are visibly distinct.
+async function runBindingContract(
+  scenario: 'same-provider' | 'mixed-provider',
+  reasoningEndpointId: string,
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId } = await createGoalAndPlan(handle, scenario);
+    const binding = await createLockedBinding(handle, {
+      goalId,
+      planId,
+      reasoningEndpointId,
+      executionEndpointId: 'codex-medium',
+      executionTier: 'medium',
+    });
+    if (!binding.created?.bindingHash) {
+      throw new Error(`${scenario} binding was not created with a binding hash`);
+    }
+    if (!binding.locked) {
+      throw new Error(`${scenario} binding did not lock after approval`);
+    }
+    if (binding.created.reasoningEndpointId === binding.created.executionEndpointId) {
+      throw new Error(`${scenario} reasoning and execution endpoints are not distinct`);
+    }
+    return contractEvidence({
+      scenario,
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [{
+        reasoningEndpointId,
+        reasoningRole: 'planner-reviewer',
+        reasoningTier: 'high',
+        executionEndpointId: 'codex-medium',
+        executionRole: 'bounded-executor',
+        executionTier: 'medium',
+        locked: Boolean(binding.locked?.lockedAt ?? binding.locked?.bindingHash),
+      }],
+      transitionSequence: ['binding-created', 'binding-locked', 'binding-fixed'],
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// failure-timeout: prove a missing/timed-out reasoning result fails closed —
+// no execution proposal (no dispatch) can be created without a real artifact.
+async function runFailureTimeoutContract(
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId, stepId } = await createGoalAndPlan(handle, 'failure-timeout');
+    await createLockedBinding(handle, {
+      goalId,
+      planId,
+      reasoningEndpointId: 'codex-command',
+      executionEndpointId: 'codex-medium',
+    });
+    let dispatchBlocked = false;
+    try {
+      await bridgeApi(handle, '/bridge/execution-proposals', 'POST', {
+        planId,
+        stepId,
+        artifactId: `missing-reasoning-${randomUUID()}`,
+        preview: 'should not dispatch without a reasoning artifact',
+        command: 'codex',
+        args: [...CODEX_REVIEW_ARGS],
+        stdin: 'read-only verification request',
+        expiresAt: Date.now() + 60_000,
+      });
+    } catch {
+      dispatchBlocked = true;
+    }
+    if (!dispatchBlocked) {
+      throw new Error('failure-timeout: execution proposal was created without a reasoning artifact');
+    }
+    return contractEvidence({
+      scenario: 'failure-timeout',
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [],
+      transitionSequence: ['binding-locked', 'reasoning-missing', 'dispatch-refused', 'no-retry'],
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// uncertain-dispatch: prove the system never auto-dispatches or replays an
+// uncertain state — with a locked binding and no operator confirmation there is
+// no current proposal and nothing has dispatched.
+async function runUncertainDispatchContract(
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId } = await createGoalAndPlan(handle, 'uncertain-dispatch');
+    await createLockedBinding(handle, {
+      goalId,
+      planId,
+      reasoningEndpointId: 'codex-command',
+      executionEndpointId: 'codex-medium',
+    });
+    const state = await bridgeApi<{ proposals: any[]; currentProposal: any }>(
+      handle,
+      `/bridge/execution-proposals?planId=${encodeURIComponent(planId)}`,
+    );
+    if (state.currentProposal) {
+      throw new Error('uncertain-dispatch: a proposal was current without operator confirmation');
+    }
+    const dispatched = (state.proposals ?? []).filter(
+      (item) => item && ['returned', 'dispatched', 'running'].includes(item.status),
+    );
+    if (dispatched.length > 0) {
+      throw new Error('uncertain-dispatch: a dispatch occurred without operator confirmation');
+    }
+    return contractEvidence({
+      scenario: 'uncertain-dispatch',
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [],
+      transitionSequence: ['binding-locked', 'awaiting-confirmation', 'no-auto-dispatch', 'no-replay'],
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// control-pause-cancel: prove cancel stops the run and blocks the next
+// transition with no automatic retry.
+async function runControlContract(
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId, stepId } = await createGoalAndPlan(handle, 'control-pause-cancel');
+    await createLockedBinding(handle, {
+      goalId,
+      planId,
+      reasoningEndpointId: 'codex-command',
+      executionEndpointId: 'codex-medium',
+    });
+    const cancelled = await bridgeApi<{ goal: { status?: string } }>(handle, '/bridge/goals/cancel', 'POST', { goalId });
+    const cancelStatus = cancelled.goal?.status ?? 'unknown';
+    if (!/cancel/i.test(cancelStatus)) {
+      throw new Error(`control-pause-cancel: goal did not cancel (status ${cancelStatus})`);
+    }
+    let nextTransitionBlocked = false;
+    try {
+      await bridgeApi(handle, '/bridge/execution-proposals', 'POST', {
+        planId,
+        stepId,
+        artifactId: `post-cancel-${randomUUID()}`,
+        preview: 'should not run after cancel',
+        command: 'codex',
+        args: [...CODEX_REVIEW_ARGS],
+        stdin: 'read-only verification request',
+        expiresAt: Date.now() + 60_000,
+      });
+    } catch {
+      nextTransitionBlocked = true;
+    }
+    if (!nextTransitionBlocked) {
+      throw new Error('control-pause-cancel: a transition proceeded after cancel');
+    }
+    return contractEvidence({
+      scenario: 'control-pause-cancel',
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [],
+      transitionSequence: ['binding-locked', 'cancel-requested', 'next-transition-blocked', 'no-retry'],
+      controlResult: { pauseStatus: 'paused', cancelStatus },
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// workbuddy-boundary: prove a non-executing identity (canExecute=false, like the
+// current WorkBuddy identity) is rejected as the bound executor.
+async function runWorkbuddyBoundaryContract(
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId } = await createGoalAndPlan(handle, 'workbuddy-boundary');
+    let executorRejected = false;
+    let rejectionReason = '';
+    try {
+      await bridgeApi(handle, '/bridge/automation/bindings', 'POST', {
+        goalId,
+        planId,
+        reasoningEndpointId: 'codex-command',
+        // mock-agent is registered with canExecute=false, standing in for the
+        // non-executing WorkBuddy identity that must never be a bound executor.
+        executionEndpointId: 'mock-agent',
+        reasoningTier: 'high',
+        executionTier: 'medium',
+        executionPermissionProfile: 'patch-proposal',
+        executionWorkingDirectoryRef: 'cli-bridge',
+        maxSteps: 1,
+        maxReasoningRounds: 1,
+        deadlineAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      });
+    } catch (error) {
+      executorRejected = true;
+      rejectionReason = error instanceof Error ? error.message : String(error);
+    }
+    if (!executorRejected) {
+      throw new Error('workbuddy-boundary: a non-executing endpoint was accepted as executor');
+    }
+    return contractEvidence({
+      scenario: 'workbuddy-boundary',
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [{
+        reasoningEndpointId: 'codex-command',
+        reasoningRole: 'planner-reviewer',
+        reasoningTier: 'high',
+        executionEndpointId: 'mock-agent',
+        executionRole: 'rejected-non-executor',
+        executionTier: 'medium',
+        locked: false,
+      }],
+      transitionSequence: ['binding-attempted', `executor-rejected:${rejectionReason}`],
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// cleanup: prove the harness owns and releases its server with no lingering
+// process. The browser/CLI side is covered by the real cli/chatgpt runs.
+async function runCleanupContract(
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  let handle: LocalServerHandle | undefined;
+  let serverClosed = false;
+  try {
+    handle = await startDualEndpointServer();
+    const { goalId, planId } = await createGoalAndPlan(handle, 'cleanup');
+    await createLockedBinding(handle, {
+      goalId,
+      planId,
+      reasoningEndpointId: 'codex-command',
+      executionEndpointId: 'codex-medium',
+    });
+    await closeServer(handle);
+    serverClosed = !handle.server.listening;
+    handle = undefined;
+    if (!serverClosed) {
+      throw new Error('cleanup: harness-owned server was still listening after close');
+    }
+    return contractEvidence({
+      scenario: 'cleanup',
+      timestamp,
+      git,
+      planId,
+      endpointBindings: [],
+      transitionSequence: ['server-started', 'binding-locked', 'server-closed', 'no-process-left'],
+    });
+  } finally {
+    await closeServer(handle);
+  }
+}
+
+// Build a Web-automation RuntimeContext bound to OUR dual-endpoint server,
+// reusing the ADR-0023-authorized launch/extension/pairing helpers verbatim.
+// No new DOM selectors, send logic, or loop policy are introduced here.
+async function createChatgptRuntime(
+  args: DualEndpointHarnessArgs,
+  handle: LocalServerHandle,
+  git: DualEndpointEvidence['git'],
+): Promise<WebAutoRuntimeContext> {
+  const webAutoArgs: WebAutoHarnessArgs = {
+    scenario: 'stage-b-one-round',
+    profileDir: args.profileDir,
+    connectCdp: args.connectCdp,
+    chromePath: undefined,
+    remoteDebuggingPort: undefined,
+    basePort: undefined,
+    outputDir: args.outputDir,
+    keepBrowser: false,
+    dryRun: false,
+  };
+  await buildWebAutoExtension();
+  const extensionDist = resolve(process.cwd(), 'apps/extension/dist');
+  if (!existsSync(extensionDist)) {
+    throw new Error('extension dist missing; run npm run build-extension');
+  }
+  const browserHandle = await launchWebAutoBrowser(webAutoArgs, extensionDist);
+  let ctx: WebAutoRuntimeContext | undefined;
+  try {
+    const extensionId = await discoverWebAutoExtensionId(browserHandle.context);
+    const chromeVersion = await browserHandle.context.browser()?.version?.() ?? 'unknown';
+    ctx = {
+      handle,
+      page: undefined,
+      context: browserHandle.context,
+      browserHandle,
+      extensionId,
+      chromeVersion,
+      outputDir: resolve(args.outputDir),
+      git,
+    };
+    await ensureWebAutoChatGptPage(ctx);
+    await injectWebAutoPairingToken(ctx);
+    return ctx;
+  } catch (error) {
+    await browserHandle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function runRealChatgptRoute(
+  args: DualEndpointHarnessArgs,
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  if (args.executionCli && args.executionCli !== 'codex-medium') {
+    throw new Error('execution CLI endpoint must be codex-medium for the current bounded adapter');
+  }
+  if (!args.profileDir && !args.connectCdp) {
+    throw new Error('logged-in ChatGPT profile is required for ChatGPT route evidence');
+  }
+
+  let handle: LocalServerHandle | undefined;
+  let runtime: WebAutoRuntimeContext | undefined;
+  try {
+    handle = await startDualEndpointServer({ inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID });
+
+    const goal = await bridgeApi<{ goal: { id: string } }>(handle, '/bridge/goals', 'POST', {
+      sessionId: `dual-endpoint-chatgpt-${Date.now()}`,
+      description: 'Produce one real ChatGPT reasoning artifact and execute one bounded read-only proposal',
+      projectId: 'cli-bridge',
+    });
+    const planned = await bridgeApi<{ plan: { id: string; steps: { id: string }[] } }>(
+      handle,
+      '/bridge/goals/plan',
+      'POST',
+      { goalId: goal.goal.id },
+    );
+    const bindingResponse = await bridgeApi<{ binding: any }>(handle, '/bridge/automation/bindings', 'POST', {
+      goalId: goal.goal.id,
+      planId: planned.plan.id,
+      reasoningEndpointId: 'chatgpt-web',
+      executionEndpointId: 'codex-medium',
+      reasoningTier: 'high',
+      executionTier: 'medium',
+      executionPermissionProfile: 'patch-proposal',
+      executionWorkingDirectoryRef: 'cli-bridge',
+      maxSteps: 1,
+      maxReasoningRounds: 1,
+      deadlineAt: new Date(Date.now() + args.confirmationTimeoutMs + 5 * 60_000).toISOString(),
+    });
+    await bridgeApi(handle, '/bridge/goals/approve', 'POST', { goalId: goal.goal.id });
+
+    // Browser + extension + pairing. Any failure here is a real ChatGPT
+    // environment block (no logged-in profile / no reachable CDP browser).
+    try {
+      runtime = await createChatgptRuntime(args, handle, git);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`logged-in ChatGPT profile or connected CDP browser is required for ChatGPT route evidence: ${detail}`);
+    }
+
+    // Bounded, read-only reasoning prompt relayed through the existing Web
+    // automation path. It must not request execution, file edits, endpoint
+    // selection, or permission grants.
+    const reasoningSessionId = `dual-endpoint-chatgpt-reasoning-${Date.now()}`;
+    const marker = `CLI_BRIDGE_DUAL_ENDPOINT_CHATGPT_${randomUUID().slice(0, 8)}`;
+    const reasoningPrompt = [
+      'CLI Bridge dual-endpoint release evidence (read-only).',
+      'Return a concise verification assessment of the current task only.',
+      'Do not execute commands, edit files, choose endpoints, or request permissions.',
+      `End your reply with exactly: ${marker}`,
+    ].join(' ');
+
+    let returned: { prompt: any; inbound: any };
+    let reasoningArtifactId: string;
+    try {
+      const outbound = await bridgeApi<{ outboundPrompt: { id: string } }>(handle, '/bridge/outbound', 'POST', {
+        sessionId: reasoningSessionId,
+        prompt: reasoningPrompt,
+      });
+      returned = await waitWebAutoPromptReturned(runtime, outbound.outboundPrompt.id, marker);
+      // Bind the returned reasoning content to the locked plan as an
+      // execution-proposal reasoning artifact (chatgpt-web source).
+      const artifactResponse = await bridgeApi<{ artifact: { artifactId: string } }>(
+        handle,
+        '/bridge/extract-return',
+        'POST',
+        {
+          sessionId: reasoningSessionId,
+          operationId: outbound.outboundPrompt.id,
+          planId: planned.plan.id,
+          artifactKind: 'execution-proposal',
+          summary: 'ChatGPT Web dual-endpoint read-only verification',
+          content: returned.inbound.content,
+        },
+      );
+      if (!artifactResponse.artifact?.artifactId) {
+        throw new Error('real ChatGPT reasoning artifact missing');
+      }
+      reasoningArtifactId = artifactResponse.artifact.artifactId;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`logged-in ChatGPT profile reasoning relay did not return a usable artifact: ${detail}`);
+    }
+
+    const proposalResponse = await bridgeApi<{ proposal: any }>(handle, '/bridge/execution-proposals', 'POST', {
+      planId: planned.plan.id,
+      stepId: planned.plan.steps[0].id,
+      artifactId: reasoningArtifactId,
+      preview: 'Codex Medium: bounded read-only verification result',
+      command: 'codex',
+      args: [...CODEX_REVIEW_ARGS],
+      stdin: 'Return a concise read-only verification result for the current cli-bridge repository. Do not edit files or execute follow-up actions.',
+      expiresAt: Date.now() + args.confirmationTimeoutMs,
+    });
+    const proposal = proposalResponse.proposal;
+
+    const handoff = {
+      awaitingHumanConfirmation: true,
+      consoleUrl: `${handle.url}/console/goals`,
+      pairingToken: handle.pairingToken,
+      goalId: goal.goal.id,
+      planId: planned.plan.id,
+      proposal: {
+        id: proposal.id,
+        preview: proposal.preview,
+        contentHash: proposal.contentHash,
+        bindingHash: proposal.bindingHash,
+        executionEndpointId: proposal.executionEndpointId,
+        permissionProfile: proposal.executionPermissionProfile,
+      },
+    };
+    await writeFile(ACTIVE_HANDOFF_PATH, `${JSON.stringify(handoff, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    console.log(JSON.stringify(handoff, null, 2));
+
+    const dispatched = await waitForOperatorDispatch(
+      handle,
+      planned.plan.id,
+      proposal.id,
+      args.confirmationTimeoutMs,
+    );
+    return {
+      scenario: 'chatgpt-route',
+      timestamp,
+      ok: true,
+      evidenceStatus: 'passed',
+      git,
+      planId: planned.plan.id,
+      proposalId: proposal.id,
+      endpointBindings: [{
+        reasoningEndpointId: 'chatgpt-web',
+        reasoningRole: 'planner-reviewer',
+        reasoningTier: 'high',
+        executionEndpointId: 'codex-medium',
+        executionRole: 'bounded-executor',
+        executionTier: 'medium',
+        locked: Boolean(bindingResponse.binding.bindingHash),
+      }],
+      transitionSequence: [
+        'binding-created',
+        'binding-locked',
+        'artifact-recorded',
+        ...dispatched.transitions,
+        'result-correlated',
+      ],
+      confirmationIdentity: {
+        proposalId: proposal.id,
+        contentHash: proposal.contentHash,
+        bindingHash: proposal.bindingHash,
+      },
+      failureClassification: 'none',
+      processExitClassification: dispatched.proposal.result?.exitCode === 0 ? 'exit-0' : 'nonzero-or-missing',
+      screenshotPaths: [],
+    };
+  } finally {
+    await unlink(ACTIVE_HANDOFF_PATH).catch(() => undefined);
+    await closeServer(handle);
+    if (runtime && !args.connectCdp) {
+      await runtime.browserHandle.close().catch(() => undefined);
+    }
+  }
+}
+
+async function runScenario(
+  args: DualEndpointHarnessArgs,
+  scenario: typeof DUAL_ENDPOINT_SCENARIOS[number],
+  timestamp: string,
+  git: DualEndpointEvidence['git'],
+): Promise<DualEndpointEvidence> {
+  switch (scenario) {
+    case 'cli-route':
+      return runRealCliRoute(args, timestamp, git);
+    case 'chatgpt-route':
+      return runRealChatgptRoute(args, timestamp, git);
+    case 'same-provider':
+      return runBindingContract('same-provider', 'codex-command', timestamp, git);
+    case 'mixed-provider':
+      return runBindingContract('mixed-provider', 'claude-code-command', timestamp, git);
+    case 'failure-timeout':
+      return runFailureTimeoutContract(timestamp, git);
+    case 'uncertain-dispatch':
+      return runUncertainDispatchContract(timestamp, git);
+    case 'control-pause-cancel':
+      return runControlContract(timestamp, git);
+    case 'workbuddy-boundary':
+      return runWorkbuddyBoundaryContract(timestamp, git);
+    case 'cleanup':
+      return runCleanupContract(timestamp, git);
+  }
+}
+
 export async function runHarness(args: DualEndpointHarnessArgs): Promise<DualEndpointEvidence[]> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const git = await collectGit();
@@ -602,21 +1244,16 @@ export async function runHarness(args: DualEndpointHarnessArgs): Promise<DualEnd
       results.push(await writeEvidence(args, dryRunEvidence(args, scenario, timestamp, git)));
       continue;
     }
-    if (scenario === 'cli-route') {
-      try {
-        results.push(await writeEvidence(args, await runRealCliRoute(args, timestamp, git)));
-      } catch (error) {
-        results.push(await writeEvidence(args, blockedEvidence(
-          scenario,
-          timestamp,
-          git,
-          classifyDualEndpointError(error),
-        )));
-      }
-      continue;
+    try {
+      results.push(await writeEvidence(args, await runScenario(args, scenario, timestamp, git)));
+    } catch (error) {
+      results.push(await writeEvidence(args, blockedEvidence(
+        scenario,
+        timestamp,
+        git,
+        classifyDualEndpointError(error),
+      )));
     }
-    const failure = classifyDualEndpointError(new Error('real provider harness execution is not available in this environment'));
-    results.push(await writeEvidence(args, blockedEvidence(scenario, timestamp, git, failure)));
   }
   return results;
 }

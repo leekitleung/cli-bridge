@@ -77,7 +77,7 @@ export interface ScenarioEvidence {
   };
 }
 
-interface RuntimeContext {
+export interface RuntimeContext {
   handle: LocalServerHandle;
   page: any;
   context: any;
@@ -88,7 +88,7 @@ interface RuntimeContext {
   git: ScenarioEvidence['git'];
 }
 
-interface BrowserHandle {
+export interface BrowserHandle {
   context: any;
   close(): Promise<void>;
 }
@@ -296,7 +296,7 @@ async function runProcess(command: string, args: string[]): Promise<string> {
   });
 }
 
-async function buildExtension(): Promise<void> {
+export async function buildExtension(): Promise<void> {
   await runProcess(process.execPath, ['scripts/build-extension.mjs']);
 }
 
@@ -347,7 +347,7 @@ export async function disconnectConnectedBrowser(browser: any): Promise<void> {
   await browser.close();
 }
 
-async function launchBrowser(args: WebAutoHarnessArgs, extensionDist: string): Promise<BrowserHandle> {
+export async function launchBrowser(args: WebAutoHarnessArgs, extensionDist: string): Promise<BrowserHandle> {
   const playwright = await loadPlaywright();
   if (args.connectCdp) {
     const browser = await playwright.chromium.connectOverCDP(args.connectCdp);
@@ -409,7 +409,7 @@ export async function selectCliBridgeExtensionId(workers: any[]): Promise<string
   return undefined;
 }
 
-async function discoverExtensionId(context: any): Promise<string> {
+export async function discoverExtensionId(context: any): Promise<string> {
   let workers = context.serviceWorkers();
   if (workers.length === 0) {
     try {
@@ -426,7 +426,7 @@ async function discoverExtensionId(context: any): Promise<string> {
   return extensionId;
 }
 
-async function ensureChatGptPage(ctx: RuntimeContext): Promise<void> {
+export async function ensureChatGptPage(ctx: RuntimeContext): Promise<void> {
   let page = ctx.context.pages().find((candidate: any) => String(candidate.url()).includes('chatgpt.com'));
   if (!page) page = await ctx.context.newPage();
   ctx.page = page;
@@ -512,7 +512,7 @@ export function hasChatGptComposerForHarness(document: Document): boolean {
   }
 }
 
-async function injectPairingToken(ctx: RuntimeContext): Promise<void> {
+export async function injectPairingToken(ctx: RuntimeContext): Promise<void> {
   const popup = await ctx.context.newPage();
   try {
     await popup.goto(`chrome-extension://${ctx.extensionId}/popup/index.html`, { timeout: 10_000 });
@@ -538,7 +538,7 @@ async function getReports(ctx: RuntimeContext): Promise<{ prompts: any[]; messag
   };
 }
 
-async function waitPromptReturned(
+export async function waitPromptReturned(
   ctx: RuntimeContext,
   promptId: string,
   marker: string,

@@ -8,6 +8,8 @@ import {
   parseArgs,
   createDryRunEvidence,
   sanitizeEvidence,
+  runHarness,
+  runRealChatgptRoute,
 } from '../scripts/dual-endpoint-release-e2e.ts';
 
 test('dual endpoint release harness parses explicit CLI args', () => {
@@ -112,4 +114,91 @@ test('dual endpoint release harness source avoids forbidden automation shortcuts
   assert.equal(source.includes('KeyboardEvent'), false);
   assert.equal(source.includes("'/bridge/execution-proposals/confirm'"), false);
   assert.equal(source.includes("'/bridge/execution-proposals/dispatch'"), false);
+});
+
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+async function withTempOutputDir(run) {
+  const dir = await mkdtemp(join(tmpdir(), 'dual-endpoint-e2e-'));
+  try {
+    return await run(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('dual endpoint release harness exposes a real ChatGPT route entry point', () => {
+  assert.equal(typeof runRealChatgptRoute, 'function');
+});
+
+test('dual endpoint release harness dispatches chatgpt-route to the real ChatGPT path', async () => {
+  await withTempOutputDir(async (outputDir) => {
+    // A reachable-looking but dead CDP target proves runHarness routes
+    // chatgpt-route into runRealChatgptRoute (which fails closed on the real
+    // environment) without launching a real browser. The legacy stub would
+    // have produced `unexpected-error`; the real path produces a real
+    // ChatGPT environment block.
+    const [evidence] = await runHarness({
+      scenario: 'chatgpt-route',
+      connectCdp: 'http://127.0.0.1:9',
+      outputDir,
+      confirmationTimeoutMs: 60000,
+      dryRun: false,
+    });
+    assert.equal(evidence.scenario, 'chatgpt-route');
+    assert.equal(evidence.evidenceStatus, 'blocked');
+    assert.equal(evidence.failureClassification, 'blocked-real-chatgpt');
+    assert.notEqual(evidence.failure?.code, 'unexpected-error');
+  });
+});
+
+test('dual endpoint release harness never falls through to unexpected-error without real endpoints', async () => {
+  await withTempOutputDir(async (outputDir) => {
+    const results = await runHarness({
+      scenario: 'all',
+      outputDir,
+      confirmationTimeoutMs: 60000,
+      dryRun: false,
+    });
+    assert.equal(results.length, DUAL_ENDPOINT_SCENARIOS.length);
+    for (const evidence of results) {
+      assert.ok(['passed', 'blocked'].includes(evidence.evidenceStatus), `unexpected status for ${evidence.scenario}`);
+      assert.notEqual(
+        evidence.failureClassification,
+        'unexpected-error',
+        `${evidence.scenario} fell through to unexpected-error`,
+      );
+      assert.notEqual(evidence.failure?.code, 'unexpected-error', `${evidence.scenario} fell through to unexpected-error`);
+    }
+  });
+});
+
+test('dual endpoint release harness produces passed contract evidence for deterministic scenarios', async () => {
+  await withTempOutputDir(async (outputDir) => {
+    const contractScenarios = [
+      'same-provider',
+      'mixed-provider',
+      'failure-timeout',
+      'uncertain-dispatch',
+      'control-pause-cancel',
+      'workbuddy-boundary',
+      'cleanup',
+    ];
+    for (const scenario of contractScenarios) {
+      const [evidence] = await runHarness({
+        scenario,
+        reasoningCli: 'codex-command',
+        executionCli: 'codex-medium',
+        outputDir,
+        confirmationTimeoutMs: 60000,
+        dryRun: false,
+      });
+      assert.equal(evidence.scenario, scenario, `wrong scenario evidence for ${scenario}`);
+      assert.equal(evidence.evidenceStatus, 'passed', `${scenario} did not produce passed contract evidence`);
+      assert.equal(evidence.failureClassification, 'none', `${scenario} reported a failure classification`);
+      assert.equal(evidence.processExitClassification, 'not-run', `${scenario} should not dispatch`);
+    }
+  });
 });
