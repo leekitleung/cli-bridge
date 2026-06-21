@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: RECOVERY-IN-PROGRESS (RP-RECOVERY-1 DONE; revert c96742e + decisions pushed; (c)/(d)/(e)/(f) all locked; next: RP-RELAY-SEAM-FOLLOWUP then EX-ADR0023-PROSEMIRROR)
+Status: RECOVERY-CLOSEOUT (RP-RECOVERY-1 DONE + pushed; RP-RELAY-SEAM-FOLLOWUP DONE + pushed ee7b0bd; (c)/(d)/(e)/(f) all locked; 5120d45 neutralized on origin; next: EX-ADR0023-PROSEMIRROR)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
@@ -96,12 +96,23 @@ History context on `main`:
   `promptIdMatch`. No product code touched. Local commit; push gated separately.
 
 ### RP-ADR0023-PROSEMIRROR — disposition of the ChatGPT fill fix
-- The `execCommand('insertText')` change may be a real bug fix but must be its
-  own batch with explicit ADR disposition (human/RP decision, NOT review's):
-  (1) ADR-0023 amendment, (2) in-intent bug fix, or (3) withdraw.
-- Allowed files (once disposition chosen): `apps/extension/src/content/chatgpt-dom.ts`,
-  content-fill tests if feasible, ADR/runbook updates if the ADR path requires.
-- Pending: ADR disposition decision.
+- **DISPOSITION LOCKED 2026-06-21: Option 2 (in-intent bug fix).** ADR-0023
+  forbids SEND/SUBMISSION mechanisms (send-button click, keyboard/Enter,
+  `requestSubmit`, `.submit()`, form submission) but explicitly ALLOWS the
+  composer FILL path ("locates and fills the composer"; Stage A may improve
+  "the existing automatic-fill path" reliability). `execCommand('insertText')`
+  is a fill (fires `beforeinput`), not a send. It falls within ADR-0023's
+  allowed fill scope and Stage A's "reliability for the existing automatic-fill
+  path" authorization.
+- Allowed files for the dedicated EX batch: `apps/extension/src/content/chatgpt-dom.ts`,
+  `tests/chatgpt-dom.test.mjs`, and a one-line clarification in
+  `docs/planning/ADR-0023-chatgpt-web-automation-authorization.md` (Allowed
+  section only — no decision change).
+- Guardrails: (1) source-boundary tests proving the new fill introduces NO
+  send/keyboard/requestSubmit/form path; (2) the ADR clarification explicitly
+  conditions `execCommand('insertText')` on performing no submission.
+- See `## EX-ADR0023-PROSEMIRROR` section below for the complete execution
+  prompt.
 
 ### RP-HARNESS-INFRA-CFT — Chrome 137 / CFT / CDP infra
 - Re-authorize the legitimate infra findings (Chrome For Testing discovery,
@@ -130,8 +141,10 @@ History context on `main`:
   run except expected `output/` artifacts.
 
 ### Immediate next step
-RP-RECOVERY-1 is DONE (local revert `c96742e`). Next gated action is the push
-authorization (b) and the dependent EX follow-up batches.
+RP-RECOVERY-1 DONE + pushed. RP-RELAY-SEAM-FOLLOWUP DONE + pushed (`ee7b0bd`).
+All governance decisions (c)/(d)/(e)/(f) locked. `5120d45` overreach neutralized
+on origin/main. Next batch: `EX-ADR0023-PROSEMIRROR` (prompt below). Control
+returns to `REVIEW-ADR0023-PROSEMIRROR` after execution.
 
 ## Locked Governance Decisions (2026-06-21)
 
@@ -164,8 +177,8 @@ authorization (b) and the dependent EX follow-up batches.
   evidence.
 
 Pending human confirmations: none. (b) push AUTHORIZED 2026-06-21; (d) option 2
-LOCKED. Next batch order: RP-RELAY-SEAM-FOLLOWUP first, then
-EX-ADR0023-PROSEMIRROR.
+LOCKED. RP-RELAY-SEAM-FOLLOWUP DONE + pushed `ee7b0bd`. Next batch:
+EX-ADR0023-PROSEMIRROR (prompt in the section below).
 
 ## Context
 
@@ -895,3 +908,137 @@ returns PASS and the user authorizes closeout.
   import/export-only.
 - Keep the unrelated `.kiro/specs/multi-persona-quality-gate/` untracked
   directory out of every commit in this sequence.
+
+---
+
+## EX-ADR0023-PROSEMIRROR
+
+**Owner:** execution agent (independent session, NOT this RP session).
+
+**Outcome:** Restore the `execCommand('insertText')` composer fill path in
+`chatgpt-dom.ts` so that ChatGPT's ProseMirror-based contenteditable editor
+correctly registers input state. This is an ADR-0023 in-intent bug fix: it
+improves the "existing automatic-fill path" reliability explicitly authorized
+by ADR-0023 Stage A. It does NOT introduce any send/submission mechanism.
+
+### Preconditions
+
+- RP-ADR0023-PROSEMIRROR disposition is LOCKED (Option 2: in-intent bug fix).
+- `5120d45` overreach has been reverted (`c96742e`, pushed to origin). The
+  `execCommand('insertText')` code is currently absent from `chatgpt-dom.ts`.
+- `npm run typecheck`, `npm run build-extension`, `npm test` pass before
+  starting (baseline verified at `ee7b0bd`).
+- Untracked `.kiro/specs/multi-persona-quality-gate/` is left untouched.
+
+### Allowed Files
+
+- `apps/extension/src/content/chatgpt-dom.ts` — restore the
+  `execCommand('insertText')` fill logic that was removed by the revert. The
+  fill must fire `beforeinput`/`input` events so ProseMirror registers the
+  text. No send logic.
+- `tests/chatgpt-dom.test.mjs` — add or update content-fill tests proving the
+  fill path works and that no send/submission path exists in the diff.
+- `docs/planning/ADR-0023-chatgpt-web-automation-authorization.md` — append
+  exactly ONE clarification sentence to the "ChatGPT DOM Rules > Allowed"
+  section (line ~127-134). The sentence must state that composer fill may use
+  `execCommand('insertText')` to trigger the framework's input pipeline,
+  provided no submission (send click, keyboard Enter, `requestSubmit`, form
+  submit) is performed. Do NOT change the ADR's Decision, Forbidden list, or
+  Status.
+
+### Forbidden Scope
+
+- No send-button click automation.
+- No keyboard, Enter-key, or shortcut simulation.
+- No `requestSubmit`, `.submit()`, or form submission.
+- No automatic inbound return.
+- No changes to `outbound-poller.ts`, `extraction.ts`, `bridge-client.ts`,
+  `active-relay-session.ts`, `index.ts`, or any other `apps/` file.
+- No changes to `packages/`, `scripts/`, or `package.json`/`package-lock.json`.
+- No Stage B or Stage C state transitions.
+- No MCP, shell, terminal, workspace write, commit, push, merge, or PR scope.
+- No changes to the ADR-0023 Decision, Forbidden list, Superseded section, or
+  Acceptance Conditions.
+
+### Required Implementation
+
+1. **Restore the fill path.** In `chatgpt-dom.ts`, re-add the
+   `execCommand('insertText')` logic that fills the ChatGPT composer. The fill
+   must:
+   - Target the composer contenteditable element with the existing fixture-
+     covered selector (no new broad selectors).
+   - Use `document.execCommand('insertText', false, text)` (or the modern
+     equivalent that fires `beforeinput` with `inputType: 'insertText'`) so
+     ProseMirror's input pipeline registers the text.
+   - Not click, focus-then-Enter, or submit anything.
+   - Preserve the existing "locate and fill" structure — this is a reliability
+     fix to the fill, not a new feature.
+
+2. **ADR-0023 clarification.** Append one sentence to the Allowed list in the
+   "ChatGPT DOM Rules" section. Suggested wording:
+   > Composer fill may use `document.execCommand('insertText')` (or an
+   > equivalent `beforeinput`-firing API) to trigger the framework's input
+   > pipeline, provided no submission mechanism is invoked.
+
+3. **Source-boundary tests.** Add tests in `tests/chatgpt-dom.test.mjs` that:
+   - Prove the fill function exists and calls `execCommand('insertText')` (or
+     fires `beforeinput`), not any send/submit API.
+   - Scan the `chatgpt-dom.ts` source for forbidden patterns
+     (`click.*send`, `KeyboardEvent`, `Enter`, `requestSubmit`, `.submit()`,
+     `form.submit`, `dispatchEvent.*submit`) and assert zero matches.
+   - Verify the existing fill tests still pass.
+
+### Required Tests
+
+- All existing extension and server tests remain green.
+- New source-boundary tests prove no send-button click, keyboard submission,
+  `requestSubmit`, or form submission exists in the `chatgpt-dom.ts` diff.
+- Content-fill tests prove the fill fires `beforeinput`/`input` (or calls
+  `execCommand('insertText')`) and does NOT invoke any send mechanism.
+
+### Required Runtime Evidence
+
+- Run `npm run typecheck` — must pass.
+- Run `npm test` — must pass (including new source-boundary tests).
+- Run `npm run build-extension` — must pass.
+- Perform a real Chrome ChatGPT run proving the composer fill works (text
+  appears in the composer, ProseMirror registers state) WITHOUT automatic
+  send. This may be deferred to REVIEW-ADR0023-PROSEMIRROR if the real
+  environment is unavailable; document the deferral.
+
+### Report Back
+
+Return control to **REVIEW-ADR0023-PROSEMIRROR** with:
+- Changed files (must be ≤ 3: `chatgpt-dom.ts`, `chatgpt-dom.test.mjs`,
+  `ADR-0023-...md`).
+- Test results (full suite + new source-boundary tests).
+- Source-avoidance scan output (zero forbidden patterns in the diff).
+- The exact ADR-0023 Allowed clarification sentence added.
+- Real Chrome evidence (or documented deferral with reason).
+- Unresolved risks or questions.
+
+```text
+EX-ADR0023-PROSEMIRROR - Restore execCommand('insertText') composer fill (ADR-0023 in-intent fix).
+
+Allowed files:
+- apps/extension/src/content/chatgpt-dom.ts
+- tests/chatgpt-dom.test.mjs
+- docs/planning/ADR-0023-chatgpt-web-automation-authorization.md (Allowed section only)
+
+Forbidden:
+- send-button click, keyboard/Enter simulation, requestSubmit, .submit(), form submission;
+- automatic inbound return;
+- changes to any other apps/, packages/, scripts/, or package files;
+- ADR-0023 Decision/Forbidden/Status changes;
+- Stage B/C state transitions;
+- MCP, shell, terminal, workspace write, commit, push, merge, PR scope.
+
+Required:
+- restore execCommand('insertText') fill that fires beforeinput for ProseMirror;
+- source-boundary tests proving zero send/keyboard/requestSubmit/form in the diff;
+- one ADR-0023 Allowed clarification sentence (no decision change);
+- npm run typecheck + npm test + npm run build-extension all pass;
+- real Chrome fill proof (or documented deferral).
+
+Return control to REVIEW-ADR0023-PROSEMIRROR.
+```
