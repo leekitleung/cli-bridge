@@ -358,8 +358,8 @@ browser dependency.
 ### Preconditions
 
 - REVIEW-E2 returned PASS (`docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E2.md`).
-- `npm run typecheck`, `npm run build-extension`, harness tests 10/10 pass
-  before starting (baseline from REVIEW-E2).
+- `npm run typecheck`, `npm run build-extension`, harness tests 14/14 pass
+  before starting (baseline from REVIEW-E2 + active Chrome relay mode commit).
 - Untracked `.kiro/specs/multi-persona-quality-gate/` is left untouched.
 
 ### Allowed Files
@@ -452,7 +452,7 @@ browser dependency.
   - A test asserting `relaySeam` is absent (or `undefined`) on non-`chatgpt-route`
     scenario evidence (e.g., `cli-route` dry-run evidence) — the field is
     `chatgpt-route`-only.
-  - Keep the existing 10 tests passing.
+  - Keep the existing 14 tests passing.
 
 - [ ] **Update runbook:** In `docs/runbooks/dual-endpoint-automation.md`, add a
   short "Evidence fields" section documenting that `chatgpt-route` evidence
