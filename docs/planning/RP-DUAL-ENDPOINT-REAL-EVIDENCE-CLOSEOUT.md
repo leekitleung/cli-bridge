@@ -730,15 +730,25 @@ asks.
 
 ---
 
-## EX-E-REAL-EVIDENCE
+## EX-E-REAL-EVIDENCE-RERUN
 
-**Owner:** execution agent, operating with a human operator who supplies real
-logins and performs each confirmation.
+**Owner:** execution agent (independent session, NOT the RP session), operating
+with a human operator who supplies real logins and performs each confirmation.
 
-**Precondition:** REVIEW-RELAY-SEAM-INSTRUMENTATION returned PASS (relay-seam
-diagnostics are captured by the harness), AND REVIEW-E2-HARNESS-COMPLETION
-returned PASS (`docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E2.md`,
-2026-06-21).
+**Supersedes** the original EX-E-REAL-EVIDENCE batch (which overreached as
+`5120d45`, reverted by `c96742e`). This rerun runs against the clean, reviewed
+`main` (EX-ADR0023-PROSEMIRROR + EX-HARNESS-INFRA-CFT both REVIEW=PASS, pushed).
+
+**Precondition:** REVIEW-ADR0023-PROSEMIRROR = PASS and REVIEW-HARNESS-INFRA-CFT
+= PASS (both on `main`); RP-RELAY-SEAM-FOLLOWUP (decision A) and
+RP-RERUN-GATE-TRIAGE complete. The ProseMirror fill and the six harness infra
+fixes are present on `main`.
+
+**Environment requirement (hard gate):** runs ONLY on a host that (a) permits
+`fsync` (NOT the `h:\` sandbox — see RP-RERUN-GATE-TRIAGE: snapshot writes fail
+`EPERM fsync` there), and (b) has a real logged-in ChatGPT Web profile / CDP
+Chrome. If the environment is unavailable, the batch is BLOCKED — do NOT
+substitute dry-run/simulated results and do NOT modify code to force a run.
 
 **Carry-forward risk from REVIEW-E2 (must validate this batch):** the ChatGPT
 real path is structurally faithful but unverified end-to-end. Validate the relay
@@ -746,9 +756,10 @@ seam — the harness persists the ChatGPT reply by POSTing `/bridge/extract-retu
 a second time (harness-side) with `planId` + `operationId` +
 `artifactKind:execution-proposal`, relying on `createIdempotent` replay and
 `relayContext.lastOutboundPromptId` still matching after the extension's first
-extract-return. If the extension consumes/rotates the relay context, attach the
-automation `planId` to the original outbound prompt instead, and record the
-harness adjustment as an authorized real-run bug fix.
+extract-return. If the extension consumes/rotates the relay context, that is a
+real defect: STOP and return to RP (do NOT inline-fix the seam in this batch).
+RP will open a bounded harness follow-up batch to attach the automation
+`planId` to the original outbound prompt.
 
 **Outcome:** Sanitized real-chain evidence under
 `output/playwright/dual-endpoint-automation/` proving both reasoning routes
@@ -763,16 +774,27 @@ and clean shutdown.
   `canExecute=true`.
 - A logged-in ChatGPT Web profile (`--profile-dir`) or an existing CDP browser
   session (`--connect-cdp`).
-- `npm run typecheck`, `npm run build-extension`, `npm test` pass before the run.
+- `npm run typecheck`, `npm run build-extension` pass before the run. For
+  `npm test`, apply the RP-RERUN-GATE-TRIAGE gate: NO NEW failures beyond the 17
+  documented environmental baseline failures (do not require a fully-green suite
+  on an fsync-incapable host).
 - Untracked `.kiro/specs/multi-persona-quality-gate/` is left untouched.
 
 ### Allowed Files
 
 - `output/playwright/dual-endpoint-automation/**` (generated evidence only).
-- `scripts/dual-endpoint-release-e2e.ts` and
-  `docs/runbooks/dual-endpoint-automation.md` ONLY if a real run exposes a
-  harness/runbook bug; the defect must be recorded in the REVIEW notes.
-- No other product code may change. This is an evidence-capture batch.
+- NO product, harness, or doc code changes in this batch.
+
+### ANTI SCOPE-CREEP STOP (hard clause — the 5120d45 lesson)
+
+This is an evidence-capture batch. If the real run reveals that ANY code needs
+to change to make it pass (harness, server, extension, port, selectors,
+relay seam, dependency — anything beyond writing evidence files under
+`output/`), the EX agent MUST STOP and return control to RP with the exact
+failing condition. Do NOT inline-fix. The original EX-E-REAL-EVIDENCE batch
+overreached precisely by rationalizing "the real run exposed a bug, so I fixed
+it" — that produced `5120d45`. RP will open a bounded follow-up batch for any
+real defect found. No exceptions, even if the run is blocked.
 
 ### Required Steps
 
@@ -807,8 +829,8 @@ and clean shutdown.
   `true` and is not a rotation indicator. The real rotation signal is the
   409-vs-200/201 throw semantics (absence of `relaySeam` = throw = rotation
   detected). If the real run exposes a harness bug (e.g., `relaySeam` absent on
-  a `passed` verdict), the seam adjustment described in the precondition must be
-  recorded as an authorized real-run harness fix (per this batch's Allowed Files).
+  a `passed` verdict), STOP and return to RP per the ANTI SCOPE-CREEP STOP
+  clause — do NOT inline-fix the harness in this batch.
 - [ ] Verify the default run leaves no harness-owned server, browser, or child
   CLI process. Record any intentionally retained external CDP browser as an
   exception.
@@ -832,9 +854,33 @@ git diff --check
 
 ### Report Back
 
-Changed files (expected: evidence only), per-scenario classifications, the
-evidence JSON directory/timestamp, confirmation identities, process exit
-classifications, cleanup result, and any unresolved environment questions.
+Changed files (expected: evidence only — zero code), per-scenario
+classifications, the evidence JSON directory/timestamp, confirmation
+identities, process exit classifications, cleanup result, any STOP-triggering
+findings, and unresolved environment questions. Return control to
+**REVIEW-E-REAL-EVIDENCE**.
+
+```text
+EX-E-REAL-EVIDENCE-RERUN - Capture sanitized real-chain dual-endpoint evidence (evidence-only).
+
+Run ONLY on a host that permits fsync AND has a real logged-in ChatGPT (profile-dir or connect-cdp). Otherwise BLOCKED - report the missing env, do NOT force.
+
+Allowed files:
+- output/playwright/dual-endpoint-automation/** (generated evidence only)
+NOTHING else. No code/harness/doc/dependency change.
+
+ANTI SCOPE-CREEP STOP: if making the run pass needs ANY change beyond writing evidence files (harness, server, extension, port, selectors, relay seam, dependency), STOP and return to RP. Do NOT inline-fix - that is what caused 5120d45. No exceptions even if blocked.
+
+Steps:
+- register reasoning (planner-reviewer, high, canExecute=false) + execution (bounded-executor, codex-medium, canExecute=true);
+- npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-command --execution-cli codex-medium --profile-dir <profile> (or --connect-cdp <url>);
+- human confirms each /console/goals card exactly once;
+- cli-route + chatgpt-route must be real (not blocked/dry); chatgpt-route evidence carries relaySeam (idempotentReplayHit + non-empty artifactId are the real signals; promptIdMatch is an id echo, ignore as proof);
+- verify no harness-owned process leaks.
+
+npm-test gate: no NEW failures beyond the 17 documented environmental baseline (RP-RERUN-GATE-TRIAGE).
+Return control to REVIEW-E-REAL-EVIDENCE.
+```
 
 ---
 
