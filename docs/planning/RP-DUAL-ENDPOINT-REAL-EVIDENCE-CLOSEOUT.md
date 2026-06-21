@@ -959,6 +959,13 @@ by ADR-0023 Stage A. It does NOT introduce any send/submission mechanism.
 - No MCP, shell, terminal, workspace write, commit, push, merge, or PR scope.
 - No changes to the ADR-0023 Decision, Forbidden list, Superseded section, or
   Acceptance Conditions.
+- **ANTI SCOPE-CREEP STOP (hard clause):** During real-Chrome verification, if
+  the fill requires changes to ANY file beyond the 3 allowed files (port,
+  harness, server, extension other files, `scripts/`, `packages/`), the EX
+  agent MUST STOP and return control to RP. In-place "fix it to make it run"
+  changes are exactly what caused the `5120d45` overreach. This batch touches
+  ONLY these 3 files; any "to make it pass" extra change must return to RP for
+  re-batching. No exceptions, even if the real-Chrome run fails.
 
 ### Required Implementation
 
@@ -984,8 +991,11 @@ by ADR-0023 Stage A. It does NOT introduce any send/submission mechanism.
    - Prove the fill function exists and calls `execCommand('insertText')` (or
      fires `beforeinput`), not any send/submit API.
    - Scan the `chatgpt-dom.ts` source for forbidden patterns
-     (`click.*send`, `KeyboardEvent`, `Enter`, `requestSubmit`, `.submit()`,
-     `form.submit`, `dispatchEvent.*submit`) and assert zero matches.
+     (`click.*send`, `KeyboardEvent`, `keydown`, `keypress`, `requestSubmit`,
+     `.submit(`, `form.submit`, `dispatchEvent.*submit`) and assert zero
+     matches. Do NOT scan for bare `Enter` — it false-positives on `center`,
+     `EnterText`, comments, etc. Keyboard submission is detected via
+     `KeyboardEvent`/`keydown`/`keypress`, not the string "Enter".
    - Verify the existing fill tests still pass.
 
 ### Required Tests
@@ -1031,11 +1041,14 @@ Forbidden:
 - changes to any other apps/, packages/, scripts/, or package files;
 - ADR-0023 Decision/Forbidden/Status changes;
 - Stage B/C state transitions;
-- MCP, shell, terminal, workspace write, commit, push, merge, PR scope.
+- MCP, shell, terminal, workspace write, commit, push, merge, PR scope;
+- ANTI SCOPE-CREEP: if real-Chrome verification needs changes beyond the 3
+  allowed files, STOP and return to RP. In-place "make it run" fixes caused
+  the 5120d45 overreach. This batch = ONLY these 3 files, no exceptions.
 
 Required:
 - restore execCommand('insertText') fill that fires beforeinput for ProseMirror;
-- source-boundary tests proving zero send/keyboard/requestSubmit/form in the diff;
+- source-boundary tests proving zero KeyboardEvent/keydown/keypress/requestSubmit/.submit(/form.submit/click.*send/dispatchEvent.*submit in the diff (do NOT scan bare "Enter" — false positives);
 - one ADR-0023 Allowed clarification sentence (no decision change);
 - npm run typecheck + npm test + npm run build-extension all pass;
 - real Chrome fill proof (or documented deferral).
