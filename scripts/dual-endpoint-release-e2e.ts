@@ -2,11 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 import { startLocalServer, type LocalServerHandle } from '../apps/local-server/src/server.ts';
 import { CODEX_REVIEW_ARGS } from '../apps/local-server/src/adapters/command-review-adapter.ts';
-import { PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
+import { DEFAULT_LOCAL_SERVER_PORT, PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
 import type { AgentEndpoint } from '../packages/shared/src/types.ts';
 import {
   buildExtension as buildWebAutoExtension,
@@ -104,7 +106,7 @@ export interface DualEndpointEvidence {
 
 const DEFAULT_OUTPUT_DIR = 'output/playwright/dual-endpoint-automation';
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 10 * 60_000;
-const ACTIVE_HANDOFF_PATH = '/tmp/cli-bridge-dual-endpoint-active.json';
+const ACTIVE_HANDOFF_PATH = resolve(tmpdir(), 'cli-bridge-dual-endpoint-active.json');
 // Server-side inbound relay endpoint reused by the ChatGPT route so the
 // reasoning reply returns through the same relay queue the Web automation
 // harness uses. It is inbound-capable and non-executing by design.
@@ -625,11 +627,12 @@ async function runRealCliRoute(
 }
 
 async function startDualEndpointServer(
-  extra: { inboundRelayEndpointId?: string } = {},
+  extra: { inboundRelayEndpointId?: string; port?: number } = {},
 ): Promise<LocalServerHandle> {
-  return startLocalServer(0, {
+  const { port = 0, ...options } = extra;
+  return startLocalServer(port, {
     additionalEndpoints: [CODEX_MEDIUM_ENDPOINT],
-    ...extra,
+    ...options,
     goalPlanCommandOptions: {
       runner: {
         async run(execution) {
@@ -1040,7 +1043,9 @@ async function createChatgptRuntime(
     keepBrowser: false,
     dryRun: false,
   };
-  await buildWebAutoExtension();
+  if (!args.connectCdp && !args.connectActiveChrome) {
+    await buildWebAutoExtension();
+  }
   const extensionDist = resolve(process.cwd(), 'apps/extension/dist');
   if (!existsSync(extensionDist)) {
     throw new Error('extension dist missing; run npm run build-extension');
@@ -1110,7 +1115,10 @@ export async function runRealChatgptRoute(
   let handle: LocalServerHandle | undefined;
   let runtime: WebAutoRuntimeContext | undefined;
   try {
-    handle = await startDualEndpointServer({ inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID });
+    handle = await startDualEndpointServer({
+      inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID,
+      port: DEFAULT_LOCAL_SERVER_PORT,
+    });
 
     const goal = await bridgeApi<{ goal: { id: string } }>(handle, '/bridge/goals', 'POST', {
       sessionId: `dual-endpoint-chatgpt-${Date.now()}`,
@@ -1407,7 +1415,7 @@ async function main(): Promise<void> {
   process.exitCode = ok ? 0 : 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;

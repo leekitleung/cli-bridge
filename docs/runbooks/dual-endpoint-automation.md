@@ -38,6 +38,14 @@ current harness process cannot access an active Chrome adapter, evidence must
 fail closed as `blocked-real-chatgpt`; do not treat that as a successful
 ChatGPT-route run.
 
+In `--connect-cdp` and `--connect-active-chrome` modes, the harness skips the
+extension build step and reuses the existing `apps/extension/dist`. Run
+`npm run build-extension` beforehand to ensure the dist is current.
+
+The ChatGPT-route server listens on the default port `31337`
+(`DEFAULT_LOCAL_SERVER_PORT`) so the extension's hardcoded endpoint URL
+matches without extra configuration.
+
 Note that Codex itself may be able to control the user's current Chrome through
 the Codex Chrome Extension. That proves the browser session is usable from the
 interactive Codex tool runtime, but it is not sufficient for this npm harness:

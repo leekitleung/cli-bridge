@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 
@@ -106,10 +107,6 @@ class ScenarioFailureError extends Error {
 }
 
 const DEFAULT_OUTPUT_DIR = 'output/playwright/web-auto-release';
-const DEFAULT_CFT_ROOT = resolve(
-  process.env.HOME ?? '',
-  'Library/Caches/ms-playwright/chromium-1226/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-);
 const EXPECTED_SEQUENCE = [
   'queued',
   'claimed',
@@ -345,12 +342,21 @@ async function loadPlaywright(): Promise<any> {
   }
 }
 
-function discoverChromePath(input?: string): string {
-  const chromePath = input ?? DEFAULT_CFT_ROOT;
-  if (!existsSync(chromePath)) {
-    throw new Error(`Chrome path missing or not executable: ${chromePath}`);
+async function discoverChromePath(input?: string): Promise<string> {
+  if (input) {
+    if (!existsSync(input)) {
+      throw new Error(`Chrome path missing or not executable: ${input}`);
+    }
+    return input;
   }
-  return chromePath;
+  const playwright = await loadPlaywright();
+  const executablePath = playwright.chromium.executablePath();
+  if (!executablePath || !existsSync(executablePath)) {
+    throw new Error(
+      'Chrome path not provided (--chrome-path) and Playwright could not resolve a Chromium executable; pass --chrome-path or run playwright install',
+    );
+  }
+  return executablePath;
 }
 
 export async function disconnectConnectedBrowser(browser: any): Promise<void> {
@@ -387,7 +393,7 @@ export async function launchBrowser(args: WebAutoHarnessArgs, extensionDist: str
     throw new Error('profile-dir is required when not using connect-cdp or connect-active-chrome');
   }
   const remotePort = await findAvailablePort(args.remoteDebuggingPort);
-  const chromePath = discoverChromePath(args.chromePath);
+  const chromePath = await discoverChromePath(args.chromePath);
   const context = await playwright.chromium.launchPersistentContext(args.profileDir, {
     headless: false,
     executablePath: chromePath,
@@ -441,10 +447,39 @@ export async function discoverExtensionId(context: any): Promise<string> {
     }
   }
   const extensionId = await selectCliBridgeExtensionId(workers);
-  if (!extensionId) {
-    throw new Error('extension id could not be discovered');
+  if (extensionId) {
+    return extensionId;
   }
-  return extensionId;
+
+  // CDP Target.getTargets fallback (read-only): enumerate browser targets to
+  // discover the extension id when serviceWorkers() is unreliable in
+  // connectOverCDP mode. No injection — only target enumeration.
+  const browser = context.browser?.();
+  if (browser && typeof browser.newBrowserCDPSession === 'function') {
+    try {
+      const cdpSession = await browser.newBrowserCDPSession();
+      try {
+        const { targetInfos } = await cdpSession.send('Target.getTargets');
+        for (const target of targetInfos ?? []) {
+          if (target.type !== 'service_worker') continue;
+          if (!String(target.url).startsWith('chrome-extension://')) continue;
+          // The service worker target title reflects the extension name.
+          if (target.title !== 'CLI Bridge') continue;
+          try {
+            return new URL(target.url).host;
+          } catch {
+            continue;
+          }
+        }
+      } finally {
+        await cdpSession.detach();
+      }
+    } catch {
+      // CDP enumeration unavailable; fall through to error.
+    }
+  }
+
+  throw new Error('extension id could not be discovered');
 }
 
 export async function ensureChatGptPage(ctx: RuntimeContext): Promise<void> {
@@ -846,7 +881,7 @@ export async function runHarness(args: WebAutoHarnessArgs): Promise<ScenarioEvid
       if (!args.activeChromeHelper) throw new Error('active Chrome helper URL is required for connect-active-chrome');
       new URL(args.activeChromeHelper);
     }
-    if (args.chromePath) discoverChromePath(args.chromePath);
+    if (args.chromePath) await discoverChromePath(args.chromePath);
     return [];
   }
 
@@ -930,7 +965,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
