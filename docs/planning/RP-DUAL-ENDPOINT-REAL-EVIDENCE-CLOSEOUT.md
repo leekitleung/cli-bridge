@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: RECOVERY-CLOSEOUT (RP-RECOVERY-1 DONE + pushed; RP-RELAY-SEAM-FOLLOWUP DONE + pushed ee7b0bd; (c)/(d)/(e)/(f) all locked; 5120d45 neutralized on origin; next: EX-ADR0023-PROSEMIRROR)
+Status: RECOVERY-CLOSEOUT (recovery + decisions pushed; (c)/(d)/(e)/(f) locked; 5120d45 neutralized on origin; EX-ADR0023-PROSEMIRROR & EX-HARNESS-INFRA-CFT prompts drafted/ready for independent EX sessions; RP-CONFIRMATION-MECHANISM locked no-build; EX-E-REAL-EVIDENCE-RERUN gated on both REVIEWs)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
@@ -117,21 +117,24 @@ History context on `main`:
 ### RP-HARNESS-INFRA-CFT — Chrome 137 / CFT / CDP infra
 - Re-authorize the legitimate infra findings (Chrome For Testing discovery,
   CDP `Target.getTargets`, port mismatch, CDP-mode build skip) as a
-  harness-only EX batch.
-- Allowed: `scripts/web-auto-release-e2e.ts`, `scripts/dual-endpoint-release-e2e.ts`,
-  `docs/runbooks/dual-endpoint-automation.md`, and `package.json`/lock ONLY if
-  the dependency decision is explicitly approved.
-- Open decision: is a `playwright` devDependency justified, or does the harness
-  run via ambient/npx Playwright? Dependency addition must be justified
-  separately.
+  harness-only EX batch. **Prompt drafted: see `## EX-HARNESS-INFRA-CFT` below.**
+- **Dependency decision LOCKED (e):** no `playwright` devDependency.
+  `loadPlaywright()` already resolves Playwright via ambient/`npx`. If a fix
+  cannot work without the devDep, EX STOPs and returns to RP.
+- Scope confirmed harness-only: all four fixes live in `scripts/`; zero `apps/`
+  product change (that is EX-ADR0023-PROSEMIRROR's exclusive domain).
 
 ### RP-CONFIRMATION-MECHANISM — define auto-confirm's place
-- Hard rule to adopt:
+- Hard rule (f) ADOPTED + LOCKED:
   - Real evidence: auto-confirm FORBIDDEN; human must confirm the console card.
   - Smoke / local unattended: auto-confirm allowed ONLY if the filename, docs,
     and evidence schema mark it non-evidence.
-- If `auto-confirm-proposal.mjs` is retained, it is its own batch and REVIEW-E
-  must never read a confirmation identity it produced as PASS evidence.
+- **Disposition: `scripts/auto-confirm-proposal.mjs` was deleted by the revert
+  (`c96742e`) and stays deleted. No reintroduction is authorized.** If a
+  non-evidence smoke helper is ever wanted, it is a separate explicitly-scoped
+  batch that must mark itself non-evidence per rule (f). REVIEW-E must never
+  accept a confirmation identity produced by any auto-confirmer as PASS
+  evidence. No EX batch required now — rule locked, nothing to build.
 
 ### EX-E-REAL-EVIDENCE-RERUN — only after all gates above clear
 - Success conditions: clean working tree; `HEAD` free of unauthorized
@@ -143,8 +146,12 @@ History context on `main`:
 ### Immediate next step
 RP-RECOVERY-1 DONE + pushed. RP-RELAY-SEAM-FOLLOWUP DONE + pushed (`ee7b0bd`).
 All governance decisions (c)/(d)/(e)/(f) locked. `5120d45` overreach neutralized
-on origin/main. Next batch: `EX-ADR0023-PROSEMIRROR` (prompt below). Control
-returns to `REVIEW-ADR0023-PROSEMIRROR` after execution.
+on origin/main. Two EX batches are drafted and ready for independent EX sessions:
+`EX-ADR0023-PROSEMIRROR` (apps/ fill fix) and `EX-HARNESS-INFRA-CFT` (harness
+infra). They are independent and may run in either order; each returns control
+to its REVIEW gate. RP-CONFIRMATION-MECHANISM needs no EX batch (rule locked,
+helper stays deleted). `EX-E-REAL-EVIDENCE-RERUN` runs only after both REVIEW
+gates pass.
 
 ## Locked Governance Decisions (2026-06-21)
 
@@ -1054,4 +1061,136 @@ Required:
 - real Chrome fill proof (or documented deferral).
 
 Return control to REVIEW-ADR0023-PROSEMIRROR.
+```
+
+---
+
+## EX-HARNESS-INFRA-CFT
+
+**Owner:** execution agent (independent session, NOT this RP session).
+
+**Outcome:** Re-land the four harness-only infra fixes that `5120d45`
+introduced and `c96742e` reverted, so the dual-endpoint harness can launch a
+Chrome-For-Testing browser with the extension, connect over CDP, and reach the
+local server on the extension's expected port. Harness/tooling only — NO
+`apps/` product behavior, NO ADR-0023 DOM/relay change, NO auto-confirm, NO new
+dependency.
+
+### Preconditions
+
+- Decisions (e) LOCKED: no `playwright` devDependency; `loadPlaywright()`
+  already resolves Playwright via ambient/`npx` (throws a clear "run npx
+  playwright or install playwright" message if absent).
+- `5120d45` reverted (`c96742e`, pushed). The four fixes below are currently
+  ABSENT.
+- `npm run typecheck`, `npm run build-extension`, focused harness tests pass at
+  baseline (`757f894`).
+- Untracked `.kiro/specs/multi-persona-quality-gate/` is left untouched.
+- Independent of EX-ADR0023-PROSEMIRROR (that batch owns `chatgpt-dom.ts`; this
+  batch must not touch any `apps/` file).
+
+### Allowed Files
+
+- `scripts/web-auto-release-e2e.ts` — re-land Chrome-For-Testing discovery,
+  CDP-mode build skip, and CDP `Target.getTargets` extension-id fallback.
+- `scripts/dual-endpoint-release-e2e.ts` — re-land the
+  `DEFAULT_LOCAL_SERVER_PORT` wiring in `runRealChatgptRoute` (import the
+  EXISTING constant from `packages/shared/src/constants.ts`; import only, no
+  `packages/` change).
+- `docs/runbooks/dual-endpoint-automation.md` — document the CFT requirement
+  and CDP launch flags.
+- `tests/dual-endpoint-release-e2e.test.mjs` and/or harness tests — add
+  coverage where feasible (arg parsing, port wiring) without launching a real
+  browser.
+
+### Forbidden Scope
+
+- No changes to ANY `apps/` file (product code; `chatgpt-dom.ts` belongs to
+  EX-ADR0023-PROSEMIRROR).
+- No changes to `packages/` (importing an existing exported constant is allowed;
+  editing `packages/` source is not).
+- No new dependency; no `package.json`/`package-lock.json` change. If a fix
+  genuinely cannot work without adding `playwright` as a devDependency, STOP and
+  return to RP — the dependency decision is RP's, not EX's.
+- NO marker-matching fallback logic, NO auto-confirm / `/confirm` / `/dispatch`
+  automation (those belong to RP-CONFIRMATION-MECHANISM and are forbidden here).
+- No ADR-0023/ADR-0024 changes. No DOM submission, relay, routing, or loop
+  behavior change.
+- No commit, push, merge, or PR.
+
+### Required Implementation (re-land exactly these four)
+
+1. **CFT Chrome discovery.** Make `discoverChromePath` resolve a
+   Chrome-For-Testing executable (via `loadPlaywright()` →
+   `playwright.chromium.executablePath()`), with the existing explicit
+   `--chrome-path` input honored first and a clear error if neither resolves.
+   Reason: branded Chrome 137+ removed `--load-extension`; only CFT/Chromium
+   honour it.
+2. **CDP-mode build skip.** Skip `buildWebAutoExtension()` when `--connect-cdp`
+   or `--connect-active-chrome` is set (rebuilding overwrites the in-use dist
+   and Chrome unloads the extension). When skipped, require an existing dist and
+   error clearly if missing.
+3. **Server port wiring.** In `runRealChatgptRoute`, start the local server with
+   `port: DEFAULT_LOCAL_SERVER_PORT` (imported from
+   `packages/shared/src/constants.ts`) so the extension's hardcoded endpoint
+   matches. Do not hardcode a literal port.
+4. **CDP extension-id fallback.** In `discoverExtensionId`, add a CDP
+   `Target.getTargets` fallback for `connectOverCDP` mode (service-worker
+   discovery is unreliable there). Read-only target enumeration; no injection.
+
+### ANTI SCOPE-CREEP STOP (hard clause)
+
+During real-Chrome verification, if any fix requires changes beyond the allowed
+files (e.g., an `apps/` extension change, a `packages/` edit, or a new
+dependency), the EX agent MUST STOP and return control to RP. In-place "fix it
+to make it run" changes are exactly what caused the `5120d45` overreach. No
+exceptions, even if the real-Chrome run fails.
+
+### Verification
+
+```bash
+npm run typecheck
+node --experimental-strip-types --test tests/*dual-endpoint-release-e2e*.test.mjs
+npm run build-extension
+git diff --check
+```
+
+Plus a source-avoidance scan over the changed harness files for
+`KeyboardEvent|keydown|keypress|requestSubmit|\.submit\(|form\.submit|/bridge/execution-proposals/confirm|/bridge/execution-proposals/dispatch`
+(zero new matches). Optionally a real CFT+CDP launch proof; if the environment
+is unavailable, document the deferral — do NOT add code to force it.
+
+### Report Back
+
+Return control to **REVIEW-HARNESS-INFRA-CFT** with: changed files (harness +
+runbook + tests only; zero `apps/`/`packages/`/dependency), test results,
+source-avoidance scan output, confirmation the four fixes are scoped exactly as
+above, and any STOP-triggering findings.
+
+```text
+EX-HARNESS-INFRA-CFT - Re-land 4 harness-only infra fixes reverted with 5120d45.
+
+Allowed files:
+- scripts/web-auto-release-e2e.ts
+- scripts/dual-endpoint-release-e2e.ts
+- docs/runbooks/dual-endpoint-automation.md
+- tests/dual-endpoint-release-e2e.test.mjs (coverage only, no real browser)
+
+Re-land exactly:
+1. CFT Chrome discovery (playwright.chromium.executablePath), honor --chrome-path first;
+2. skip buildWebAutoExtension() in --connect-cdp / --connect-active-chrome mode;
+3. runRealChatgptRoute starts server with port: DEFAULT_LOCAL_SERVER_PORT (import existing constant);
+4. discoverExtensionId CDP Target.getTargets fallback (read-only).
+
+Forbidden:
+- any apps/ change (chatgpt-dom.ts is EX-ADR0023-PROSEMIRROR's), any packages/ source edit;
+- new dependency / package.json change (STOP->RP if a fix needs playwright devDep);
+- marker fallback, auto-confirm, /confirm or /dispatch automation;
+- ADR-0023/0024 or DOM/relay/loop behavior change;
+- commit, push, merge, PR.
+
+ANTI SCOPE-CREEP STOP: if any fix needs changes beyond the allowed files, STOP and return to RP. No exceptions even if the real run fails.
+
+Verify: npm run typecheck + harness tests + npm run build-extension + source-avoidance scan + git diff --check.
+Return control to REVIEW-HARNESS-INFRA-CFT.
 ```
