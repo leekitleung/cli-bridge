@@ -1,8 +1,9 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: READY-FOR-EX-E-REAL-EVIDENCE
+Status: READY-FOR-EX-RELAY-SEAM-INSTRUMENTATION
 
-Date: 2026-06-21 (re-verified; EX-E2 completed and REVIEW-E2 PASS)
+Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-E-REAL-EVIDENCE split — relay-seam
+instrumentation extracted as prerequisite batch)
 
 Owner: reviewing/planning agent (RP batch)
 
@@ -116,13 +117,28 @@ REVIEW-DUAL-ENDPOINT-AUTOMATION).
 ## Control Flow
 
 ```
-EX-E2-HARNESS-COMPLETION  →  REVIEW-E2-HARNESS-COMPLETION
+EX-E2-HARNESS-COMPLETION  ✅  →  REVIEW-E2-HARNESS-COMPLETION  ✅
+  →  EX-RELAY-SEAM-INSTRUMENTATION  →  REVIEW-RELAY-SEAM-INSTRUMENTATION
   →  EX-E-REAL-EVIDENCE  →  REVIEW-E-REAL-EVIDENCE
   →  FINAL-CLOSEOUT (only on PASS)
 ```
 
 Control returns to a REVIEW/RP batch after each EX batch. If a REVIEW is
 BLOCKED, the next EX batch is a bounded follow-up only.
+
+### Why EX-RELAY-SEAM-INSTRUMENTATION was extracted
+
+EX-E-REAL-EVIDENCE is environment-gated (requires real logged-in ChatGPT/CDP +
+human operator). The real run is expensive and not repeatable on demand. The
+REVIEW-E gate (line ~443) requires relay-seam diagnostics
+(`/bridge/extract-return` response codes + `lastOutboundPromptId` match evidence)
+that the harness does not currently capture. If the real run completes without
+these fields, the evidence is useless for REVIEW-E — the run must be repeated
+after adding instrumentation.
+
+This batch adds the instrumentation now, while the real environment is
+unavailable, so the next real run captures everything REVIEW-E needs in one shot.
+It does not depend on the real ChatGPT/CDP environment.
 
 ## Global Boundaries (carried from RP-DUAL-ENDPOINT-AUTOMATION-CONTROL)
 
@@ -329,13 +345,182 @@ asks.
 
 ---
 
+## EX-RELAY-SEAM-INSTRUMENTATION
+
+**Owner:** execution agent.
+
+**Outcome:** The dual-endpoint harness captures relay-seam diagnostics in every
+`chatgpt-route` evidence output, so REVIEW-E can validate the
+`/bridge/extract-return` idempotent-replay + `lastOutboundPromptId` match
+without re-running the real ChatGPT path. No product code changes. No real
+browser dependency.
+
+### Preconditions
+
+- REVIEW-E2 returned PASS (`docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E2.md`).
+- `npm run typecheck`, `npm run build-extension`, harness tests 10/10 pass
+  before starting (baseline from REVIEW-E2).
+- Untracked `.kiro/specs/multi-persona-quality-gate/` is left untouched.
+
+### Allowed Files
+
+- `scripts/dual-endpoint-release-e2e.ts` — add `relaySeam` field to
+  `DualEndpointEvidence` interface; capture diagnostics in `runRealChatgptRoute`
+  around the `/bridge/extract-return` POST (line ~1165–1177).
+- `tests/dual-endpoint-release-e2e.test.mjs` — add schema/type assertions for
+  the new `relaySeam` field.
+- `docs/runbooks/dual-endpoint-automation.md` — document the new evidence field.
+- `docs/planning/RP-DUAL-ENDPOINT-REAL-EVIDENCE-CLOSEOUT.md` — status advance
+  by the RP owner after REVIEW-RELAY-SEAM-INSTRUMENTATION PASS (not by EX).
+
+### Forbidden Scope
+
+- No changes to `apps/` or `packages/` product code.
+- No changes to `scripts/web-auto-release-e2e.ts` (EX-E2 export-only change is
+  final; do not modify further).
+- No ADR-0023 or ADR-0024 amendments.
+- No new DOM selectors, send logic, loop policy, or extension routing.
+- No dangerous flags, auto-confirmation, or real browser launch.
+- No commit, push, merge, or PR.
+
+### Required Steps
+
+- [ ] **Add `relaySeam` to `DualEndpointEvidence` interface** (after
+  `confirmationIdentity`, before `controlResult`):
+  ```ts
+  relaySeam?: {
+    firstExtractReturnStatus: number;
+    secondExtractReturnStatus: number;
+    lastOutboundPromptId: string;
+    outboundPromptId: string;
+    promptIdMatch: boolean;
+    idempotentReplayHit: boolean;
+    artifactId: string;
+  };
+  ```
+  The field is optional (`?`) so non-`chatgpt-route` scenarios and dry-run
+  evidence remain valid without populating it.
+
+- [ ] **Capture diagnostics in `runRealChatgptRoute`:** Around the existing
+  `/bridge/extract-return` POST (line ~1165–1177), record:
+  - `outboundPromptId`: the `outbound.outboundPrompt.id` from the `/bridge/outbound`
+    response (already available at line ~1156).
+  - `lastOutboundPromptId`: query the server's relay context state for this
+    `sessionId` immediately before the extract-return POST. If the server
+    exposes a relay-context inspection endpoint, use it; if not, capture the
+    value from the outbound response and compare after the POST. Record the
+    approach in the code comment.
+  - `secondExtractReturnStatus`: the HTTP status code of the harness-side
+    `/bridge/extract-return` POST (line ~1165). `bridgeApi` currently returns
+    the parsed body; capture the raw status as well (extend `bridgeApi` return
+    or use a local `fetch` for this call).
+  - `firstExtractReturnStatus`: if the extension's first extract-return is
+    observable from the harness side (e.g., via relay context state or a
+    server-side log), record it. If not directly observable, set to `-1` and
+    add a code comment explaining why. Do NOT add a new server endpoint to
+    expose it — that would be a product code change. If the EX agent concludes
+    that capturing this field correctly REQUIRES server-side support (a new
+    endpoint, relay-context inspection surface, or any `apps/`/`packages/`
+    change), it must STOP and report back to RP rather than improvising — RP
+    decides whether to authorize a separate product-scope batch. The `-1`
+    fallback is the authorized in-scope outcome; server-side expansion is not.
+  - `promptIdMatch`: `lastOutboundPromptId === outboundPromptId`.
+  - `idempotentReplayHit`: `true` if the extract-return response indicates the
+    artifact was served from an idempotent replay (same `operationId` already
+    processed), `false` if it created a new artifact. Infer from the response
+    shape or a status marker; do not add new server-side replay-tracking
+    surface.
+  - `artifactId`: the `artifactResponse.artifact.artifactId` (already available
+    at line ~1181).
+
+- [ ] **Populate `relaySeam` in the returned evidence:** The
+  `runRealChatgptRoute` function returns a `DualEndpointEvidence` object (around
+  line ~1230). Add the captured `relaySeam` object to that return value.
+
+- [ ] **Sanitize safely:** Verify `sanitizeEvidence` (line ~197) does not redact
+  the `relaySeam` field — its key does not match the
+  `cookie|pairingToken|credential|providerConfig|rawPrompt|rawReply|rawTranscript`
+  pattern, so it passes through. Add a test asserting `relaySeam` survives
+  sanitization with all subfields intact.
+
+- [ ] **Add tests** in `tests/dual-endpoint-release-e2e.test.mjs`:
+  - A test asserting `DualEndpointEvidence` type includes `relaySeam?` and the
+    field shape matches the interface (compile-time + runtime shape check on a
+    synthetic evidence object).
+  - A test asserting `sanitizeEvidence` preserves all `relaySeam` subfields
+    (no redaction of status codes, prompt ids, or booleans).
+  - A test asserting `relaySeam` is absent (or `undefined`) on non-`chatgpt-route`
+    scenario evidence (e.g., `cli-route` dry-run evidence) — the field is
+    `chatgpt-route`-only.
+  - Keep the existing 10 tests passing.
+
+- [ ] **Update runbook:** In `docs/runbooks/dual-endpoint-automation.md`, add a
+  short "Evidence fields" section documenting that `chatgpt-route` evidence
+  includes `relaySeam` with the listed subfields, and that REVIEW-E inspects
+  `promptIdMatch` and `idempotentReplayHit` to validate the relay seam.
+
+### Verification
+
+```bash
+npm run typecheck
+node --experimental-strip-types --test tests/*dual-endpoint-release-e2e*.test.mjs
+npm run build-extension
+rg -n "shell: *true|--dangerously|--yolo|--full-auto|requestSubmit|KeyboardEvent|\.submit\(|'/bridge/execution-proposals/confirm'|'/bridge/execution-proposals/dispatch'" scripts/dual-endpoint-release-e2e.ts
+git diff --check
+```
+
+`npm test` (full suite) is NOT required for this batch — the change is
+harness/test-only and REVIEW-RELAY-SEAM-INSTRUMENTATION will verify the focused
+suite. Running the full suite is optional if the agent has time.
+
+### Report Back
+
+Changed files (expected: harness, tests, runbook), new test count, the exact
+`relaySeam` field shape as implemented, how `lastOutboundPromptId` is captured
+(endpoint vs. inference), whether `firstExtractReturnStatus` is observable
+from the harness side or set to `-1`, and confirmation that no product code
+was touched.
+
+---
+
+## REVIEW-RELAY-SEAM-INSTRUMENTATION
+
+**Owner:** reviewing agent. No implementation fixes unless the user explicitly
+asks.
+
+### Checks
+
+- [ ] `relaySeam` field exists on `DualEndpointEvidence` with the required
+  subfields (`firstExtractReturnStatus`, `secondExtractReturnStatus`,
+  `lastOutboundPromptId`, `outboundPromptId`, `promptIdMatch`,
+  `idempotentReplayHit`, `artifactId`).
+- [ ] `runRealChatgptRoute` populates `relaySeam` in its returned evidence.
+- [ ] `sanitizeEvidence` preserves all `relaySeam` subfields (test asserts this).
+- [ ] Non-`chatgpt-route` scenarios do not populate `relaySeam` (field is
+  optional and absent).
+- [ ] No new server endpoints, no product code changes, no `web-auto-release-e2e.ts`
+  changes, no real browser dependency.
+- [ ] `npm run typecheck`, `npm run build-extension`, focused harness tests pass.
+- [ ] Runbook documents the new field.
+- [ ] `git diff --check` clean; only allowed files modified.
+
+### Result
+
+- PASS: update RP status to `READY-FOR-EX-E-REAL-EVIDENCE`; the next real run
+  will automatically capture relay-seam diagnostics for REVIEW-E.
+- BLOCKED: enumerate findings; define a bounded follow-up EX patch.
+
+---
+
 ## EX-E-REAL-EVIDENCE
 
 **Owner:** execution agent, operating with a human operator who supplies real
 logins and performs each confirmation.
 
-**Precondition:** REVIEW-E2-HARNESS-COMPLETION returned PASS (see
-`docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E2.md`, 2026-06-21).
+**Precondition:** REVIEW-RELAY-SEAM-INSTRUMENTATION returned PASS (relay-seam
+diagnostics are captured by the harness), AND REVIEW-E2-HARNESS-COMPLETION
+returned PASS (`docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION-CONTROL-E2.md`,
+2026-06-21).
 
 **Carry-forward risk from REVIEW-E2 (must validate this batch):** the ChatGPT
 real path is structurally faithful but unverified end-to-end. Validate the relay
@@ -393,15 +578,16 @@ and clean shutdown.
   `dry-*`) evidence. Confirm the remaining scenarios produce `passed` contract
   evidence or `blocked` with a real environment reason.
 - [ ] **Capture relay-seam diagnostics in the `chatgpt-route` evidence** (REVIEW-E
-  gate item): record every `/bridge/extract-return` HTTP response code and the
-  `lastOutboundPromptId` value at the moment of the harness-side second POST.
-  REVIEW-E must inspect these, not just the final scenario verdict — a relay
+  gate item): the harness now captures these automatically (EX-RELAY-SEAM-
+  INSTRUMENTATION). Record every `/bridge/extract-return` HTTP response code
+  and the `lastOutboundPromptId` value at the moment of the harness-side second
+  POST. REVIEW-E must inspect `relaySeam.promptIdMatch` and
+  `relaySeam.idempotentReplayHit`, not just the final scenario verdict — a relay
   double-fire or prompt-id mismatch yields a silent stale artifact or a
   duplicate-proposal rejection that the contract tests cannot detect. If the
-  harness does not already surface these fields in its sanitized evidence,
-  adding that capture is an authorized real-run harness fix (per this batch's
-  Allowed Files), and the seam adjustment described in the precondition must be
-  recorded.
+  real run exposes a harness bug (e.g., `promptIdMatch: false`), the seam
+  adjustment described in the precondition must be recorded as an authorized
+  real-run harness fix (per this batch's Allowed Files).
 - [ ] Verify the default run leaves no harness-owned server, browser, or child
   CLI process. Record any intentionally retained external CDP browser as an
   exception.
@@ -493,9 +679,16 @@ returns PASS and the user authorizes closeout.
 
 ## Planning Notes / Risks
 
-- The blocker is a missing harness implementation (chatgpt-route real path),
-  NOT purely environmental. EX-E2 closes the implementation gap; EX-E-REAL-EVIDENCE
-  captures the real run. No product code (apps/packages) changes are authorized.
+- EX-RELAY-SEAM-INSTRUMENTATION was extracted from EX-E-REAL-EVIDENCE because
+  the real run is environment-gated and not repeatable on demand. Adding
+  relay-seam diagnostics before the real run ensures REVIEW-E gets the evidence
+  it needs in one shot, rather than discovering the harness doesn't capture the
+  required fields after an expensive real run.
+- The blocker for EX-E-REAL-EVIDENCE is a missing harness implementation
+  (chatgpt-route real path), NOT purely environmental. EX-E2 closed the
+  implementation gap; EX-RELAY-SEAM-INSTRUMENTATION adds the diagnostics layer;
+  EX-E-REAL-EVIDENCE captures the real run. No product code (apps/packages)
+  changes are authorized.
 - Real evidence requires a reachable `/console/goals` for human confirmation
   during the harness run. The local server is harness-owned per the runbook.
 - The `chatgpt-route` real path reuses ADR-0023-authorized Web automation. It
