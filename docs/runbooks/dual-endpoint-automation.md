@@ -26,6 +26,51 @@ npm run dual-endpoint:e2e -- --scenario chatgpt-route --profile-dir output/playw
 npm run dual-endpoint:e2e -- --scenario chatgpt-route --connect-cdp http://127.0.0.1:9224 --execution-cli codex-medium
 ```
 
+The harness also accepts an explicit active Chrome mode for environments that
+provide a Node-accessible Chrome DevTools MCP / active browser session adapter:
+
+```bash
+npm run dual-endpoint:e2e -- --scenario chatgpt-route --connect-active-chrome --active-chrome-helper http://127.0.0.1:<port> --execution-cli codex-medium
+```
+
+This mode is mutually exclusive with `--profile-dir` and `--connect-cdp`. If the
+current harness process cannot access an active Chrome adapter, evidence must
+fail closed as `blocked-real-chatgpt`; do not treat that as a successful
+ChatGPT-route run.
+
+Note that Codex itself may be able to control the user's current Chrome through
+the Codex Chrome Extension. That proves the browser session is usable from the
+interactive Codex tool runtime, but it is not sufficient for this npm harness:
+`dual-endpoint:e2e` runs in a separate Node process and needs a callable adapter
+inside that process. Until such an adapter is implemented, `--connect-active-chrome`
+is an explicit fail-closed mode, not a passing evidence path.
+
+The helper protocol is intentionally narrow. The harness creates the local
+server, binding, outbound prompt, second `/bridge/extract-return`, execution
+proposal, and `/console/goals` handoff. The helper only receives:
+
+```json
+{
+  "bridgeUrl": "http://127.0.0.1:<server-port>",
+  "pairingToken": "<redacted>",
+  "promptId": "<outbound-prompt-id>",
+  "marker": "<required-reply-marker>"
+}
+```
+
+via `POST /chatgpt/relay`, then uses the current active Chrome session to pair
+the CLI Bridge extension, send or observe the outbound prompt, and return:
+
+```json
+{
+  "prompt": { "id": "<outbound-prompt-id>", "status": "returned" },
+  "inbound": { "status": "returned", "content": "...marker..." }
+}
+```
+
+The helper must not confirm or dispatch execution proposals. Those remain
+manual in `/console/goals`.
+
 ## Endpoint Setup
 
 Register endpoint identities before running real evidence:
@@ -95,6 +140,9 @@ or unredacted command output.
 - `blocked-real-cli`: configure real high-tier reasoning and medium/low
   execution CLI endpoint ids.
 - `blocked-real-chatgpt`: provide a logged-in ChatGPT profile or CDP browser.
+  For `--connect-active-chrome`, confirm the Node harness has a callable active
+  Chrome helper; Chrome UI permission alone is not enough if no helper is
+  serving `POST /chatgpt/relay`.
 - `confirmation-timeout`: reopen `/console/goals`, refresh server state, and
   confirm the current proposal only.
 - `cleanup-failed`: inspect local server, browser, and child CLI processes; a

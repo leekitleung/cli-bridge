@@ -35,6 +35,8 @@ export interface WebAutoHarnessArgs {
   profileDir?: string;
   chromePath?: string;
   connectCdp?: string;
+  connectActiveChrome?: boolean;
+  activeChromeHelper?: string;
   remoteDebuggingPort?: number;
   basePort?: number;
   outputDir: string;
@@ -125,9 +127,12 @@ function usage(): string {
     'Usage:',
     '  node --experimental-strip-types scripts/web-auto-release-e2e.ts --scenario <stage-b-one-round|stage-c-two-rounds|all> --profile-dir <path>',
     '  node --experimental-strip-types scripts/web-auto-release-e2e.ts --scenario <stage-b-one-round|stage-c-two-rounds|all> --connect-cdp http://127.0.0.1:<port>',
+    '  node --experimental-strip-types scripts/web-auto-release-e2e.ts --scenario <stage-b-one-round|stage-c-two-rounds|all> --connect-active-chrome',
     '',
     'Options:',
     '  --connect-cdp <url>',
+    '  --connect-active-chrome',
+    '  --active-chrome-helper <url>',
     '  --chrome-path <path>',
     '  --remote-debugging-port <port>',
     '  --base-port <port>',
@@ -154,7 +159,7 @@ export function parseArgs(argv: string[]): WebAutoHarnessArgs {
       throw new Error(`Unexpected argument: ${token}`);
     }
     const key = token.slice(2);
-    if (key === 'keep-browser' || key === 'dry-run') {
+    if (key === 'keep-browser' || key === 'dry-run' || key === 'connect-active-chrome') {
       raw[key] = true;
       continue;
     }
@@ -172,11 +177,18 @@ export function parseArgs(argv: string[]): WebAutoHarnessArgs {
   }
   const profileDir = (raw['profile-dir'] ?? process.env.CLI_BRIDGE_WEB_AUTO_PROFILE_DIR) as string | undefined;
   const connectCdp = (raw['connect-cdp'] ?? process.env.CLI_BRIDGE_WEB_AUTO_CONNECT_CDP) as string | undefined;
-  if ((!profileDir || profileDir.trim().length === 0) && (!connectCdp || connectCdp.trim().length === 0)) {
-    throw new Error('profile-dir or connect-cdp is required');
+  const connectActiveChrome = raw['connect-active-chrome'] === true || process.env.CLI_BRIDGE_WEB_AUTO_CONNECT_ACTIVE_CHROME === '1';
+  const activeChromeHelper = (raw['active-chrome-helper'] ?? process.env.CLI_BRIDGE_WEB_AUTO_ACTIVE_CHROME_HELPER) as string | undefined;
+  const browserModes = [
+    profileDir && profileDir.trim().length > 0 ? profileDir : undefined,
+    connectCdp && connectCdp.trim().length > 0 ? connectCdp : undefined,
+    connectActiveChrome ? 'active-chrome' : undefined,
+  ].filter(Boolean);
+  if (browserModes.length === 0) {
+    throw new Error('profile-dir, connect-cdp, or connect-active-chrome is required');
   }
-  if (profileDir && connectCdp) {
-    throw new Error('profile-dir and connect-cdp are mutually exclusive');
+  if (browserModes.length > 1) {
+    throw new Error('profile-dir, connect-cdp, and connect-active-chrome are mutually exclusive');
   }
 
   return {
@@ -184,6 +196,8 @@ export function parseArgs(argv: string[]): WebAutoHarnessArgs {
     profileDir,
     chromePath: (raw['chrome-path'] ?? process.env.CLI_BRIDGE_WEB_AUTO_CHROME_PATH) as string | undefined,
     connectCdp,
+    connectActiveChrome,
+    activeChromeHelper,
     remoteDebuggingPort: parsePort(
       (raw['remote-debugging-port'] ?? process.env.CLI_BRIDGE_WEB_AUTO_REMOTE_DEBUGGING_PORT) as string | undefined,
       'remote-debugging-port',
@@ -362,8 +376,15 @@ export async function launchBrowser(args: WebAutoHarnessArgs, extensionDist: str
       },
     };
   }
+  if (args.connectActiveChrome) {
+    if (!args.activeChromeHelper) {
+      throw new Error('active Chrome helper URL is required for connect-active-chrome');
+    }
+    new URL(args.activeChromeHelper);
+    throw new Error('active Chrome helper mode is implemented by dual-endpoint-release-e2e; web-auto standalone still requires profile-dir or connect-cdp');
+  }
   if (!args.profileDir) {
-    throw new Error('profile-dir is required when not using connect-cdp');
+    throw new Error('profile-dir is required when not using connect-cdp or connect-active-chrome');
   }
   const remotePort = await findAvailablePort(args.remoteDebuggingPort);
   const chromePath = discoverChromePath(args.chromePath);
@@ -821,6 +842,10 @@ export async function runHarness(args: WebAutoHarnessArgs): Promise<ScenarioEvid
   if (args.dryRun) {
     if (args.profileDir && !existsSync(args.profileDir)) throw new Error(`profile-dir does not exist: ${args.profileDir}`);
     if (args.connectCdp) new URL(args.connectCdp);
+    if (args.connectActiveChrome) {
+      if (!args.activeChromeHelper) throw new Error('active Chrome helper URL is required for connect-active-chrome');
+      new URL(args.activeChromeHelper);
+    }
     if (args.chromePath) discoverChromePath(args.chromePath);
     return [];
   }

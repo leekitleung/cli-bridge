@@ -45,6 +45,8 @@ export interface DualEndpointHarnessArgs {
   scenario: DualEndpointScenario;
   profileDir?: string;
   connectCdp?: string;
+  connectActiveChrome?: boolean;
+  activeChromeHelper?: string;
   reasoningCli?: string;
   executionCli?: string;
   outputDir: string;
@@ -120,6 +122,8 @@ function usage(): string {
     'Options:',
     '  --profile-dir <path>',
     '  --connect-cdp <url>',
+    '  --connect-active-chrome',
+    '  --active-chrome-helper <url>',
     '  --reasoning-cli <endpoint-id>',
     '  --execution-cli <endpoint-id>',
     '  --output-dir <path>',
@@ -146,7 +150,7 @@ export function parseArgs(argv: string[]): DualEndpointHarnessArgs {
     const token = argv[index];
     if (!token.startsWith('--')) throw new Error(`Unexpected argument: ${token}`);
     const key = token.slice(2);
-    if (key === 'dry-run') {
+    if (key === 'dry-run' || key === 'connect-active-chrome') {
       raw[key] = true;
       continue;
     }
@@ -161,10 +165,24 @@ export function parseArgs(argv: string[]): DualEndpointHarnessArgs {
     throw new Error(`scenario must be one of ${[...DUAL_ENDPOINT_SCENARIOS, 'all'].join(', ')}`);
   }
 
+  const profileDir = valueFor(raw, 'profile-dir') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_PROFILE_DIR;
+  const connectCdp = valueFor(raw, 'connect-cdp') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_CONNECT_CDP;
+  const connectActiveChrome = raw['connect-active-chrome'] === true
+    || process.env.CLI_BRIDGE_DUAL_ENDPOINT_CONNECT_ACTIVE_CHROME === '1';
+  const activeChromeHelper = valueFor(raw, 'active-chrome-helper')
+    ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_ACTIVE_CHROME_HELPER;
+  const browserModes = [profileDir, connectCdp, connectActiveChrome ? 'active-chrome' : undefined]
+    .filter(Boolean);
+  if (browserModes.length > 1) {
+    throw new Error('profile-dir, connect-cdp, and connect-active-chrome are mutually exclusive');
+  }
+
   return {
     scenario: scenario as DualEndpointScenario,
-    profileDir: valueFor(raw, 'profile-dir') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_PROFILE_DIR,
-    connectCdp: valueFor(raw, 'connect-cdp') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_CONNECT_CDP,
+    profileDir,
+    connectCdp,
+    connectActiveChrome,
+    activeChromeHelper,
     reasoningCli: valueFor(raw, 'reasoning-cli') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_REASONING_CLI,
     executionCli: valueFor(raw, 'execution-cli') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_EXECUTION_CLI,
     outputDir: valueFor(raw, 'output-dir') ?? process.env.CLI_BRIDGE_DUAL_ENDPOINT_OUTPUT_DIR ?? DEFAULT_OUTPUT_DIR,
@@ -205,7 +223,7 @@ export function sanitizeEvidence(value: unknown, secretValues: string[] = []): u
 
 export function classifyDualEndpointError(error: unknown): { code: DualEndpointFailureCode; message: string } {
   const message = error instanceof Error ? error.message : String(error);
-  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir/i.test(message)) {
+  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir|active Chrome|connect-active-chrome/i.test(message)) {
     return { code: 'blocked-real-chatgpt', message };
   }
   if (/real high-tier CLI|reasoning cli|execution cli|CLI endpoint/i.test(message)) {
@@ -259,8 +277,8 @@ function blockedReason(args: DualEndpointHarnessArgs, scenario: typeof DUAL_ENDP
   if (!args.executionCli && scenario !== 'chatgpt-route') {
     return new Error('execution CLI endpoint is required for release evidence');
   }
-  if (scenario === 'chatgpt-route' && !args.profileDir && !args.connectCdp) {
-    return new Error('logged-in ChatGPT profile is required for ChatGPT route evidence');
+  if (scenario === 'chatgpt-route' && !args.profileDir && !args.connectCdp && !args.connectActiveChrome) {
+    return new Error('logged-in ChatGPT profile, connected CDP browser, or active Chrome session is required for ChatGPT route evidence');
   }
   if (args.profileDir && !existsSync(args.profileDir)) {
     return new Error(`logged-in ChatGPT profile is required; profile-dir does not exist: ${args.profileDir}`);
@@ -980,10 +998,32 @@ async function createChatgptRuntime(
   handle: LocalServerHandle,
   git: DualEndpointEvidence['git'],
 ): Promise<WebAutoRuntimeContext> {
+  if (args.connectActiveChrome) {
+    if (!args.activeChromeHelper) {
+      throw new Error('active Chrome helper URL is required for connect-active-chrome');
+    }
+    new URL(args.activeChromeHelper);
+    return {
+      handle,
+      page: undefined,
+      context: undefined,
+      browserHandle: {
+        context: undefined,
+        async close() {
+          // External active Chrome helpers own their browser/session lifecycle.
+        },
+      },
+      extensionId: 'active-chrome-helper',
+      chromeVersion: 'active-chrome-helper',
+      outputDir: resolve(args.outputDir),
+      git,
+    };
+  }
   const webAutoArgs: WebAutoHarnessArgs = {
     scenario: 'stage-b-one-round',
     profileDir: args.profileDir,
     connectCdp: args.connectCdp,
+    connectActiveChrome: args.connectActiveChrome,
     chromePath: undefined,
     remoteDebuggingPort: undefined,
     basePort: undefined,
@@ -1020,6 +1060,32 @@ async function createChatgptRuntime(
   }
 }
 
+async function waitActiveChromePromptReturned(
+  args: DualEndpointHarnessArgs,
+  handle: LocalServerHandle,
+  promptId: string,
+  marker: string,
+): Promise<{ prompt: any; inbound: any }> {
+  if (!args.activeChromeHelper) {
+    throw new Error('active Chrome helper URL is required for connect-active-chrome');
+  }
+  const response = await fetch(new URL('/chatgpt/relay', args.activeChromeHelper), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      bridgeUrl: handle.url,
+      pairingToken: handle.pairingToken,
+      promptId,
+      marker,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (response.status !== 200 || !body?.prompt || !body?.inbound) {
+    throw new Error(`active Chrome helper relay failed: ${response.status} ${JSON.stringify(body).slice(0, 500)}`);
+  }
+  return { prompt: body.prompt, inbound: body.inbound };
+}
+
 export async function runRealChatgptRoute(
   args: DualEndpointHarnessArgs,
   timestamp: string,
@@ -1028,8 +1094,8 @@ export async function runRealChatgptRoute(
   if (args.executionCli && args.executionCli !== 'codex-medium') {
     throw new Error('execution CLI endpoint must be codex-medium for the current bounded adapter');
   }
-  if (!args.profileDir && !args.connectCdp) {
-    throw new Error('logged-in ChatGPT profile is required for ChatGPT route evidence');
+  if (!args.profileDir && !args.connectCdp && !args.connectActiveChrome) {
+    throw new Error('logged-in ChatGPT profile, connected CDP browser, or active Chrome session is required for ChatGPT route evidence');
   }
 
   let handle: LocalServerHandle | undefined;
@@ -1069,7 +1135,7 @@ export async function runRealChatgptRoute(
       runtime = await createChatgptRuntime(args, handle, git);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`logged-in ChatGPT profile or connected CDP browser is required for ChatGPT route evidence: ${detail}`);
+      throw new Error(`logged-in ChatGPT profile, connected CDP browser, or active Chrome session is required for ChatGPT route evidence: ${detail}`);
     }
 
     // Bounded, read-only reasoning prompt relayed through the existing Web
@@ -1091,7 +1157,9 @@ export async function runRealChatgptRoute(
         sessionId: reasoningSessionId,
         prompt: reasoningPrompt,
       });
-      returned = await waitWebAutoPromptReturned(runtime, outbound.outboundPrompt.id, marker);
+      returned = args.connectActiveChrome
+        ? await waitActiveChromePromptReturned(args, handle, outbound.outboundPrompt.id, marker)
+        : await waitWebAutoPromptReturned(runtime, outbound.outboundPrompt.id, marker);
       // Bind the returned reasoning content to the locked plan as an
       // execution-proposal reasoning artifact (chatgpt-web source).
       const artifactResponse = await bridgeApi<{ artifact: { artifactId: string } }>(
@@ -1191,7 +1259,7 @@ export async function runRealChatgptRoute(
   } finally {
     await unlink(ACTIVE_HANDOFF_PATH).catch(() => undefined);
     await closeServer(handle);
-    if (runtime && !args.connectCdp) {
+    if (runtime && !args.connectCdp && !args.connectActiveChrome) {
       await runtime.browserHandle.close().catch(() => undefined);
     }
   }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import test from 'node:test';
 
 import {
@@ -16,8 +17,6 @@ test('dual endpoint release harness parses explicit CLI args', () => {
   const args = parseArgs([
     '--scenario',
     'mixed-provider',
-    '--profile-dir',
-    'output/playwright/profile',
     '--reasoning-cli',
     'codex-high',
     '--execution-cli',
@@ -32,13 +31,44 @@ test('dual endpoint release harness parses explicit CLI args', () => {
   ]);
 
   assert.equal(args.scenario, 'mixed-provider');
-  assert.equal(args.profileDir, 'output/playwright/profile');
+  assert.equal(args.profileDir, undefined);
   assert.equal(args.reasoningCli, 'codex-high');
   assert.equal(args.executionCli, 'codex-medium');
   assert.equal(args.connectCdp, 'http://127.0.0.1:9224');
+  assert.equal(args.connectActiveChrome, false);
   assert.equal(args.outputDir, 'output/playwright/dual-endpoint');
   assert.equal(args.confirmationTimeoutMs, 600000);
   assert.equal(args.dryRun, true);
+});
+
+test('dual endpoint release harness parses active Chrome mode', () => {
+  const args = parseArgs([
+    '--scenario',
+    'chatgpt-route',
+    '--connect-active-chrome',
+    '--active-chrome-helper',
+    'http://127.0.0.1:8123',
+    '--execution-cli',
+    'codex-medium',
+  ]);
+
+  assert.equal(args.scenario, 'chatgpt-route');
+  assert.equal(args.connectActiveChrome, true);
+  assert.equal(args.activeChromeHelper, 'http://127.0.0.1:8123');
+  assert.equal(args.profileDir, undefined);
+  assert.equal(args.connectCdp, undefined);
+  assert.equal(args.executionCli, 'codex-medium');
+});
+
+test('dual endpoint release harness rejects multiple browser connection modes', () => {
+  assert.throws(
+    () => parseArgs(['--profile-dir', 'profile', '--connect-active-chrome']),
+    /profile-dir, connect-cdp, and connect-active-chrome are mutually exclusive/,
+  );
+  assert.throws(
+    () => parseArgs(['--connect-cdp', 'http://127.0.0.1:9222', '--connect-active-chrome']),
+    /profile-dir, connect-cdp, and connect-active-chrome are mutually exclusive/,
+  );
 });
 
 test('dual endpoint release harness covers required final review scenarios', () => {
@@ -97,9 +127,96 @@ test('dual endpoint release evidence shape includes control and process classifi
 
 test('dual endpoint release failure classification distinguishes blocked real evidence', () => {
   assert.equal(classifyDualEndpointError(new Error('logged-in ChatGPT profile is required')).code, 'blocked-real-chatgpt');
+  assert.equal(classifyDualEndpointError(new Error('active Chrome session adapter is not available')).code, 'blocked-real-chatgpt');
   assert.equal(classifyDualEndpointError(new Error('real high-tier CLI endpoint is required')).code, 'blocked-real-cli');
   assert.equal(classifyDualEndpointError(new Error('operator confirmation timed out')).code, 'confirmation-timeout');
   assert.equal(classifyDualEndpointError(new Error('cleanup left process behind')).code, 'cleanup-failed');
+});
+
+test('dual endpoint release active Chrome mode fails closed as real ChatGPT environment block', async () => {
+  await withTempOutputDir(async (outputDir) => {
+    const [evidence] = await runHarness({
+      scenario: 'chatgpt-route',
+      connectActiveChrome: true,
+      outputDir,
+      confirmationTimeoutMs: 60000,
+      dryRun: false,
+    });
+    assert.equal(evidence.scenario, 'chatgpt-route');
+    assert.equal(evidence.evidenceStatus, 'blocked');
+    assert.equal(evidence.failureClassification, 'blocked-real-chatgpt');
+    assert.match(evidence.failure.message, /active Chrome helper URL is required/);
+  });
+});
+
+async function withActiveChromeHelper(handler, run) {
+  const server = createServer(async (request, response) => {
+    if (request.method !== 'POST' || request.url !== '/chatgpt/relay') {
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'not-found' }));
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const result = await handler(body);
+    response.writeHead(result.status ?? 200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(result.body));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    return await run(`http://127.0.0.1:${port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('dual endpoint release active Chrome helper relays ChatGPT return into proposal gate', async () => {
+  await withTempOutputDir(async (outputDir) => {
+    await withActiveChromeHelper(async (body) => ({
+      body: {
+        prompt: {
+          id: body.promptId,
+          status: 'returned',
+          evidence: [
+            { type: 'queued' },
+            { type: 'claimed' },
+            { type: 'filled-and-acknowledged' },
+            { type: 'waiting-manual-send' },
+            { type: 'submitted' },
+            { type: 'responding' },
+            { type: 'response-ready' },
+            { type: 'returned' },
+          ],
+        },
+        inbound: {
+          status: 'returned',
+          content: `helper response ${body.marker}`,
+        },
+      },
+    }), async (helperUrl) => {
+      const originalLog = console.log;
+      let evidence;
+      try {
+        console.log = () => undefined;
+        [evidence] = await runHarness({
+          scenario: 'chatgpt-route',
+          connectActiveChrome: true,
+          activeChromeHelper: helperUrl,
+          outputDir,
+          confirmationTimeoutMs: 1,
+          dryRun: false,
+        });
+      } finally {
+        console.log = originalLog;
+      }
+      assert.equal(evidence.scenario, 'chatgpt-route');
+      assert.equal(evidence.evidenceStatus, 'blocked');
+      assert.equal(evidence.failureClassification, 'confirmation-timeout');
+      assert.match(evidence.failure.message, /operator confirmation timed out/);
+    });
+  });
 });
 
 test('dual endpoint release harness source avoids forbidden automation shortcuts', async () => {
