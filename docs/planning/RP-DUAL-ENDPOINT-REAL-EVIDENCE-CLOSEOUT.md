@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: RECOVERY-CLOSEOUT (recovery + decisions pushed; EX-ADR0023-PROSEMIRROR + EX-HARNESS-INFRA-CFT executed, REVIEW=PASS, both slices local-pending-push; RP-RERUN-GATE-TRIAGE done — 17 full-suite failures all environmental; only EX-E-REAL-EVIDENCE-RERUN remains, env-gated)
+Status: RECOVERY-CLOSEOUT (recovery + decisions pushed; EX-ADR0023-PROSEMIRROR + EX-HARNESS-INFRA-CFT executed, REVIEW=PASS, both slices pushed; RP-RERUN-GATE-TRIAGE done — 17 full-suite failures all environmental; only EX-E-REAL-EVIDENCE-RERUN remains, env-gated)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
