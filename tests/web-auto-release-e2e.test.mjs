@@ -108,7 +108,7 @@ test('web auto release harness closes the Playwright CDP browser handle', async 
 });
 
 test('web auto release harness rejects missing profile and invalid scenario', () => {
-  assert.throws(() => parseArgs(['--scenario', 'all']), /profile-dir or connect-cdp is required/);
+  assert.throws(() => parseArgs(['--scenario', 'all']), /profile-dir, connect-cdp, or connect-active-chrome is required/);
   assert.throws(
     () => parseArgs(['--scenario', 'bad', '--profile-dir', 'profile']),
     /scenario must be/,
