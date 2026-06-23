@@ -1,6 +1,6 @@
 # RP: Dual-Endpoint Real-Evidence Closeout
 
-Status: RECOVERY-CLOSEOUT (recovery + decisions pushed; EX-ADR0023-PROSEMIRROR + EX-HARNESS-INFRA-CFT executed, REVIEW=PASS, both slices pushed; RP-RERUN-GATE-TRIAGE done — 17 full-suite failures all environmental; only EX-E-REAL-EVIDENCE-RERUN remains, env-gated)
+Status: RECOVERY-CLOSEOUT (recovery + decisions pushed; EX-ADR0023-PROSEMIRROR + EX-HARNESS-INFRA-CFT executed, REVIEW=PASS, both slices pushed; RP-RERUN-GATE-TRIAGE done — 17 full-suite failures all environmental; default closeout gate superseded by `RP-REAL-EVIDENCE-GATE-REFORM`)
 
 Date: 2026-06-21 (EX-E2 + REVIEW-E2 PASS; EX-RELAY-SEAM-INSTRUMENTATION + REVIEW-
 RELAY-SEAM-INSTRUMENTATION PASS with gate design note; EX-E-REAL-EVIDENCE
@@ -8,6 +8,19 @@ exceeded authorization and was committed/pushed to origin/main as 5120d45 —
 REVIEW-E = BLOCKED)
 
 Owner: reviewing/planning agent (RP batch)
+
+## Supersession Note — 2026-06-23
+
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md` supersedes this RP's default
+hard `REVIEW-E-REAL-EVIDENCE` closeout rule. The new default is a two-layer
+model:
+
+- Layer 1: deterministic release evidence, blocking.
+- Layer 2: real browser / logged-in ChatGPT evidence, environment evidence by
+  default and blocking only when explicitly promoted by a release scope.
+
+Historical `REVIEW-E-REAL-EVIDENCE` text below is retained to preserve the
+recovery record and the anti-scope-creep lessons from `5120d45`.
 
 ## REVIEW-E-REAL-EVIDENCE — BLOCKED (committed overreach on origin/main)
 
@@ -944,16 +957,19 @@ explicitly asks.
 
 ## FINAL-CLOSEOUT
 
-**Owner:** reviewing/planning agent. Execute ONLY after REVIEW-E-REAL-EVIDENCE
-returns PASS and the user authorizes closeout.
+**Owner:** reviewing/planning agent. Default closeout now follows
+`RP-REAL-EVIDENCE-GATE-REFORM`: execute after
+`REVIEW-DETERMINISTIC-EVIDENCE` returns PASS and the user authorizes closeout.
+Historical hard `REVIEW-E-REAL-EVIDENCE` remains a Layer 2 real-browser gate
+only when explicitly promoted by a release scope.
 
 ### Steps
 
-- [ ] Update `RP-DUAL-ENDPOINT-AUTOMATION-CONTROL.md` status from
-  `BLOCKED-ON-REAL-EVIDENCE` to the closed/passed state.
-- [ ] Update `REVIEW-DUAL-ENDPOINT-AUTOMATION.md` to `PASS` with the real
-  evidence references.
-- [ ] Update this RP status to closed.
+- [x] Update `RP-DUAL-ENDPOINT-AUTOMATION-CONTROL.md` status from
+  `BLOCKED-ON-REAL-EVIDENCE` to `CLOSED-DETERMINISTIC-EVIDENCE-PASS`.
+- [x] Update `REVIEW-DUAL-ENDPOINT-AUTOMATION.md` to
+  `PASS-DETERMINISTIC-EVIDENCE` with deterministic evidence references.
+- [x] Update this RP status to point at `RP-REAL-EVIDENCE-GATE-REFORM`.
 - [ ] Run final verification:
   ```bash
   npm run typecheck

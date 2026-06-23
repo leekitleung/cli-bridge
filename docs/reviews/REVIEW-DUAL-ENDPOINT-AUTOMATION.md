@@ -1,8 +1,12 @@
 # REVIEW: Dual-Endpoint Automation Control
 
-Status: BLOCKED-ON-REAL-EVIDENCE
+Status: PASS-DETERMINISTIC-EVIDENCE
 
 Date: 2026-06-20
+
+Updated: 2026-06-23 — default closeout gate superseded by
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md`; Layer 1 deterministic evidence
+passed in `docs/reviews/REVIEW-DETERMINISTIC-EVIDENCE.md`.
 
 Reviewed scope:
 
@@ -18,6 +22,17 @@ Reviewed scope:
 - `package.json`
 
 ## Findings
+
+### Supersession — 2026-06-23
+
+The original finding below remains historically accurate for the previous hard
+real-browser gate. It is superseded for default closeout by the adopted
+two-layer gate:
+
+- Layer 1 deterministic evidence is blocking and has passed.
+- Layer 2 real browser / logged-in ChatGPT evidence is recorded as
+  `ENV-BLOCKED` when unavailable, unless a release explicitly promotes it to a
+  hard gate.
 
 1. BLOCKED: Real-chain release evidence is missing.
 
@@ -128,6 +143,22 @@ Result: PASS.
 
 ## Decision
 
+PASS for the default deterministic closeout gate.
+
+Evidence:
+
+- `docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md`
+- `docs/reviews/REVIEW-DETERMINISTIC-EVIDENCE.md`
+- `output/playwright/deterministic-evidence-review/2026-06-23T14-27-04-773Z-*.json`
+
+Layer 2 real-browser evidence remains `ENV-BLOCKED` and non-blocking by default:
+
+- `cli-route`: `confirmation-timeout`
+- `chatgpt-route`: `blocked-real-chatgpt`
+
+The historical decision text below is retained for the previous hard real-chain
+gate.
+
 The implementation and harness work are ready for real release evidence, but
 the final gate cannot pass until a run supplies:
 
@@ -138,4 +169,6 @@ the final gate cannot pass until a run supplies:
   execution result, failure/control stop behavior, WorkBuddy rejection, and
   cleanup.
 
-Final status remains `BLOCKED-ON-REAL-EVIDENCE`.
+Final status for the superseded hard real-browser gate remains
+`BLOCKED-ON-REAL-EVIDENCE`. Final status for the default deterministic gate is
+`PASS-DETERMINISTIC-EVIDENCE`.

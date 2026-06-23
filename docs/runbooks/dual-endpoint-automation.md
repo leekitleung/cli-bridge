@@ -4,6 +4,24 @@ This runbook verifies ADR-0024 dual-endpoint automation evidence. The harness is
 release evidence tooling only. It does not grant the extension endpoint
 selection, proposal edit, proposal confirmation, or execution dispatch authority.
 
+## Evidence Gate Model
+
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md` defines the default closeout gate
+as two layers:
+
+- Layer 1 deterministic release evidence is blocking: typecheck, build, focused
+  harness tests, source-boundary scans, deterministic scenario evidence,
+  sanitizer checks, fail-closed behavior, WorkBuddy non-execution, and cleanup.
+- Layer 2 real browser evidence is environment evidence by default: logged-in
+  ChatGPT profile/CDP runs and manual `/console/goals` confirmation remain
+  valuable, but login expiry, CDP unavailability, ChatGPT navigation failure,
+  or human confirmation timeout are `ENV-BLOCKED` unless a release explicitly
+  promotes real ChatGPT Web evidence to a hard gate.
+
+Do not compensate for a Layer 2 environment block by changing product code,
+harness code, dependencies, selectors, or confirmation behavior inside an
+evidence-capture batch.
+
 ## Prerequisites
 
 - `npm install` has completed.
@@ -93,13 +111,14 @@ Register endpoint identities before running real evidence:
 
 ## Commands
 
-Run all scenarios:
+Run all scenarios as Layer 2 real browser environment evidence:
 
 ```bash
 npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-command --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile
 ```
 
-Dry-run the evidence writer and scenario contract:
+Dry-run the evidence writer and scenario contract as deterministic Layer 1
+coverage:
 
 ```bash
 npm run dual-endpoint:e2e -- --scenario all --reasoning-cli codex-command --execution-cli codex-medium --profile-dir output/playwright/stage-b-cft-open-profile --dry-run

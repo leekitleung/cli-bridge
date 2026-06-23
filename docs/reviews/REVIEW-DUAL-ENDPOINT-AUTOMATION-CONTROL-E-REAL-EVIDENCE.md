@@ -129,3 +129,21 @@ commits over history rewrite (no `reset --hard`, no force-push).
 
 None to code or git. This review record is the only artifact written. Gate
 held at BLOCKED.
+
+## Supersession Note — 2026-06-23
+
+This review remains the historical verdict for the original
+`EX-E-REAL-EVIDENCE` overreach. It is not a standing requirement that every
+default closeout must pass a logged-in ChatGPT browser run.
+
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md` supersedes the default hard
+browser-evidence gate with a two-layer model:
+
+- Layer 1 deterministic release evidence is blocking.
+- Layer 2 real browser / logged-in ChatGPT evidence is `ENV-BLOCKED` when the
+  browser, login, CDP, ChatGPT navigation, or human confirmation timing is
+  unavailable, unless the release explicitly promotes that layer to a hard gate.
+
+The anti-scope-creep rule from this review still stands: an evidence-capture
+batch must not fix code, change dependencies, add auto-confirm, or alter
+product/harness behavior to force a pass.

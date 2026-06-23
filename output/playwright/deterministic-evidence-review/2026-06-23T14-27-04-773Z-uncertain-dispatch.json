@@ -1,0 +1,40 @@
+{
+  "scenario": "uncertain-dispatch",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-uncertain-dispatch",
+  "proposalId": "dry-proposal-4ce71c2a",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-4ce71c2a",
+    "contentHash": "sha256:db42bee3b647112b076294784728c68567981e3132a88120a266843069b2c565",
+    "bindingHash": "sha256:112130c132105c3dc7557566b1df3345369e188f666e094abf24f7454976f2fd"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

@@ -1,0 +1,44 @@
+{
+  "scenario": "control-pause-cancel",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-control-pause-cancel",
+  "proposalId": "dry-proposal-aa39591e",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-aa39591e",
+    "contentHash": "sha256:d3fb8041046efc6aba1542a617f90bdd94af2ed5215982ecd3e77f2540f43662",
+    "bindingHash": "sha256:072b1e4be66c91117d8bcde697ba9237ebb101372991dcee22a110082639f9a0"
+  },
+  "controlResult": {
+    "pauseStatus": "paused",
+    "cancelStatus": "cancelled"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

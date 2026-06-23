@@ -1,0 +1,40 @@
+{
+  "scenario": "failure-timeout",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-failure-timeout",
+  "proposalId": "dry-proposal-eb533f72",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-eb533f72",
+    "contentHash": "sha256:b0c6ce86fda188104c0d17d873af875c265192f2e647ec29c90f003710ba783c",
+    "bindingHash": "sha256:9fc2e2682f64ff5a80f38c3ed6997c3c1274a9c259304ddd12093783e227a795"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

@@ -1,0 +1,40 @@
+{
+  "scenario": "cli-route",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-cli-route",
+  "proposalId": "dry-proposal-d57641f8",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-d57641f8",
+    "contentHash": "sha256:2f21058457bda7db3afbb51e747352157b79376b9a4100c6dc86b45989408141",
+    "bindingHash": "sha256:802331179ce48731a92fcf00eb51c8e5d6c42c442064a6afb5852a928a02825c"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

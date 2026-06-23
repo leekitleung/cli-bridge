@@ -1,0 +1,40 @@
+{
+  "scenario": "workbuddy-boundary",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-workbuddy-boundary",
+  "proposalId": "dry-proposal-6fe7f4c9",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-6fe7f4c9",
+    "contentHash": "sha256:16fbebea38b672b2616fb6375c1b8ce3eefceef3a0e9dda5d05cde8afe1afd7e",
+    "bindingHash": "sha256:669a7f388d4f42f9a281de3a447778e7ad712363c377f6ad8b14389a4814647f"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

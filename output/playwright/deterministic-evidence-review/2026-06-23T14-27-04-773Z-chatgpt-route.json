@@ -1,0 +1,40 @@
+{
+  "scenario": "chatgpt-route",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-chatgpt-route",
+  "proposalId": "dry-proposal-3508dbda",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "chatgpt-web",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-3508dbda",
+    "contentHash": "sha256:4bb117393e86cb9910a74a193da277f29115061e2738e763402dbded9deab4ca",
+    "bindingHash": "sha256:8d96590027df9083306a45cb593ae9506783be86b0b8935ac33f515ff56af6c4"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}

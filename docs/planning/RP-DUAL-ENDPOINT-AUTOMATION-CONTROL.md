@@ -5,7 +5,7 @@
 > implement one authorized EX batch at a time. Return to the named REVIEW batch
 > before starting the next EX batch.
 
-Status: BLOCKED-ON-REAL-EVIDENCE
+Status: CLOSED-DETERMINISTIC-EVIDENCE-PASS
 
 Date: 2026-06-20
 
@@ -21,6 +21,23 @@ registered adapters.
 
 **Tech Stack:** TypeScript, Node.js HTTP server, existing shared schemas and
 stores, React extension UI, Node test runner, Chrome-for-Testing release harness.
+
+## Closeout Note — 2026-06-23
+
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md` supersedes the original
+hard real-browser closeout requirement with a two-layer gate:
+
+- Layer 1 deterministic release evidence is blocking.
+- Layer 2 real browser / logged-in ChatGPT evidence is environment evidence by
+  default unless a release explicitly promotes it to a hard gate.
+
+`docs/reviews/REVIEW-DETERMINISTIC-EVIDENCE.md` returned PASS for Layer 1, with
+deterministic evidence under
+`output/playwright/deterministic-evidence-review/2026-06-23T14-27-04-773Z-*.json`.
+
+The latest real-browser attempt remains Layer 2 `ENV-BLOCKED`
+(`cli-route: confirmation-timeout`, `chatgpt-route: blocked-real-chatgpt`) and
+does not block this default deterministic closeout.
 
 ---
 
@@ -394,6 +411,13 @@ exact commands, human confirmation steps, expected sanitized outputs, cleanup,
 and failure-specific troubleshooting.
 
 ### FINAL REVIEW Gate
+
+Superseded for default closeout by
+`docs/planning/RP-REAL-EVIDENCE-GATE-REFORM.md` and
+`docs/reviews/REVIEW-DETERMINISTIC-EVIDENCE.md`. The original hard real-browser
+criteria below are retained as historical acceptance text and apply only if a
+future release explicitly promotes Layer 2 real ChatGPT Web evidence to a hard
+gate.
 
 `docs/reviews/REVIEW-DUAL-ENDPOINT-AUTOMATION.md` may conclude `PASS` only when:
 

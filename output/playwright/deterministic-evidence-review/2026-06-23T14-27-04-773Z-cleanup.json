@@ -1,0 +1,40 @@
+{
+  "scenario": "cleanup",
+  "timestamp": "2026-06-23T14-27-04-773Z",
+  "ok": true,
+  "evidenceStatus": "passed",
+  "git": {
+    "commit": "77d5166",
+    "dirty": true
+  },
+  "planId": "dry-plan-cleanup",
+  "proposalId": "dry-proposal-86fd93ed",
+  "endpointBindings": [
+    {
+      "reasoningEndpointId": "codex-command",
+      "reasoningRole": "planner-reviewer",
+      "reasoningTier": "high",
+      "executionEndpointId": "codex-medium",
+      "executionRole": "bounded-executor",
+      "executionTier": "low-or-medium",
+      "locked": true
+    }
+  ],
+  "transitionSequence": [
+    "binding-created",
+    "binding-locked",
+    "artifact-recorded",
+    "proposal-awaiting-confirmation",
+    "operator-confirmed",
+    "dispatch-started",
+    "result-correlated"
+  ],
+  "confirmationIdentity": {
+    "proposalId": "dry-proposal-86fd93ed",
+    "contentHash": "sha256:2737e5fd0516c9ee06f1b6886dac1abe3f1e7d1839e6865538a72d38d3ff200f",
+    "bindingHash": "sha256:7d0165297660fd70f50ca7ca5c206e7013abadc29a1d9b2be4028e81fbbae747"
+  },
+  "failureClassification": "none",
+  "processExitClassification": "not-run",
+  "screenshotPaths": []
+}
