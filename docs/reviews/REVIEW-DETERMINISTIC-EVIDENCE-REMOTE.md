@@ -1,6 +1,6 @@
 # REVIEW-DETERMINISTIC-EVIDENCE-REMOTE
 
-Verdict: BLOCKED-ON-CI-TEST
+Verdict: PASS
 
 Date: 2026-06-24
 
@@ -13,6 +13,9 @@ Spec:
 
 ## Summary
 
+Update after `EX-CI-STABLE-WEB-AUTO-ERROR-MESSAGE`: remote review gate now
+passes on commit `6ae70a0b5edb26bc0a62816c6d30676236b1f90d`.
+
 The deterministic closeout commit was pushed successfully and remote HEAD now
 matches local HEAD. The remote review gate is blocked only by CI failing in
 `npm test`. The failure is locally reproducible as the same stale assertion
@@ -22,7 +25,7 @@ No remote diff, push, or HEAD mismatch remains.
 
 ## Remote State
 
-- Commit: `0027c1da1c13684fabadec1f52274680a084317a`
+- Commit: `6ae70a0b5edb26bc0a62816c6d30676236b1f90d`
 - Branch: `main`
 - Upstream: `origin/main`
 - Remote matches local: yes
@@ -36,6 +39,25 @@ Push result:
 ```
 
 ## Remote Gate
+
+Latest `npm run remote-review-gate` result:
+
+```text
+verdict: pass
+failures: []
+warnings: pr-unavailable
+ci: pass
+remoteDiffScope: none
+```
+
+Latest CI:
+
+- Workflow: `CI`
+- Run id: `28057033280`
+- URL: `https://github.com/leekitleung/cli-bridge/actions/runs/28057033280`
+- Conclusion: `success`
+
+### Prior blocked run
 
 `npm run remote-review-gate` result:
 
@@ -102,23 +124,16 @@ diff issue.
 
 ## Verdict
 
-Remote publication of the deterministic closeout is complete, but remote
-acceptance is blocked by the CI `npm test` failure above.
+Remote publication and remote acceptance of the deterministic closeout are
+complete.
 
-Next authorized batch should be a narrow follow-up:
+The prior CI failure was closed by the narrow follow-up:
 
 ```text
 EX-CI-STABLE-WEB-AUTO-ERROR-MESSAGE
 ```
 
-Scope:
-
-- Update the stale assertion in `tests/web-auto-release-e2e.test.mjs` to accept
-  the current `connect-active-chrome` wording.
-- Do not change harness behavior, product code, browser automation, extension
-  DOM behavior, dependencies, or release-gate semantics.
-
-Required verification for that batch:
+Verification for that follow-up:
 
 ```bash
 node --experimental-strip-types --test tests/web-auto-release-e2e.test.mjs
@@ -126,3 +141,7 @@ npm test
 npm run remote-review-gate
 git diff --check
 ```
+
+All required remote gates pass except PR lookup, which remains unavailable
+because local `gh` is not authenticated. That is a warning, not a release
+blocker.
