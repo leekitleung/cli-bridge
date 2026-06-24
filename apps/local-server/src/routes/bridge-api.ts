@@ -2272,11 +2272,11 @@ export async function handleBridgeRequest(
   }
 
   if (pathname === BRIDGE_LOOPS_PATH && method === 'GET') {
-    return ok({ loops: runtime.webRelayLoopStore.list() });
+    return ok({ loops: runtime.webRelayLoopStore.createAcceptanceReport().loops });
   }
 
   if (pathname === BRIDGE_LOOPS_REPORT_PATH && method === 'GET') {
-    return ok({ loopReport: runtime.webRelayLoopStore.report() });
+    return ok({ loopReport: runtime.webRelayLoopStore.createAcceptanceReport() });
   }
 
   if (pathname === BRIDGE_LOOPS_PATH && method === 'POST') {

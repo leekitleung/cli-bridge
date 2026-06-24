@@ -436,6 +436,31 @@ export async function selectCliBridgeExtensionId(workers: any[]): Promise<string
   return undefined;
 }
 
+export function selectCliBridgeExtensionIdFromTargets(targetInfos: any[]): string | undefined {
+  for (const target of targetInfos ?? []) {
+    const targetUrl = String(target.url ?? '');
+    const targetTitle = String(target.title ?? '');
+    if (!targetUrl.startsWith('chrome-extension://')) continue;
+    if (targetTitle === 'chrome-error://chromewebdata/') continue;
+    try {
+      const extensionId = new URL(targetUrl).host;
+      if (target.type === 'service_worker' && targetTitle === 'CLI Bridge') {
+        return extensionId;
+      }
+      if (
+        target.type === 'page' &&
+        targetUrl.endsWith('/popup/index.html') &&
+        (targetTitle === 'CLI Bridge' || targetTitle === targetUrl)
+      ) {
+        return extensionId;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 export async function discoverExtensionId(context: any): Promise<string> {
   let workers = context.serviceWorkers();
   if (workers.length === 0) {
@@ -460,17 +485,8 @@ export async function discoverExtensionId(context: any): Promise<string> {
       const cdpSession = await browser.newBrowserCDPSession();
       try {
         const { targetInfos } = await cdpSession.send('Target.getTargets');
-        for (const target of targetInfos ?? []) {
-          if (target.type !== 'service_worker') continue;
-          if (!String(target.url).startsWith('chrome-extension://')) continue;
-          // The service worker target title reflects the extension name.
-          if (target.title !== 'CLI Bridge') continue;
-          try {
-            return new URL(target.url).host;
-          } catch {
-            continue;
-          }
-        }
+        const extensionIdFromTargets = selectCliBridgeExtensionIdFromTargets(targetInfos);
+        if (extensionIdFromTargets) return extensionIdFromTargets;
       } finally {
         await cdpSession.detach();
       }

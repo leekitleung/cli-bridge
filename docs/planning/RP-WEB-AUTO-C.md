@@ -156,8 +156,10 @@ Required verification:
 - deterministic tests for max rounds, hard max 10, per-round timeout, total
   deadline, pause, cancel, repeated content, no progress, idempotent duplicate
   return, changed duplicate conflict, restart uncertainty, and race prevention.
-- controlled logged-in Chrome-for-Testing E2E that completes at least two
-  rounds and proves the hard stop.
+- controlled logged-in ordinary-browser validation that completes at least two
+  rounds and proves the hard stop. Chrome-for-Testing or Playwright-owned
+  browser evidence is supplemental and should not replace ordinary-browser
+  product validation.
 
 ## REVIEW-WEB-AUTO-C Gate
 
@@ -166,7 +168,8 @@ Review must inspect:
 - real diff and call chains;
 - loop state transitions and storage hydration;
 - tests and runtime evidence;
-- Chrome E2E multi-round evidence;
+- ordinary-browser multi-round evidence, with Chrome-for-Testing/Playwright
+  evidence treated as supplemental release evidence;
 - historical boundary checklist from Stage A/B:
   - no endpoint id in extension-owned active relay session;
   - no extension routing decision;
@@ -175,5 +178,8 @@ Review must inspect:
   - no shell/run/workspace/Git/MCP authority;
   - no automatic replay after uncertain submission.
 
-Stage C passes only if all required verification is green and the real Chrome
-E2E proves bounded multi-round behavior plus hard-stop enforcement.
+Stage C passes only if all required verification is green and the real ordinary
+browser path proves bounded multi-round behavior plus hard-stop enforcement.
+Login, Cloudflare, account interstitial, or human-verification failures are
+environment blockers; they must be recorded honestly and must not be bypassed by
+expanding extension authority.

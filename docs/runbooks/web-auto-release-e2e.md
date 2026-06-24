@@ -3,26 +3,34 @@
 ## Purpose
 
 Use `scripts/web-auto-release-e2e.ts` to reproduce the accepted ChatGPT Web
-automation release evidence from a logged-in Chrome-for-Testing profile.
+automation release evidence from a logged-in browser.
 
 This is local evidence tooling only. It does not add product authority and does
 not grant shell, workspace write, Git, MCP, PR, merge, or deployment access to
 the browser extension.
 
+The primary development and product-validation path is the operator's ordinary
+browser, already logged in to ChatGPT, with CLI Bridge loaded as the real
+extension. Chrome-for-Testing and Playwright-owned profiles remain supplemental
+release evidence tools, not product requirements.
+
 ## Prerequisites
 
 - Node/npm are installed.
 - The repository dependencies are installed.
-- A Chrome-for-Testing binary is available. The harness defaults to the local
-  Playwright cache when present.
-- `--profile-dir` points to a Chrome-for-Testing profile already logged in to
-  ChatGPT.
+- For the primary path, an ordinary Chrome-compatible browser is already open
+  with remote debugging enabled, logged in to ChatGPT, and has
+  `apps/extension/dist` loaded.
+- For supplemental Chrome-for-Testing evidence, a Chrome-for-Testing binary is
+  available. The harness defaults to the local Playwright cache when present,
+  and `--profile-dir` points to a profile already logged in to ChatGPT.
 - No other process is bound to the chosen `--base-port` or
   `--remote-debugging-port`.
 
-The harness builds `apps/extension/dist`, launches Chrome-for-Testing with the
-unpacked extension, starts the local server, injects the pairing token into
-extension session storage, and never prints the token.
+The harness builds `apps/extension/dist`, connects to an operator-owned browser
+or launches Chrome-for-Testing with the unpacked extension, starts the local
+server, injects the pairing token into extension session storage, and never
+prints the token.
 
 ## Commands
 
@@ -32,16 +40,16 @@ Dry-run argument and local preflight check:
 npm run web-auto:e2e -- --dry-run --scenario all --profile-dir output/playwright/stage-b-cft-open-profile
 ```
 
-Run both release scenarios:
-
-```bash
-npm run web-auto:e2e -- --scenario all --profile-dir output/playwright/stage-b-cft-open-profile
-```
-
-Run against an already-open Chrome or Chrome-for-Testing instance with CDP enabled:
+Run both release scenarios against the ordinary browser primary path:
 
 ```bash
 npm run web-auto:e2e -- --scenario all --connect-cdp http://127.0.0.1:9224
+```
+
+Supplemental Chrome-for-Testing run:
+
+```bash
+npm run web-auto:e2e -- --scenario all --profile-dir output/playwright/stage-b-cft-open-profile
 ```
 
 The connected browser must already be logged in to ChatGPT and must already have
@@ -152,8 +160,10 @@ The harness writes sanitized failure JSON for common failures:
 
 ## Troubleshooting
 
-If the harness reports `not-logged-in`, open the supplied profile manually in
-Chrome-for-Testing and sign in to ChatGPT, then rerun.
+If the harness reports `not-logged-in`, use the ordinary browser window to sign
+in to ChatGPT, then rerun against the same CDP endpoint. For supplemental
+Chrome-for-Testing evidence, open the supplied profile manually and sign in to
+ChatGPT before rerunning.
 
 If it reports `extension-id-missing`, run `npm run build-extension` and confirm
 `apps/extension/dist/manifest.json` exists. For `--connect-cdp`, also open
@@ -174,3 +184,17 @@ lsof -nP -iTCP:<base-port> -sTCP:LISTEN
 
 By default a successful run should leave no local server and no harness-owned
 Chrome-for-Testing process running.
+
+## Browser Validation Policy
+
+Ordinary browser validation is the default for development, debugging, and
+product-readiness checks. This matches the shipped product path: users install
+the extension in their normal browser, keep their existing ChatGPT login, pair
+with the local server, and use the page directly.
+
+Chrome-for-Testing and Playwright-controlled browser sessions are supplemental.
+They are useful for repeatable screenshots and JSON evidence, but login,
+Cloudflare, account interstitials, and human verification failures are
+environment blockers, not code failures. Deterministic gates remain mandatory
+for server policy, loop state machines, route behavior, extension authority
+boundaries, and builds.

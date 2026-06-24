@@ -35,6 +35,38 @@ export interface AdvanceWebRelayLoopInput {
   now?: number;
 }
 
+export interface WebRelayLoopReport {
+  generatedAt: number;
+  loops: {
+    id: string;
+    projectId: string;
+    goalId: string;
+    sessionId: string;
+    endpointId: string;
+    status: WebRelayLoop['status'];
+    round: number;
+    maxRounds: number;
+    perRoundTimeoutMs: number;
+    totalDeadlineAt: number;
+    noProgressLimit: number;
+    noProgressCount: number;
+    createdAt: number;
+    updatedAt: number;
+    pausedAt?: number;
+    cancelledAt?: number;
+    doneAt?: number;
+    failedAt?: number;
+    failureReason?: string;
+    evidence: {
+      type: string;
+      at: number;
+      reason?: string;
+      round?: number;
+      outboundPromptId?: string;
+    }[];
+  }[];
+}
+
 function cloneLoop(loop: WebRelayLoop): WebRelayLoop {
   return structuredClone(loop);
 }
@@ -299,6 +331,40 @@ export class InMemoryWebRelayLoopStore {
     return {
       generatedAt: now,
       loops: this.list(),
+    };
+  }
+
+  createAcceptanceReport(now: number = Date.now()): WebRelayLoopReport {
+    return {
+      generatedAt: now,
+      loops: Array.from(this.loops.values()).map((loop) => ({
+        id: loop.id,
+        projectId: loop.projectId,
+        goalId: loop.goalId,
+        sessionId: loop.sessionId,
+        endpointId: loop.endpointId,
+        status: loop.status,
+        round: loop.round,
+        maxRounds: loop.maxRounds,
+        perRoundTimeoutMs: loop.perRoundTimeoutMs,
+        totalDeadlineAt: loop.totalDeadlineAt,
+        noProgressLimit: loop.noProgressLimit,
+        noProgressCount: loop.noProgressCount,
+        createdAt: loop.createdAt,
+        updatedAt: loop.updatedAt,
+        ...(typeof loop.pausedAt === 'number' ? { pausedAt: loop.pausedAt } : {}),
+        ...(typeof loop.cancelledAt === 'number' ? { cancelledAt: loop.cancelledAt } : {}),
+        ...(typeof loop.doneAt === 'number' ? { doneAt: loop.doneAt } : {}),
+        ...(typeof loop.failedAt === 'number' ? { failedAt: loop.failedAt } : {}),
+        ...(loop.failureReason ? { failureReason: loop.failureReason } : {}),
+        evidence: loop.evidence.map((event) => ({
+          type: event.type,
+          at: event.at,
+          ...(event.reason ? { reason: event.reason } : {}),
+          ...(typeof event.round === 'number' ? { round: event.round } : {}),
+          ...(event.outboundPromptId ? { outboundPromptId: event.outboundPromptId } : {}),
+        })),
+      })),
     };
   }
 }

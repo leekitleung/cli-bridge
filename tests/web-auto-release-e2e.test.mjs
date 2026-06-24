@@ -11,6 +11,7 @@ import {
   hasChatGptComposerForHarness,
   parseArgs,
   selectCliBridgeExtensionId,
+  selectCliBridgeExtensionIdFromTargets,
   sanitizeEvidence,
 } from '../scripts/web-auto-release-e2e.ts';
 
@@ -71,6 +72,35 @@ test('web auto release harness selects CLI Bridge from multiple extension worker
   ];
 
   assert.equal(await selectCliBridgeExtensionId(workers), 'cli-bridge');
+});
+
+test('web auto release harness selects CLI Bridge from CDP popup targets', () => {
+  const targets = [
+    {
+      type: 'background_page',
+      title: 'Google Hangouts',
+      url: 'chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/background.html',
+    },
+    {
+      type: 'page',
+      title: 'chrome-extension://cli-bridge/popup/index.html',
+      url: 'chrome-extension://cli-bridge/popup/index.html',
+    },
+  ];
+
+  assert.equal(selectCliBridgeExtensionIdFromTargets(targets), 'cli-bridge');
+});
+
+test('web auto release harness ignores failed extension popup targets', () => {
+  const targets = [
+    {
+      type: 'page',
+      title: 'chrome-error://chromewebdata/',
+      url: 'chrome-extension://missing-extension/popup/index.html',
+    },
+  ];
+
+  assert.equal(selectCliBridgeExtensionIdFromTargets(targets), undefined);
 });
 
 test('web auto release harness configures the server-owned inbound route', async () => {

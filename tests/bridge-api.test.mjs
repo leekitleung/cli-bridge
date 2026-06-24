@@ -397,6 +397,63 @@ test('bridge Stage C loop route rejects maxRounds beyond hard cap', async (t) =>
   assert.match((await create.json()).message, /hard maximum/);
 });
 
+test('bridge Stage C loop report is sanitized and default bounded', async (t) => {
+  const handle = await startLocalServer(0);
+  t.after(closer(handle));
+
+  const secretPrompt = 'round one with OPENAI=sk-abcdefghijklmnopqrstuvwxyz123456';
+  const create = await fetch(`${handle.url}/bridge/loops`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      projectId: 'cli-bridge',
+      goalId: 'goal-stage-c-sanitized',
+      sessionId: 'loop-http-sanitized',
+      initialPrompt: secretPrompt,
+    }),
+  });
+  assert.equal(create.status, 201);
+  const created = await create.json();
+  assert.equal(created.loop.maxRounds, 3);
+  assert.equal(JSON.stringify(created).includes('sk-abcdefghijklmnopqrstuvwxyz123456'), false);
+
+  const earlyAdvance = await fetch(`${handle.url}/bridge/loops/advance`, {
+    method: 'POST',
+    headers: authHeaders(handle),
+    body: JSON.stringify({
+      loopId: created.loop.id,
+      inboundContent: 'reply before current outbound returns',
+      nextPrompt: 'must not be created',
+    }),
+  });
+  assert.equal(earlyAdvance.status, 409);
+  const earlyBody = await earlyAdvance.json();
+  assert.match(earlyBody.message, /has not returned/);
+
+  const report = await fetch(`${handle.url}/bridge/loops/report`, { headers: authHeaders(handle) });
+  assert.equal(report.status, 200);
+  const body = await report.json();
+  assert.equal(body.loopReport.loops.length, 1);
+  const loop = body.loopReport.loops[0];
+  assert.equal(loop.id, created.loop.id);
+  assert.equal(loop.maxRounds, 3);
+  assert.equal(Array.isArray(loop.evidence), true);
+  assert.equal('currentOutboundPromptId' in loop, false);
+  assert.equal('seenContentHashes' in loop, false);
+  assert.equal('lastProgressHash' in loop, false);
+  assert.equal(JSON.stringify(body).includes('sk-abcdefghijklmnopqrstuvwxyz123456'), false);
+
+  const list = await fetch(`${handle.url}/bridge/loops`, { headers: authHeaders(handle) });
+  assert.equal(list.status, 200);
+  const listBody = await list.json();
+  assert.equal(listBody.loops.length, 1);
+  assert.equal(listBody.loops[0].id, created.loop.id);
+  assert.equal('currentOutboundPromptId' in listBody.loops[0], false);
+  assert.equal('seenContentHashes' in listBody.loops[0], false);
+  assert.equal('lastProgressHash' in listBody.loops[0], false);
+  assert.equal(JSON.stringify(listBody).includes('sk-abcdefghijklmnopqrstuvwxyz123456'), false);
+});
+
 test('bridge does not expose any shell-style endpoint', async (t) => {
   const handle = await startLocalServer(0);
   t.after(closer(handle));
