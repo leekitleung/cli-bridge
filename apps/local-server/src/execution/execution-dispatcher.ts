@@ -100,6 +100,17 @@ export async function dispatchExecutionProposal(
     };
   }
 
+  // Plan step target check — fail-closed defense for all paths, including
+  // WorkBuddy. Protects against hydrated/stale/corrupt proposal data.
+  const step = input.plan.steps.find(item => item.id === proposal.stepId);
+  if (!step || step.targetEndpointId !== proposal.executionEndpointId) {
+    return {
+      ok: false,
+      failureReason: 'proposal-step-mismatch',
+      proposal: input.store.pause(proposal.id, 'proposal-step-mismatch', now),
+    };
+  }
+
   // WorkBuddy execution path: enqueue to inbox instead of running a CLI command.
   // WorkBuddy pulls tasks via GET /bridge/endpoints/:id/inbox/next and returns
   // structured results via POST /bridge/endpoints/:id/results.
@@ -140,14 +151,6 @@ export async function dispatchExecutionProposal(
       ok: false,
       failureReason: invocationFailure,
       proposal: input.store.pause(proposal.id, invocationFailure, now),
-    };
-  }
-  const step = input.plan.steps.find(item => item.id === proposal.stepId);
-  if (!step || step.targetEndpointId !== proposal.executionEndpointId) {
-    return {
-      ok: false,
-      failureReason: 'proposal-step-mismatch',
-      proposal: input.store.pause(proposal.id, 'proposal-step-mismatch', now),
     };
   }
 

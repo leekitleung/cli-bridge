@@ -3055,6 +3055,17 @@ export async function handleBridgeRequest(
       durationMs: typeof body.durationMs === 'number' ? body.durationMs : 0,
     });
     if (!result) return error(409, 'Task not found or not claimed');
+    // Update ExecutionProposal lifecycle: dispatching → returned/failed.
+    if (result.ok) {
+      runtime.executionProposalStore.markReturned(task.proposalId, {
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+        exitCode: result.exitCode ?? null,
+      }, Date.now());
+    } else {
+      runtime.executionProposalStore.markFailed(task.proposalId,
+        result.failureReason ?? 'workbuddy-execution-failed', Date.now());
+    }
     return ok({ result });
   }
 
@@ -4109,6 +4120,8 @@ export async function handleBridgeRequest(
       binding,
       plan,
       providerCapability,
+      workbuddyAdapter: runtime.workbuddyExecution,
+      workingDirectory: process.cwd(),
       ...(runtime.commandRunOptions ?? {}),
     });
     runtime.persist();

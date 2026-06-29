@@ -506,7 +506,7 @@ test('dispatch rejects WorkBuddy without adapter and validates arbitrary command
         capabilities: { canExecute: true },
       },
     }),
-    plan: samplePlan(),
+    plan: samplePlan({ targetEndpointId: 'workbuddy' }),
     providerCapability: KNOWN_PROVIDER_CAPABILITIES.workbuddy,
     now: 1793000000006,
   });
