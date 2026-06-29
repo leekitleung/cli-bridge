@@ -803,10 +803,74 @@ export function validateAgentEndpoint(value: unknown): SchemaValidationResult {
     errors.push('experimental must be a boolean');
   }
 
+  if (value.projectRef !== undefined && typeof value.projectRef !== 'string') {
+    errors.push('projectRef must be a string when present');
+  }
+
+  if (value.status !== undefined) {
+    const validStatuses = ['online', 'offline', 'busy'] as const;
+    if (!isOneOf(value.status, validStatuses)) {
+      errors.push('status must be online, offline, or busy');
+    }
+  }
+
+  if (value.lastSeenAt !== undefined && typeof value.lastSeenAt !== 'number') {
+    errors.push('lastSeenAt must be a number');
+  }
+
   return {
     ok: errors.length === 0,
     errors,
   };
+}
+
+export function validateEndpointStatus(value: unknown): SchemaValidationResult {
+  const validStatuses = ['online', 'offline', 'busy'] as const;
+  if (typeof value !== 'string' || !isOneOf(value, validStatuses)) {
+    return { ok: false, errors: ['status must be online, offline, or busy'] };
+  }
+  return { ok: true, errors: [] };
+}
+
+/**
+ * Validate a registration request body. Stricter than validateAgentEndpoint:
+ * requires endpointId as a non-empty string. This is the gate for
+ * POST /bridge/endpoints/register.
+ */
+export function validateEndpointRegistration(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['endpoint registration must be an object'] };
+  }
+
+  if (typeof value.endpointId !== 'string' || value.endpointId.trim().length === 0) {
+    errors.push('endpointId must be a non-empty string');
+  }
+
+  if (typeof value.label !== 'string' || value.label.trim().length === 0) {
+    errors.push('label must be a non-empty string');
+  }
+
+  if (!isOneOf(value.transport, AGENT_ENDPOINT_TRANSPORTS)) {
+    errors.push('transport is invalid or unsupported');
+  }
+
+  if (!isRecord(value.capabilities)) {
+    errors.push('capabilities must be an object');
+  } else {
+    requireBoolean(value.capabilities, 'canAcceptPrompt', errors);
+    requireBoolean(value.capabilities, 'canReturnOutput', errors);
+    requireBoolean(value.capabilities, 'canReview', errors);
+    requireBoolean(value.capabilities, 'canExecute', errors);
+    requireBoolean(value.capabilities, 'canSummarize', errors);
+  }
+
+  if (value.projectRef !== undefined && typeof value.projectRef !== 'string') {
+    errors.push('projectRef must be a string when present');
+  }
+
+  return { ok: errors.length === 0, errors };
 }
 
 export function assertAgentEndpoint(value: unknown): asserts value is AgentEndpoint {

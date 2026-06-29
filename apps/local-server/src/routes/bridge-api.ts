@@ -16,6 +16,7 @@ import {
   CODEX_REVIEW_COMMAND_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_INBOUND_AGENT_ENDPOINT,
+  WORKBUDDY_EXECUTOR_ENDPOINT,
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
@@ -46,7 +47,7 @@ import type { GitStatusView, GithubChecksConfirmResult } from '../../../../packa
 import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
-import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts } from '../../../../packages/shared/src/schemas.ts';
+import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts, validateEndpointRegistration } from '../../../../packages/shared/src/schemas.ts';
 import { KNOWN_PROVIDER_CAPABILITIES, validateProviderCapability } from '../storage/provider-capability.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
@@ -1406,6 +1407,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
     CODEX_REVIEW_COMMAND_ENDPOINT,
     MOCK_INBOUND_AGENT_ENDPOINT,
+    WORKBUDDY_EXECUTOR_ENDPOINT,
     ...(options.additionalEndpoints ?? []),
   ]);
   const inboundRelayEndpointId = options.inboundRelayEndpointId;
@@ -2008,6 +2010,9 @@ export const BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH = '/bridge/execution-proposal
 export const BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH = '/bridge/execution-proposals/resume';
 export const BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH = '/bridge/execution-proposals/cancel';
 
+// v2.x Endpoint session registry (EX-1: registration, heartbeat, discovery, offline).
+export const BRIDGE_ENDPOINTS_PATH = '/bridge/endpoints';
+
 // v2.1 Read-only project observability endpoints.
 export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
 export const BRIDGE_PROJECT_AUDIT_SUFFIX = '/audit';
@@ -2051,6 +2056,26 @@ function matchProjectObservabilityPath(pathname: string): {
     }
   }
   return { matched: false };
+}
+
+/**
+ * Match `/bridge/endpoints/:id/(heartbeat|offline)`.
+ * Returns { matched: true, id, action } or { matched: false }.
+ */
+function matchEndpointAction(
+  pathname: string,
+  action: 'heartbeat' | 'offline',
+): { matched: true; id: string } | { matched: false } {
+  const prefix = `${BRIDGE_ENDPOINTS_PATH}/`;
+  const suffix = `/${action}`;
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
+  const raw = pathname.slice(prefix.length, -suffix.length);
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  let decoded: string | undefined;
+  try { decoded = decodeURIComponent(raw); } catch {
+    return { matched: true, id: '' };
+  }
+  return { matched: true, id: decoded.trim() };
 }
 
 export function isBridgePath(pathname: string): boolean {
@@ -2098,7 +2123,9 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH ||
     pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH ||
     pathname === BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH ||
-    pathname === BRIDGE_GOALS_PATH;
+    pathname === BRIDGE_GOALS_PATH ||
+    (typeof pathname === 'string' && pathname === BRIDGE_ENDPOINTS_PATH) ||
+    (typeof pathname === 'string' && pathname.startsWith(`${BRIDGE_ENDPOINTS_PATH}/`));
 }
 
 export async function handleBridgeRequest(
@@ -2829,6 +2856,75 @@ export async function handleBridgeRequest(
         pendingPromptStore: runtime.pendingPromptStore,
       }),
     });
+  }
+
+  // ── v2.x Endpoint Session Registry (EX-1) ──
+
+  // GET /bridge/endpoints — list all, or filter by ?projectRef=X or ?online=true
+  if (pathname === BRIDGE_ENDPOINTS_PATH && method === 'GET') {
+    const projectRef = query?.get('projectRef') ?? undefined;
+    const onlineOnly = query?.get('online') === 'true';
+    let endpoints: ReturnType<typeof runtime.endpointRegistry.list>;
+    if (projectRef) {
+      endpoints = runtime.endpointRegistry.listByProject(projectRef);
+    } else if (onlineOnly) {
+      endpoints = runtime.endpointRegistry.listOnline();
+    } else {
+      endpoints = runtime.endpointRegistry.list();
+    }
+    return ok({ endpoints });
+  }
+
+  // POST /bridge/endpoints/register
+  if (pathname === BRIDGE_ENDPOINTS_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const validation = validateEndpointRegistration(parsed.body);
+    if (!validation.ok) return error(400, `Invalid registration: ${validation.errors.join(', ')}`);
+    const body = parsed.body as Record<string, unknown>;
+    const endpoint = {
+      id: body.endpointId as string,
+      label: body.label as string,
+      transport: body.transport as string,
+      risk: (typeof body.risk === 'string' ? body.risk : 'medium') as AgentEndpoint['risk'],
+      capabilities: body.capabilities as AgentEndpoint['capabilities'],
+      projectRef: typeof body.projectRef === 'string' ? body.projectRef : undefined,
+      adapterName: typeof body.adapterName === 'string' ? body.adapterName : undefined,
+      experimental: typeof body.experimental === 'boolean' ? body.experimental : undefined,
+    } as AgentEndpoint;
+    const result = runtime.endpointRegistry.register(endpoint);
+    if (!result.ok) {
+      const status = result.failureReason === 'duplicate-endpoint-id' ? 409 : 400;
+      return error(status, result.failureReason ?? 'Registration failed');
+    }
+    runtime.persist();
+    return created({ endpoint: runtime.endpointRegistry.get(endpoint.id) });
+  }
+
+  // POST /bridge/endpoints/:id/heartbeat
+  const heartbeatMatch = matchEndpointAction(pathname, 'heartbeat');
+  if (heartbeatMatch.matched && method === 'POST') {
+    if (!heartbeatMatch.id) return error(400, 'Invalid endpoint id');
+    const result = runtime.endpointRegistry.heartbeat(heartbeatMatch.id);
+    if (!result.ok) {
+      const status = result.failureReason === 'endpoint-offline' ? 409
+        : result.failureReason === 'endpoint-not-found' ? 404 : 400;
+      return error(status, result.failureReason ?? 'Heartbeat failed');
+    }
+    return ok({ status: 'online', endpointId: heartbeatMatch.id });
+  }
+
+  // POST /bridge/endpoints/:id/offline
+  const offlineMatch = matchEndpointAction(pathname, 'offline');
+  if (offlineMatch.matched && method === 'POST') {
+    if (!offlineMatch.id) return error(400, 'Invalid endpoint id');
+    const result = runtime.endpointRegistry.offline(offlineMatch.id);
+    if (!result.ok) {
+      const status = result.failureReason === 'endpoint-already-offline' ? 409
+        : result.failureReason === 'endpoint-not-found' ? 404 : 400;
+      return error(status, result.failureReason ?? 'Offline failed');
+    }
+    return ok({ status: 'offline', endpointId: offlineMatch.id });
   }
 
   // ── Phase B Project aggregation and metadata/archive controls ──

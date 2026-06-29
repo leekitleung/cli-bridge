@@ -533,6 +533,8 @@ export const AGENT_ENDPOINT_TRANSPORTS = [
   'managed-pty',
   'file-protocol',
   'web-dom',
+  'terminal',
+  'workbuddy',
 ] as const;
 
 export const AGENT_ENDPOINT_RISKS = [
@@ -585,6 +587,28 @@ export type AgentEndpoint = {
   capabilities: AgentEndpointCapabilities;
   adapterName?: string;
   experimental?: boolean;
+  /** Project reference — scopes the endpoint to a specific project. */
+  projectRef?: string;
+  /** Runtime status — set by heartbeat/offline, not persisted long-term. */
+  status?: 'online' | 'offline' | 'busy';
+  /** Unix ms timestamp of last heartbeat or registration. */
+  lastSeenAt?: number;
+};
+
+/**
+ * Endpoint session registration — the runtime view of an endpoint instance.
+ * Distinct from AgentEndpoint (which is the static capability declaration).
+ * Session fields (status, lastSeenAt) are NOT persisted long-term; they are
+ * derived from the heartbeat loop at runtime.
+ */
+export type EndpointSession = {
+  endpointId: string;
+  label: string;
+  transport: AgentEndpointTransport;
+  capabilities: AgentEndpointCapabilities;
+  projectRef?: string;
+  status: 'online' | 'offline' | 'busy';
+  lastSeenAt: number;
 };
 
 // --- v2.0 Goal-driven controlled execution (ADR-0003) ---
