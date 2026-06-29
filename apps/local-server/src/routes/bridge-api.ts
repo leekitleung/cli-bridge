@@ -32,6 +32,7 @@ import {
 import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
+import { InMemoryProjectTeamPresetStore, validateProjectTeamPreset } from '../storage/project-team-preset-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { GithubTokenStore } from '../verification/github-token-store.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
@@ -150,6 +151,7 @@ export interface BridgeRuntime {
   // v2.2 WorkBuddy non-executing task system.
   workbuddyStore: InMemoryWorkBuddyStateStore;
   teamStore: InMemoryTeamSpecStore;
+  presetStore: InMemoryProjectTeamPresetStore;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
@@ -1442,6 +1444,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
 
   const workbuddyStore = new InMemoryWorkBuddyStateStore();
   const teamStore = new InMemoryTeamSpecStore();
+  const presetStore = new InMemoryProjectTeamPresetStore();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
@@ -1502,6 +1505,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const a of read.snapshot.teamArtifacts ?? []) {
         try { teamStore.hydrateArtifact(a); } catch { }
       }
+      for (const p of read.snapshot.teamPresets ?? []) {
+        try { presetStore.hydratePreset(p); } catch { }
+      }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
         try { verificationRunStore.add(r.projectKey, r); } catch { }
@@ -1537,6 +1543,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       workbuddyExecutionLedgerEvents: workbuddyStore.listExecutionLedgerEvents(),
       teams: teamStore.exportTeams(),
       teamArtifacts: teamStore.exportArtifacts(),
+      teamPresets: presetStore.exportPresets(),
     }));
     if (!result.ok) {
       persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
@@ -1572,6 +1579,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     commandRunOptions: options.commandRunOptions,
     workbuddyStore,
     teamStore,
+    presetStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
@@ -1779,7 +1787,7 @@ function projectDetailPathKey(pathname: string): string | undefined {
 
 function projectActionPathKey(
   pathname: string,
-  action: 'archive' | 'unarchive',
+  action: 'archive' | 'unarchive' | 'team-preset',
 ): { matched: true; key: string | undefined } | { matched: false } {
   const prefix = `${BRIDGE_PROJECTS_PATH}/`;
   const suffix = `/${action}`;
@@ -3075,6 +3083,65 @@ export async function handleBridgeRequest(
     const unarchived = runtime.projectStore.unarchive(key);
     runtime.persist();
     return ok({ project: unarchived });
+  }
+
+  // ── EX-2: Project Team Preset ──
+
+  const presetPath = projectActionPathKey(pathname, 'team-preset');
+  if (presetPath.matched) {
+    if (!presetPath.key) return error(400, 'Invalid project key');
+    const proj = runtime.projectStore.get(presetPath.key);
+    if (!proj) return error(404, 'Project not found');
+    if (proj.archivedAt && method !== 'GET') {
+      return error(409, 'Cannot modify team preset in archived project');
+    }
+
+    // GET /bridge/projects/:key/team-preset
+    if (method === 'GET') {
+      const preset = runtime.presetStore.get(presetPath.key);
+      return ok({ preset: preset ?? null });
+    }
+
+    // PUT /bridge/projects/:key/team-preset
+    if (method === 'PUT') {
+      const parsed = await readJsonBody(request);
+      if (!parsed.ok) return error(400, parsed.message);
+      const body = parsed.body as Record<string, unknown>;
+      // Validate required fields.
+      if (typeof body.plannerEndpointId !== 'string' || body.plannerEndpointId.trim().length === 0) {
+        return error(400, 'plannerEndpointId is required');
+      }
+      if (typeof body.executorEndpointId !== 'string' || body.executorEndpointId.trim().length === 0) {
+        return error(400, 'executorEndpointId is required');
+      }
+      // Validate endpoints are registered and online.
+      const onlineIds = new Set(runtime.endpointRegistry.listOnline().map(e => e.id));
+      const preset = {
+        projectId: presetPath.key,
+        plannerEndpointId: body.plannerEndpointId as string,
+        executorEndpointId: body.executorEndpointId as string,
+        verifierEndpointId: typeof body.verifierEndpointId === 'string' ? body.verifierEndpointId : undefined,
+        mode: 'sequential' as const,
+        isolation: 'patch-only' as const,
+        updatedAt: 0,
+      };
+      const validation = validateProjectTeamPreset(preset, onlineIds);
+      if (!validation.ok) {
+        return error(400, `Invalid preset: ${validation.errors.join(', ')}`);
+      }
+      const saved = runtime.presetStore.upsert(preset);
+      runtime.persist();
+      return ok({ preset: saved });
+    }
+
+    if (method === 'DELETE') {
+      const existed = runtime.presetStore.delete(presetPath.key);
+      if (!existed) return error(404, 'No team preset for this project');
+      runtime.persist();
+      return ok({ deleted: true });
+    }
+
+    return error(405, 'Method not allowed');
   }
 
   // ── v2.1 Read-only project observability (§timeline/audit/memory/verification) ──

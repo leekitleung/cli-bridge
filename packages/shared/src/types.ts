@@ -758,6 +758,21 @@ export interface RunEndpointBinding {
   lockedAt?: number;
 }
 
+/**
+ * Project-level default team preset. Saved per-project; affects NEW goals
+ * only — existing goals retain their own binding snapshots (immutable by
+ * preset changes). Changing the preset does NOT retroactively affect goals.
+ */
+export interface ProjectTeamPreset {
+  projectId: string;
+  plannerEndpointId: string;
+  executorEndpointId: string;
+  verifierEndpointId?: string;
+  mode: 'sequential';
+  isolation: 'patch-only';
+  updatedAt: number;
+}
+
 export const REASONING_ARTIFACT_KINDS = [
   'plan-draft',
   'review-result',

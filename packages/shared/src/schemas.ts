@@ -873,6 +873,40 @@ export function validateEndpointRegistration(value: unknown): SchemaValidationRe
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Validate a ProjectTeamPreset structure. Does NOT check endpoint online
+ * status — that validation lives in the route handler which has access to
+ * the endpoint registry.
+ */
+export function validateProjectTeamPresetSchema(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['preset must be an object'] };
+  }
+  const p = value as Record<string, unknown>;
+
+  if (typeof p.projectId !== 'string' || p.projectId.trim().length === 0) {
+    errors.push('projectId is required');
+  }
+  if (typeof p.plannerEndpointId !== 'string' || p.plannerEndpointId.trim().length === 0) {
+    errors.push('plannerEndpointId is required');
+  }
+  if (typeof p.executorEndpointId !== 'string' || p.executorEndpointId.trim().length === 0) {
+    errors.push('executorEndpointId is required');
+  }
+  if (p.verifierEndpointId !== undefined && (typeof p.verifierEndpointId !== 'string' || p.verifierEndpointId.trim().length === 0)) {
+    errors.push('verifierEndpointId must be a non-empty string when present');
+  }
+  if (p.mode !== 'sequential') {
+    errors.push('mode must be "sequential"');
+  }
+  if (p.isolation !== 'patch-only') {
+    errors.push('isolation must be "patch-only"');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
 export function assertAgentEndpoint(value: unknown): asserts value is AgentEndpoint {
   const result = validateAgentEndpoint(value);
   if (!result.ok) {

@@ -1950,6 +1950,120 @@ async function createProjectCommand(input, key) {
   setCommandStatus('project created');
 }
 
+// ── EX-2: Pair commands ──
+
+async function pairStatusCommand() {
+  if (!store.activeProjectKey) {
+    appendCommandMessage('pair status', 'No active project.', true);
+    setCommandStatus('no project', true);
+    return;
+  }
+  const path = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/team-preset';
+  const res = await api(path, 'GET');
+  if (!res.ok) {
+    appendCommandMessage('pair status', 'Failed to load team preset: ' + escapeHtml(res.status), true);
+    setCommandStatus('preset load failed', true);
+    return;
+  }
+  const preset = res.data?.preset;
+  if (!preset) {
+    appendCommandMessage('pair status', 'No default team preset for this project.' +
+      '<br>Use <span class="command-chip">pair planner X executor Y</span> to set one.');
+    setCommandStatus('no preset');
+    return;
+  }
+  const out = ['<span class="preset-label">Planner:</span> ' + escapeHtml(preset.plannerEndpointId ?? '—'),
+    '<span class="preset-label">Executor:</span> ' + escapeHtml(preset.executorEndpointId ?? '—')];
+  if (preset.verifierEndpointId) {
+    out.push('<span class="preset-label">Verifier:</span> ' + escapeHtml(preset.verifierEndpointId));
+  }
+  out.push('Mode: sequential / isolation: patch-only');
+  appendCommandMessage('pair status', out.join('<br>'));
+  setCommandStatus('preset shown');
+}
+
+async function pairResetCommand() {
+  if (!store.activeProjectKey) {
+    appendCommandMessage('pair reset', 'No active project.', true);
+    setCommandStatus('no project', true);
+    return;
+  }
+  const path = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/team-preset';
+  const res = await api(path, 'DELETE');
+  if (!res.ok && res.status !== 404) {
+    appendCommandMessage('pair reset', 'Failed: ' + escapeHtml(res.status), true);
+    setCommandStatus('preset delete failed', true);
+    return;
+  }
+  appendCommandMessage('pair reset', 'Default team preset removed. Existing goals unchanged.');
+  setCommandStatus('preset removed');
+}
+
+async function pairSetCommand(input) {
+  // Expected: pair planner <plannerId> executor <executorId> [verifier <verifierId>]
+  const raw = input.slice('pair planner '.length).trim();
+  // Parse: plannerId executor executorId [verifier verifierId]
+  const parts = raw.split(' ');
+  let plannerId = '';
+  let executorId = '';
+  let verifierId = '';
+  let i = 0;
+  while (i < parts.length) {
+    const tok = parts[i].toLowerCase();
+    if (tok === 'executor' && i + 1 < parts.length) {
+      executorId = parts[i + 1];
+      i += 2;
+    } else if (tok === 'verifier' && i + 1 < parts.length) {
+      verifierId = parts[i + 1];
+      i += 2;
+    } else if (i === 0) {
+      // first token before 'executor' keyword is the planner id
+      plannerId = parts[i];
+      i++;
+    } else {
+      i++;
+    }
+  }
+  if (!plannerId || !executorId) {
+    appendCommandMessage(input,
+      'Usage: <span class="command-chip">pair planner &lt;id&gt; executor &lt;id&gt; [verifier &lt;id&gt;]</span>',
+      true);
+    setCommandStatus('pair syntax error', true);
+    return;
+  }
+  if (!store.activeProjectKey) {
+    appendCommandMessage(input, 'No active project. Switch to a project first.', true);
+    setCommandStatus('no project', true);
+    return;
+  }
+  const path = '/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/team-preset';
+  const body = { plannerEndpointId: plannerId, executorEndpointId: executorId };
+  if (verifierId) body.verifierEndpointId = verifierId;
+  setCommandStatus('saving preset…');
+  const res = await api(path, 'PUT', body);
+  if (!res.ok) {
+    const msg = res.data?.message || res.data?.error || res.status;
+    appendCommandMessage(input, 'Pair failed: ' + escapeHtml(msg), true);
+    setCommandStatus('preset save failed', true);
+    return;
+  }
+  const preset = res.data?.preset;
+  const line = 'Default team: <code>' + escapeHtml(preset.plannerEndpointId) +
+    '</code> → <code>' + escapeHtml(preset.executorEndpointId) + '</code>';
+  appendCommandMessage(input, line);
+  setCommandStatus('preset saved');
+}
+
+function pairHelp() {
+  appendCommandMessage('pair', [
+    '<span class="command-chip">pair status</span> — show current team preset',
+    '<span class="command-chip">pair reset</span> — remove team preset',
+    '<span class="command-chip">pair planner &lt;id&gt; executor &lt;id&gt;</span> — set default team',
+    '<span class="command-chip">pair planner &lt;id&gt; executor &lt;id&gt; verifier &lt;id&gt;</span> — set with verifier',
+  ].join('<br>'));
+  setCommandStatus('pair help shown');
+}
+
 async function archiveProjectCommand(input, key, action) {
   if (!key) {
     appendCommandMessage(input, 'Usage: <span class="command-chip">project ' + escapeHtml(action) + ' &lt;key&gt;</span>', true);
@@ -2107,6 +2221,13 @@ async function handleCommand() {
   if (lc.startsWith('project rename ')) { await renameProjectCommand(input, input.slice('project rename '.length)); return; }
   if (lc.startsWith('apply view ')) { await applyViewCommand(input, input.slice('apply view '.length)); return; }
   if (lc.startsWith('apply preview ')) { await applyPreviewCommand(input, input.slice('apply preview '.length)); return; }
+
+  // ── EX-2: Pair commands (team preset) ──
+
+  if (lc === 'pair status') { await pairStatusCommand(); return; }
+  if (lc === 'pair reset') { await pairResetCommand(); return; }
+  if (lc.startsWith('pair planner ')) { await pairSetCommand(input); return; }
+  if (lc === 'pair' || lc === 'pair help') { pairHelp(); return; }
 
   if (lc.startsWith('switch project ')) {
     const key = input.slice('switch project '.length).trim();

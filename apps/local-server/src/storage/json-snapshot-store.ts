@@ -76,6 +76,7 @@ export interface BridgeSnapshot {
   workbuddyExecutionLedgerEvents: WorkBuddyExecutionLedgerEvent[];
   teams: TeamSpec[];
   teamArtifacts: SlotArtifact[];
+  teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
@@ -290,6 +291,7 @@ export interface BuildSnapshotInput {
   workbuddyExecutionLedgerEvents?: WorkBuddyExecutionLedgerEvent[];
   teams?: TeamSpec[];
   teamArtifacts?: SlotArtifact[];
+  teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
@@ -313,6 +315,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     workbuddyExecutionLedgerEvents: input.workbuddyExecutionLedgerEvents ?? [],
     teams: input.teams ?? [],
     teamArtifacts: input.teamArtifacts ?? [],
+    teamPresets: input.teamPresets ?? [],
     verificationRunRecords: input.verificationRunRecords ?? [],
   };
 }
