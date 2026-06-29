@@ -330,6 +330,45 @@ test('creating a goal passes active projectId', async () => {
   assert.equal(goalCreate.body.description, 'Build a new feature');
 });
 
+test('plain task text creates a project-scoped goal', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/goals', { ok: true, status: 201, payload: { goal: { id: 'new-goal', status: 'draft' } } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+
+  await runCommand(document, '修复中间层输入框，让普通对话自动创建任务');
+
+  const goalCreate = fetchCalls.find(c => c.path === '/bridge/goals' && c.method === 'POST');
+  assert.ok(goalCreate, 'plain task text must POST to /bridge/goals');
+  assert.equal(goalCreate.body.projectId, 'cli-bridge');
+  assert.equal(goalCreate.body.description, '修复中间层输入框，让普通对话自动创建任务');
+});
+
+test('short plain task text creates a project-scoped goal', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/goals', { ok: true, status: 201, payload: { goal: { id: 'new-goal', status: 'draft' } } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+
+  await runCommand(document, 'fix');
+
+  const goalCreate = fetchCalls.find(c => c.path === '/bridge/goals' && c.method === 'POST');
+  assert.ok(goalCreate, 'short plain task text must POST to /bridge/goals');
+  assert.equal(goalCreate.body.description, 'fix');
+});
+
 test('unknown command fails closed and does not create a goal', async () => {
   const { document, fetchCalls, setFixture } = setupConsole();
 
