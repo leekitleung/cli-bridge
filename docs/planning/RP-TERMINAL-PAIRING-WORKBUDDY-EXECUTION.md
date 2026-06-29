@@ -184,6 +184,10 @@ currently `false`; transitioning to `true` in EX-4):
 - `canVerify: true` — for verification roles in team presets
 - `canReturnOutput: true` — via structured inbox/result protocol
 - `transport: 'workbuddy'` — new transport type for pull-based execution
+- canonical endpoint id: `workbuddy` — the existing provider capability id,
+  command syntax, preset storage, binding snapshots, and UI must all use this id.
+  Do not introduce a parallel `workbuddy-executor` id unless a later ADR
+  explicitly migrates every provider/binding/UI reference together.
 
 This upgrade is **gated behind**:
 1. An endpoint registry that supports runtime registration/heartbeat/offline
@@ -337,7 +341,7 @@ boundaries, not "best effort."
 | ADR | Current statement | Change |
 |-----|-------------------|--------|
 | ADR-0003 §7 | WorkBuddy "MUST NOT trigger execution, MUST NOT bypass plan approval, MUST NOT become a controller" | Keep MUST NOT bypass/must-not-controller. Remove MUST NOT trigger execution — instead, WorkBuddy may execute *through the middle layer only*. Add: "WorkBuddy execution is mediated by the controlled execution layer (this ADR) and subject to all gates, confirmations, and audit." |
-| ADR-0024 §6 | "Current WorkBuddy identity remains non-executing. A future WorkBuddy execution route requires a separately registered endpoint identity..." | Now is that future. The separately registered endpoint identity is `workbuddy-executor`, registered through the endpoint registry with bounded adapter, capability evidence, focused tests. This ADR amendment is the explicit authorization. |
+| ADR-0024 §6 | "Current WorkBuddy identity remains non-executing. A future WorkBuddy execution route requires a separately registered endpoint identity..." | Now is that future. The separately registered endpoint identity is canonical endpoint id `workbuddy`, registered through the endpoint registry with bounded adapter, capability evidence, focused tests. This ADR amendment is the explicit authorization. |
 
 ### 4.2 New ADR
 
@@ -490,6 +494,10 @@ CLI_BRIDGE_DATA_DIR/
 
 ### 7.2 Fail-closed migration rules
 
+Endpoint session online state from EX-1 is runtime-only. Registered terminal
+sessions must re-register after server restart; stale `online`/`busy` state must
+not be written to or restored from durable storage.
+
 | Condition | Behavior |
 |-----------|----------|
 | Preset file missing | Server starts with empty preset store; no error |
@@ -500,10 +508,12 @@ CLI_BRIDGE_DATA_DIR/
 | Snapshot has duplicate `snapshotId` | Keep newest by `createdAt`; log duplicate |
 | Preset file corrupted (invalid JSON) | Skip the file, start with empty store, log warning |
 | Goal has snapshots but no preset | Normal — manual mode; no error |
+| Server restarts with previously registered endpoint sessions | Sessions are absent/offline until terminal re-registration |
 
 ### 7.3 Hydration order
 
-1. Load endpoints from registry (EX-1)
+1. Load built-in/static endpoints from registry (EX-1); runtime session endpoints
+   are not hydrated as online
 2. Load project team presets (EX-2)
 3. Load goal binding snapshots (EX-3)
 4. Validate cross-references (endpoint exists, goal exists, project exists)
@@ -717,9 +727,14 @@ routing, no execution — registry only.
 - Do NOT create new capability fields (`canReason`, `canVerify`). Existing
   `canReview`/`canSummarize`/`canExecute` are sufficient for EX-2 role selection.
 - Do NOT create provider-capability changes or WorkBuddy execution paths.
+- Do NOT allow externally registered endpoints to declare `canExecute: true`.
+  EX-1 session registration is discoverability-only; execution-capable runtime
+  registration is explicitly deferred to EX-4.
 - Do NOT add `pair` / `rebind` commands.
 - Do NOT touch `team-store.ts` or create `project-team-preset-store.ts`.
 - Do NOT add `/inbox`, `/results`, `/log` routes — those are EX-4.
+- Do NOT persist endpoint session `online`/`busy` state. Runtime endpoint
+  sessions must re-register after restart.
 
 ### 13.3 Implementation steps
 
@@ -742,6 +757,8 @@ In `packages/shared/src/schemas.ts`:
 - Add `validateEndpointTransport` function: must include `'terminal'` and `'workbuddy'` in valid set.
 - Add `validateEndpointRegistration` function: checks `endpointId`, `label`,
   `transport`, `capabilities`; rejects registration with unknown transport.
+  EX-1 must also reject any external registration whose capabilities include
+  `canExecute: true`.
 - Do NOT modify the WorkBuddy execution rejection on line 1117 — that's EX-4.
 
 **Step 3 — Add route constants**
@@ -754,7 +771,8 @@ In `packages/shared/src/constants.ts`:
 In `apps/local-server/src/endpoints/endpoint-registry.ts`:
 - Add `register(endpoint: AgentEndpoint): EndpointRegistryResult` — stores
   endpoint with `status: 'online'`, `lastSeenAt: Date.now()`. Rejects duplicate
-  `endpointId` unless re-registering (same id → update status to online).
+  `endpointId` with `duplicate-endpoint-id`. Reconnect/online recovery is handled
+  by `heartbeat`, not by duplicate `register`.
 - Add `heartbeat(endpointId: string): EndpointRegistryResult` — updates
   `lastSeenAt` to `Date.now()`, sets status to `online`. Returns error if
   endpoint not found or already `offline`.
@@ -762,17 +780,18 @@ In `apps/local-server/src/endpoints/endpoint-registry.ts`:
   sets status to `offline`, records reason in returned result.
 - Add `listOnline(): AgentEndpoint[]` — returns endpoints with `status === 'online'`.
 - Add `listByProject(projectRef: string): AgentEndpoint[]` — filters by `projectRef`.
-- Add `exportEndpoints()` / `hydrateEndpoint(endpoint: AgentEndpoint)` for
-  snapshot persistence (follow same pattern as `json-snapshot-store.ts`).
+- Do not add `exportEndpoints()` / `hydrateEndpoint()` in EX-1. Runtime endpoint
+  sessions are not durable; built-in/static endpoints are restored by
+  `createBridgeRuntime`, and terminal sessions re-register after restart.
 
 **Step 5 — Add mock endpoints**
 
 In `apps/local-server/src/endpoints/mock-endpoints.ts`:
-- Add `workbuddy-executor` endpoint definition:
+- Add `workbuddy` endpoint definition:
   ```ts
   {
-    id: 'workbuddy-executor',
-    label: 'WorkBuddy Executor',
+    id: 'workbuddy',
+    label: 'WorkBuddy',
     transport: 'workbuddy',
     risk: 'medium',
     capabilities: { canAcceptPrompt: true, canReturnOutput: true,
@@ -792,7 +811,9 @@ In `apps/local-server/src/endpoints/mock-endpoints.ts`:
 In `apps/local-server/src/routes/bridge-api.ts`:
 - `POST /bridge/endpoints/register` — body: `{ endpointId, label, transport,
   capabilities, projectRef? }`. Validates with schemas, calls `registry.register()`.
-  Returns 201 with registered endpoint or 409 on duplicate.
+  Returns 201 with registered endpoint or 409 on duplicate. In EX-1, rejects
+  `capabilities.canExecute === true` with 409/400 so the route cannot create a
+  new execution-capable binding target before EX-4.
 - `POST /bridge/endpoints/:id/heartbeat` — calls `registry.heartbeat(id)`.
   Returns 200 or 404.
 - `GET /bridge/endpoints` — calls `registry.list()`. Supports optional query
@@ -807,7 +828,7 @@ In `tests/endpoint-registry.test.mjs`:
 - Test: register endpoint → status online, lastSeenAt set.
 - Test: heartbeat updates lastSeenAt.
 - Test: offline sets status offline.
-- Test: duplicate register returns error (unless re-registering same id).
+- Test: duplicate register returns error.
 - Test: listOnline excludes offline endpoints.
 - Test: listByProject filters correctly.
 - Test: heartbeat on offline endpoint returns error.
@@ -815,6 +836,8 @@ In `tests/endpoint-registry.test.mjs`:
 - Test: endpoint with `transport: 'terminal'` registers successfully.
 - Test: transport union validation rejects unknown transports.
 - Test: status union validation rejects invalid status values.
+- Test: external registration with `canExecute: true` is rejected in EX-1.
+- Test: runtime registered endpoint is not snapshotted/hydrated as online.
 
 ### 13.4 Verification commands
 
@@ -842,3 +865,4 @@ All existing tests must continue to pass. No test regressions.
 |---------|------|---------|
 | v1 (initial) | 2026-06-29 | Initial RP draft |
 | v2 (review patch) | 2026-06-29 | Must-fix: (1) team-store.ts → new `project-team-preset-store.ts` (2) `console.ts` → `project-console.ts` for command routing (3) ADR amendment timing moved before EX-4 (4) "already reviews" → target capability language (5) Added complete EX-1 prompt. Recommended: (6) snapshot immutable→versioned/audited replacement (7) removed `canReason`/`canVerify` from AgentEndpoint (8) persistence & migration §7 (9) command acceptance tests §8 |
+| v3 (review patch) | 2026-06-29 | Fixed final blockers: canonical WorkBuddy endpoint id is `workbuddy`; EX-1 rejects external `canExecute: true`; duplicate register returns conflict; runtime endpoint online/busy state is non-durable. |
