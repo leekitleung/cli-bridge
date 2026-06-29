@@ -109,8 +109,8 @@ export const MOCK_INBOUND_AGENT_ENDPOINT: AgentEndpoint = {
 // gates are met (inbox/result protocol + adapter). This endpoint exists in
 // the registry so pairing discovery can surface it; execution dispatch
 // rejects it until EX-4.
-export const WORKBUDDY_EXECUTOR_ENDPOINT: AgentEndpoint = {
-  id: 'workbuddy-executor',
+export const WORKBUDDY_ENDPOINT: AgentEndpoint = {
+  id: 'workbuddy',
   label: 'WorkBuddy Executor',
   transport: 'workbuddy',
   risk: 'medium',

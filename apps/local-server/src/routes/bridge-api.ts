@@ -16,7 +16,7 @@ import {
   CODEX_REVIEW_COMMAND_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_INBOUND_AGENT_ENDPOINT,
-  WORKBUDDY_EXECUTOR_ENDPOINT,
+  WORKBUDDY_ENDPOINT,
 } from '../endpoints/mock-endpoints.ts';
 import { runCommandReview } from '../review/command-review-runner.ts';
 import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
@@ -1407,7 +1407,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
     CODEX_REVIEW_COMMAND_ENDPOINT,
     MOCK_INBOUND_AGENT_ENDPOINT,
-    WORKBUDDY_EXECUTOR_ENDPOINT,
+    WORKBUDDY_ENDPOINT,
     ...(options.additionalEndpoints ?? []),
   ]);
   const inboundRelayEndpointId = options.inboundRelayEndpointId;
@@ -2876,12 +2876,20 @@ export async function handleBridgeRequest(
   }
 
   // POST /bridge/endpoints/register
+  // EX-1 is discoverability-only. Execution-capable registrations are
+  // rejected — canExecute=true belongs to EX-4, after inbox/result protocol
+  // and adapter implementation.
   if (pathname === BRIDGE_ENDPOINTS_PATH && method === 'POST') {
     const parsed = await readJsonBody(request);
     if (!parsed.ok) return error(400, parsed.message);
     const validation = validateEndpointRegistration(parsed.body);
     if (!validation.ok) return error(400, `Invalid registration: ${validation.errors.join(', ')}`);
     const body = parsed.body as Record<string, unknown>;
+    const caps = body.capabilities as Record<string, unknown>;
+    // Gate: reject registration that declares execution capability before EX-4.
+    if (caps && caps.canExecute === true) {
+      return error(400, 'Execution capability (canExecute: true) is not available in this version. Use heartbeat for online status.');
+    }
     const endpoint = {
       id: body.endpointId as string,
       label: body.label as string,
@@ -2897,7 +2905,8 @@ export async function handleBridgeRequest(
       const status = result.failureReason === 'duplicate-endpoint-id' ? 409 : 400;
       return error(status, result.failureReason ?? 'Registration failed');
     }
-    runtime.persist();
+    // Session state (online/offline) is NOT persisted — endpoints must
+    // re-register after server restart.
     return created({ endpoint: runtime.endpointRegistry.get(endpoint.id) });
   }
 

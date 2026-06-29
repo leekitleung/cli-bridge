@@ -29,7 +29,8 @@ unchanged.
 > - WorkBuddy's task-system identity (task/context source, result/ledger sink)
 >   remains unchanged for non-execution paths. Existing WorkBuddy task records
 >   must not be silently promoted to execution authority.
-> - WorkBuddy may execute as a separately registered endpoint (`workbuddy-executor`)
+> - WorkBuddy may execute as a separately registered endpoint (canonical id
+>   `workbuddy`, transport `workbuddy`, distinct from the task-system identity)
 >   through the controlled execution layer defined by this ADR. This endpoint:
 >   - uses a pull-based inbox/result protocol (WorkBuddy pulls tasks; the middle
 >     layer never pushes execution commands to WorkBuddy);

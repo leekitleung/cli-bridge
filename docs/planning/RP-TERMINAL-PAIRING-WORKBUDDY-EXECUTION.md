@@ -349,7 +349,7 @@ Full amendment texts are in the linked files. Summary:
   through controlled execution layer with pull-based inbox, human confirmation,
   and no self-authorization.
 - **ADR-0024 §6**: Invoke the "future WorkBuddy execution route" clause.
-  Authorize `workbuddy-executor` endpoint (separate from task-system identity).
+  Authorize `workbuddy` endpoint (canonical id, distinct from task-system identity).
   Gate `canExecute=true` behind EX-4 completion.
 
 ### 4.2 New ADR

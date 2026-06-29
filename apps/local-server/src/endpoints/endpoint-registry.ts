@@ -44,20 +44,13 @@ export class InMemoryEndpointRegistry {
   register(endpoint: AgentEndpoint): EndpointRegistryResult {
     assertAgentEndpoint(endpoint);
     if (this.endpoints.has(endpoint.id)) {
-      // Re-registration: update status to online and refresh lastSeenAt.
-      // Accept same-id re-registration as a keep-alive pattern.
-      const existing = this.endpoints.get(endpoint.id)!;
-      existing.status = 'online';
-      existing.lastSeenAt = Date.now();
-      // Merge capabilities if the new registration provides them.
-      if (endpoint.capabilities) {
-        existing.capabilities = { ...existing.capabilities, ...endpoint.capabilities };
-      }
-      if (endpoint.label) existing.label = endpoint.label;
-      if (endpoint.transport) existing.transport = endpoint.transport;
-      if (endpoint.projectRef !== undefined) existing.projectRef = endpoint.projectRef;
-      this.endpoints.set(endpoint.id, cloneEndpoint(existing));
-      return { ok: true };
+      // Duplicate endpointId — hard reject. Re-connection must use heartbeat,
+      // not re-registration. Prevents external endpoints from silently
+      // changing label, transport, or capabilities after initial registration.
+      return {
+        ok: false,
+        failureReason: 'duplicate-endpoint-id',
+      };
     }
 
     const created = cloneEndpoint(endpoint);
@@ -162,20 +155,5 @@ export class InMemoryEndpointRegistry {
     return Array.from(this.endpoints.values())
       .filter(e => e.projectRef === projectRef)
       .map(cloneEndpoint);
-  }
-
-  // ---- Snapshot persistence support ----
-
-  exportEndpoints(): AgentEndpoint[] {
-    return this.list();
-  }
-
-  hydrateEndpoint(endpoint: AgentEndpoint): void {
-    if (!endpoint.id || typeof endpoint.id !== 'string') return;
-    // On hydration, set status to offline — the endpoint must heartbeat.
-    const hydrated = cloneEndpoint(endpoint);
-    hydrated.status = 'offline';
-    hydrated.lastSeenAt = hydrated.lastSeenAt ?? Date.now();
-    this.endpoints.set(hydrated.id, hydrated);
   }
 }

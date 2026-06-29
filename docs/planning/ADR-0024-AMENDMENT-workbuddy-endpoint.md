@@ -29,13 +29,13 @@ sections of ADR-0024 remain unchanged.
 > non-execution paths. Existing WorkBuddy task records must not be silently
 > promoted to execution authority.
 >
-> A separately registered WorkBuddy execution endpoint (`workbuddy-executor`,
+> A separately registered WorkBuddy execution endpoint (canonical id `workbuddy`,
 > `transport: 'workbuddy'`, `canExecute: true`) is authorized by
 > `ADR-0003-AMENDMENT-workbuddy-execution.md` and scoped by
 > `RP-TERMINAL-PAIRING-WORKBUDDY-EXECUTION.md`. This amendment is the explicit
 > ADR amendment required by the original text.
 >
-> The `workbuddy-executor` endpoint is subject to all rules of this ADR:
+> The `workbuddy` endpoint is subject to all rules of this ADR:
 > - §2 (reuse Goal/Plan as run state machine);
 > - §3 (binding immutability during a run);
 > - §5 (every execution dispatch requires human confirmation);
@@ -60,8 +60,8 @@ execution route requires a separately registered endpoint identity, a bounded
 adapter, capability evidence, focused tests, and explicit ADR amendment."
 
 All conditions are now met:
-1. **Separately registered endpoint identity**: `workbuddy-executor` with
-   `transport: 'workbuddy'`, distinct from the task-system `workbuddy` identity.
+1. **Separately registered endpoint identity**: canonical id `workbuddy` with
+   `transport: 'workbuddy'`, distinct from the task-system identity.
 2. **Bounded adapter**: Pull-based inbox/result protocol — no direct push, no
    generic shell, no arbitrary command execution.
 3. **Capability evidence**: `canExecute: true` in provider capability declaration
@@ -74,7 +74,7 @@ All conditions are now met:
 ## Impact
 
 - **ADR-0003 §7**: Also amended by `ADR-0003-AMENDMENT-workbuddy-execution.md`.
-- **Code**: `provider-capability.ts` adds `workbuddy-executor` capability
+- **Code**: `provider-capability.ts` updates the `workbuddy` provider capability
   declaration (EX-4). `endpoint-registry.ts` supports `transport: 'workbuddy'`
   (EX-1). New `workbuddy-execution-adapter.ts` (EX-4).
 - **API**: `GET /bridge/endpoints/:id/inbox/next`, `POST /bridge/endpoints/:id/results`,

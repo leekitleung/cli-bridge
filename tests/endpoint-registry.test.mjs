@@ -11,7 +11,7 @@ import {
 import {
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_INBOUND_AGENT_ENDPOINT,
-  WORKBUDDY_EXECUTOR_ENDPOINT,
+  WORKBUDDY_ENDPOINT,
 } from '../apps/local-server/src/endpoints/mock-endpoints.ts';
 
 test('registry register/list/get works', () => {
@@ -27,9 +27,14 @@ test('registry accepts re-registration (heartbeat-like) and lists correctly', ()
   const registry = new InMemoryEndpointRegistry();
   registry.register(DEFAULT_AGENT_ENDPOINTS[0]);
 
-  // Re-registration with same id should succeed (updates existing, not rejects).
+  // Re-registration with same id should REJECT — reconnect must use heartbeat.
   const reRegistered = registry.register(DEFAULT_AGENT_ENDPOINTS[0]);
-  assert.equal(reRegistered.ok, true);
+  assert.equal(reRegistered.ok, false);
+  assert.equal(reRegistered.failureReason, 'duplicate-endpoint-id');
+
+  // Heartbeat is the correct reconnect path.
+  const hb = registry.heartbeat('mock-agent');
+  assert.equal(hb.ok, true);
   assert.equal(registry.get('mock-agent')?.status, 'online');
 
   // Unknown endpoint validation still fails.
@@ -154,9 +159,9 @@ test('EX-1: heartbeat on offline endpoint returns error', () => {
 
 test('EX-1: workbuddy executor endpoint registers with correct capabilities', () => {
   const registry = new InMemoryEndpointRegistry();
-  const result = registry.register(WORKBUDDY_EXECUTOR_ENDPOINT);
+  const result = registry.register(WORKBUDDY_ENDPOINT);
   assert.equal(result.ok, true);
-  const ep = registry.get('workbuddy-executor');
+  const ep = registry.get('workbuddy');
   assert.equal(ep.transport, 'workbuddy');
   assert.equal(ep.capabilities.canExecute, false, 'stays false until EX-4');
   assert.equal(ep.capabilities.canReview, true);
@@ -182,15 +187,16 @@ test('EX-1: status validation rejects invalid values', () => {
   assert.equal(validateEndpointStatus('').ok, false);
 });
 
-test('EX-1: re-registration updates existing endpoint', () => {
+test('EX-1: re-registration with same id is rejected', () => {
   const registry = new InMemoryEndpointRegistry();
   registry.register(DEFAULT_AGENT_ENDPOINTS[0]);
-  // Re-register with different label.
+  // Re-register with different label — must be rejected.
   const updated = { ...DEFAULT_AGENT_ENDPOINTS[0], label: 'Updated Mock Agent' };
   const result = registry.register(updated);
-  assert.equal(result.ok, true);
-  assert.equal(registry.get('mock-agent').label, 'Updated Mock Agent');
-  assert.equal(registry.get('mock-agent').status, 'online');
+  assert.equal(result.ok, false);
+  assert.equal(result.failureReason, 'duplicate-endpoint-id');
+  // Original label must be unchanged.
+  assert.equal(registry.get('mock-agent').label, 'Mock Agent');
 });
 
 test('EX-1: offline twice returns already-offline error', () => {
@@ -211,18 +217,3 @@ test('EX-1: validateAction rejects offline endpoint', () => {
   assert.equal(result.failureReason, 'endpoint-offline');
 });
 
-test('EX-1: hydrateEndpoint sets status to offline', () => {
-  const registry = new InMemoryEndpointRegistry();
-  registry.hydrateEndpoint({ ...DEFAULT_AGENT_ENDPOINTS[0], status: 'online', lastSeenAt: 1000 });
-  const ep = registry.get('mock-agent');
-  assert.equal(ep.status, 'offline', 'hydrated endpoints must heartbeat to come online');
-});
-
-test('EX-1: exportEndpoints returns all endpoints', () => {
-  const registry = new InMemoryEndpointRegistry();
-  registry.register(DEFAULT_AGENT_ENDPOINTS[0]);
-  registry.register({ ...DEFAULT_AGENT_ENDPOINTS[1], id: 'ep-2' });
-  const exported = registry.exportEndpoints();
-  assert.equal(exported.length, 2);
-  assert.deepEqual(exported.map(e => e.id).sort(), ['ep-2', 'mock-agent']);
-});
