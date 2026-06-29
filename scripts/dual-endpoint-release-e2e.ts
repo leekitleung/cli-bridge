@@ -234,13 +234,13 @@ export function sanitizeEvidence(value: unknown, secretValues: string[] = []): u
 
 export function classifyDualEndpointError(error: unknown): { code: DualEndpointFailureCode; message: string } {
   const message = error instanceof Error ? error.message : String(error);
-  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir|active Chrome|connect-active-chrome/i.test(message)) {
+  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir|active Chrome|connect-active-chrome|ECONNREFUSED|ECONNRESET|Could not connect|WebSocket|cdp|chrome|browser/i.test(message)) {
     return { code: 'blocked-real-chatgpt', message };
   }
   if (/real high-tier CLI|reasoning cli|execution cli|CLI endpoint/i.test(message)) {
     return { code: 'blocked-real-cli', message };
   }
-  if (/confirmation.*timeout|operator confirmation/i.test(message)) {
+  if (/confirmation.*timeout|operator confirmation|timed out|ETIMEDOUT/i.test(message)) {
     return { code: 'confirmation-timeout', message };
   }
   if (/cleanup|process behind/i.test(message)) {

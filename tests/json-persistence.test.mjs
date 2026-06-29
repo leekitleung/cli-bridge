@@ -473,3 +473,78 @@ test('v2.13: verificationRunRecords round-trip through snapshot', () => {
   assert.equal(snap.verificationRunRecords[0].result, 'passed');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// EX-1/2/3/4 regression: optional snapshot fields survive round-trip through
+// parseSnapshot() → BridgeSnapshot → hydrate.  The parser must not silently
+// drop workbuddyTasks, teamPresets, or bindingSnapshots.
+test('workbuddyTasks, teamPresets, and bindingSnapshots survive snapshot round-trip', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const snapshot = buildSnapshot({
+      packets: [],
+      auditEvents: [],
+      pendingPrompts: [],
+      goals: [],
+      plans: [],
+      projects: [],
+      automationBindings: [],
+      workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [],
+      workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [],
+      teams: [],
+      teamArtifacts: [],
+      teamPresets: [{
+        projectId: 'test-proj',
+        plannerEndpointId: 'claude-code-command',
+        executorEndpointId: 'workbuddy',
+        mode: 'sequential',
+        isolation: 'patch-only',
+        updatedAt: 1793000000000,
+      }],
+      bindingSnapshots: [{
+        snapshotId: 'snap-1',
+        goalId: 'goal-1',
+        version: 1,
+        plannerEndpointId: 'claude-code-command',
+        executorEndpointId: 'workbuddy',
+        mode: 'sequential',
+        isolation: 'patch-only',
+        source: 'project-preset',
+        createdAt: 1793000000000,
+      }],
+      workbuddyTasks: [{
+        taskId: 'task-1',
+        endpointId: 'workbuddy',
+        proposalId: 'proposal-1',
+        planId: 'plan-1',
+        goalId: 'goal-1',
+        bindingHash: 'sha256:abc',
+        prompt: 'test prompt',
+        workingDirectory: '/tmp',
+        timeoutMs: 120000,
+        createdAt: 1793000000000,
+        status: 'pending',
+      }],
+    });
+    // Write raw JSON directly to avoid Windows fsync EPERM on temp dirs.
+    // parseSnapshot() is what we're testing — the parser must not drop fields.
+    const rawPath = resolve(dir, SNAPSHOT_FILENAME);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(rawPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+    const read = store.read().snapshot;
+    assert.ok(read, 'snapshot exists');
+    assert.equal(Array.isArray(read.workbuddyTasks), true, 'workbuddyTasks survives');
+    assert.equal(read.workbuddyTasks.length, 1);
+    assert.equal(read.workbuddyTasks[0].taskId, 'task-1');
+    assert.equal(Array.isArray(read.teamPresets), true, 'teamPresets survives');
+    assert.equal(read.teamPresets.length, 1);
+    assert.equal(read.teamPresets[0].projectId, 'test-proj');
+    assert.equal(Array.isArray(read.bindingSnapshots), true, 'bindingSnapshots survives');
+    assert.equal(read.bindingSnapshots.length, 1);
+    assert.equal(read.bindingSnapshots[0].goalId, 'goal-1');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
