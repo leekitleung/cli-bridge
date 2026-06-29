@@ -1517,6 +1517,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const s of read.snapshot.bindingSnapshots ?? []) {
         try { bindingSnapshotStore.hydrateSnapshot(s); } catch { }
       }
+      for (const t of read.snapshot.workbuddyTasks ?? []) {
+        try { workbuddyExecution.hydrateTask(t); } catch { }
+      }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
         try { verificationRunStore.add(r.projectKey, r); } catch { }
@@ -1554,6 +1557,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teamArtifacts: teamStore.exportArtifacts(),
       teamPresets: presetStore.exportPresets(),
       bindingSnapshots: bindingSnapshotStore.exportSnapshots(),
+      workbuddyTasks: workbuddyExecution.exportTasks(),
     }));
     if (!result.ok) {
       persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
@@ -3043,10 +3047,15 @@ export async function handleBridgeRequest(
     if (task.endpointId !== resultsMatch.id) {
       return error(403, 'Task belongs to endpoint ' + task.endpointId + ', not ' + resultsMatch.id);
     }
+    // Reject if caller-supplied proposalId mismatches the task's own.
+    const bodyProposalId = typeof body.proposalId === 'string' ? body.proposalId : undefined;
+    if (bodyProposalId && bodyProposalId !== task.proposalId) {
+      return error(400, 'proposalId mismatch: task belongs to proposal ' + task.proposalId);
+    }
     const outcomeOk = typeof body.ok === 'boolean' ? body.ok : false;
     const result = runtime.workbuddyExecution.recordResult(taskId, {
       ok: outcomeOk,
-      proposalId: typeof body.proposalId === 'string' ? body.proposalId : '',
+      proposalId: task.proposalId,
       output: body.output,
       stdout: typeof body.stdout === 'string' ? body.stdout : undefined,
       stderr: typeof body.stderr === 'string' ? body.stderr : undefined,
@@ -3066,6 +3075,7 @@ export async function handleBridgeRequest(
       runtime.executionProposalStore.markFailed(task.proposalId,
         result.failureReason ?? 'workbuddy-execution-failed', Date.now());
     }
+    runtime.persist();
     return ok({ result });
   }
 

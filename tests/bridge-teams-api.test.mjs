@@ -121,19 +121,18 @@ test('reject isolation !== patch-only', async () => {
   assert.equal(res.statusCode, 400);
 });
 
-test('reject WorkBuddy as executor', async () => {
+test('accept WorkBuddy as executor (EX-4 gated)', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });
   const g = await seedApprovedGoalPlan(runtime, 'alpha', 's5');
   if (!g) return;
   const res = await call(runtime, 'POST', TEAMS('alpha'), {
-    action: 'create', id: 't-bad', goalId: g.goalId, planId: g.planId,
+    action: 'create', id: 't-wb', goalId: g.goalId, planId: g.planId,
     logicalSlots: [{ id: 's0', role: 'planner', stepIndex: 0, tier: 'patch-proposal', isolation: 'patch-only' }],
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
-    provider: 'workbuddy', endpointId: 'workbuddy-connector',
+    provider: 'workbuddy', endpointId: 'workbuddy',
   });
-  assert.equal(res.statusCode, 400);
-  assert.ok(res.payload.message.includes('WorkBuddy'));
+  assert.equal(res.statusCode, 201, 'EX-4: WorkBuddy is now a valid executor');
 });
 
 test('accept logicalSlots > 1 with maxConcurrentBridgeSlots = 1', async () => {
@@ -579,7 +578,7 @@ test('reject unknown provider', async () => {
   assert.equal(res.statusCode, 400);
   assert.ok(res.payload.message.includes('Unknown provider'));
 });
-test('reject WorkBuddy as executor via capability', async () => {
+test('accept WorkBuddy as executor via capability (EX-4)', async () => {
   const runtime = createBridgeRuntime();
   runtime.projectStore.upsert({ key: 'alpha' });
   const g = await seedApprovedGoalPlan(runtime, 'alpha');
@@ -590,8 +589,7 @@ test('reject WorkBuddy as executor via capability', async () => {
     maxConcurrentBridgeSlots: 1, mode: 'sequential', isolation: 'patch-only',
     provider: 'workbuddy', endpointId: 'workbuddy',
   });
-  assert.equal(res.statusCode, 400);
-  assert.ok(res.payload.message.includes('execute') || res.payload.message.includes('WorkBuddy') || res.payload.message.includes('cannot'));
+  assert.equal(res.statusCode, 201, 'EX-4: WorkBuddy now passes capability check');
 });
 test('reject unsupported isolation via capability', async () => {
   const runtime = createBridgeRuntime();
