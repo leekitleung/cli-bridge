@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 
 import { startLocalServer, type LocalServerHandle } from '../apps/local-server/src/server.ts';
 import { CODEX_REVIEW_ARGS } from '../apps/local-server/src/adapters/command-review-adapter.ts';
-import { DEFAULT_LOCAL_SERVER_PORT, PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
+import { PAIRING_TOKEN_HEADER } from '../packages/shared/src/constants.ts';
 import type { AgentEndpoint } from '../packages/shared/src/types.ts';
 import {
   buildExtension as buildWebAutoExtension,
@@ -234,14 +234,18 @@ export function sanitizeEvidence(value: unknown, secretValues: string[] = []): u
 
 export function classifyDualEndpointError(error: unknown): { code: DualEndpointFailureCode; message: string } {
   const message = error instanceof Error ? error.message : String(error);
-  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir|active Chrome|connect-active-chrome|ECONNREFUSED|ECONNRESET|Could not connect|WebSocket|cdp|chrome|browser/i.test(message)) {
+  // Timeout before CDP — "review timed out waiting for browser" must be
+  // confirmation-timeout, not blocked-real-chatgpt.
+  if (/confirmation.*timeout|operator confirmation|timed out|ETIMEDOUT/i.test(message)) {
+    return { code: 'confirmation-timeout', message };
+  }
+  // Narrow CDP/Chrome connection errors: only specific connection-failure
+  // patterns, not arbitrary mentions of chrome/browser/cdp.
+  if (/logged-in ChatGPT|ChatGPT profile|connect-cdp|profile-dir|active Chrome|connect-active-chrome|ECONNREFUSED|ECONNRESET|Could not connect to debug|WebSocket .* connect/i.test(message)) {
     return { code: 'blocked-real-chatgpt', message };
   }
   if (/real high-tier CLI|reasoning cli|execution cli|CLI endpoint/i.test(message)) {
     return { code: 'blocked-real-cli', message };
-  }
-  if (/confirmation.*timeout|operator confirmation|timed out|ETIMEDOUT/i.test(message)) {
-    return { code: 'confirmation-timeout', message };
   }
   if (/cleanup|process behind/i.test(message)) {
     return { code: 'cleanup-failed', message };
@@ -1117,7 +1121,8 @@ export async function runRealChatgptRoute(
   try {
     handle = await startDualEndpointServer({
       inboundRelayEndpointId: INBOUND_RELAY_ENDPOINT_ID,
-      port: DEFAULT_LOCAL_SERVER_PORT,
+      // Use OS-assigned port to avoid EADDRINUSE when 31337 is occupied.
+      port: 0,
     });
 
     const goal = await bridgeApi<{ goal: { id: string } }>(handle, '/bridge/goals', 'POST', {
