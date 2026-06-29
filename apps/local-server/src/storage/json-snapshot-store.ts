@@ -134,6 +134,9 @@ function parseSnapshot(text: string): SnapshotReadResult {
       workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
       teams: Array.isArray(parsed.teams) ? parsed.teams : [],
       teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
+      teamPresets: Array.isArray(parsed.teamPresets) ? parsed.teamPresets : undefined,
+      bindingSnapshots: Array.isArray(parsed.bindingSnapshots) ? parsed.bindingSnapshots : undefined,
+      workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
     };
     // v0-v2 snapshots retain their historical tolerant hydration contract.
