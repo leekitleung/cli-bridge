@@ -1,9 +1,10 @@
 # RP-TERMINAL-PAIRING-WORKBUDDY-EXECUTION
 
-**Status**: Draft (awaiting review/acceptance)
+**Status**: Draft v2 — revised per review feedback (2026-06-29)
 **Type**: RP (Review/Planning) — document only, no code changes
 **Date**: 2026-06-29
 **Prepared by**: WorkBuddy (planning agent)
+**Revision**: Applied review patch — see §11 Changelog
 
 ---
 
@@ -102,8 +103,11 @@ type AgentEndpoint = {
 };
 ```
 
-Missing: `projectRef`, `status` (online/offline/busy), `lastSeenAt`, `canReason`,
-`canVerify`. Transport union does not include `'terminal'` or `'workbuddy'`.
+Missing: `projectRef`, `status` (online/offline/busy), `lastSeenAt`. Transport
+union does not include `'terminal'` or `'workbuddy'`. No new capability fields
+are needed — existing `canReview`/`canSummarize`/`canExecute` cover planner
+and verifier role selection; roles are determined by the preset binding, not by
+additional capability bits.
 
 ### 2.3 Provider capabilities
 
@@ -173,9 +177,10 @@ lifecycle integration.
 The sentence "WorkBuddy cannot execute" is now **historical state**, not a
 forward boundary.
 
-WorkBuddy becomes a registered execution endpoint with:
+WorkBuddy becomes a registered execution endpoint with **target capabilities** (all
+currently `false`; transitioning to `true` in EX-4):
 - `canExecute: true` — in the provider capability declaration
-- `canReview: true` — WorkBuddy already reviews
+- `canReview: true` — for review roles in team presets
 - `canVerify: true` — for verification roles in team presets
 - `canReturnOutput: true` — via structured inbox/result protocol
 - `transport: 'workbuddy'` — new transport type for pull-based execution
@@ -230,20 +235,28 @@ interface ProjectTeamPreset {
 When a goal is created:
 - If the project has a preset → snapshot is auto-created from preset.
 - If no preset → goal created without snapshot; `pair` command required.
-- The snapshot is immutable after goal creation, EXCEPT via explicit `rebind`
-  before plan approval.
-- `rebind executor workbuddy` / `rebind planner claude-code-command` change
-  endpoint references but create an audit record.
+- The snapshot is **versioned**: before plan approval, the operator may issue
+  `rebind` to create a new snapshot version (audited replacement, not silent
+  mutation). The old version is retained for audit.
+- `rebind executor workbuddy` / `rebind planner claude-code-command` create a
+  new versioned snapshot record and audit entry. The original snapshot's
+  `source: 'project-preset'` is preserved; the replacement's source becomes
+  `'manual-rebind'`.
+- After plan approval, rebind is FORBIDDEN — the locked binding is the
+  authoritative snapshot version for that plan.
 
 ```ts
 interface GoalBindingSnapshot {
+  snapshotId: string;
   goalId: string;
+  version: number;
   plannerEndpointId: string;
   executorEndpointId: string;
   verifierEndpointId?: string;
   mode: 'sequential';
   isolation: 'patch-only';
-  source: 'project-preset' | 'manual';
+  source: 'project-preset' | 'manual' | 'manual-rebind';
+  parentSnapshotId?: string;  // for rebind lineage
   createdAt: number;
 }
 ```
@@ -350,7 +363,7 @@ phases. This is a **read-only inventory** — no code is changed in this RP.
 
 | File | What changes |
 |------|-------------|
-| `packages/shared/src/types.ts` | Add `'terminal'` and `'workbuddy'` to transport union; add `ProjectTeamPreset`, `GoalBindingSnapshot`, `EndpointSession` types; extend `AgentEndpoint` with `projectRef`, `status`, `lastSeenAt`; add `canReason`/`canVerify` to capabilities |
+| `packages/shared/src/types.ts` | Add `'terminal'` and `'workbuddy'` to transport union; add `ProjectTeamPreset`, `GoalBindingSnapshot`, `EndpointSession` types; extend `AgentEndpoint` with `projectRef`, `status`, `lastSeenAt` |
 | `packages/shared/src/schemas.ts` | Add validators for new types; remove line 1117 `'WorkBuddy cannot be an executor'` rejection; add schema validation for inbox results |
 | `packages/shared/src/constants.ts` | Add route constants for new endpoints |
 
@@ -371,11 +384,10 @@ phases. This is a **read-only inventory** — no code is changed in this RP.
 
 | File | What changes |
 |------|-------------|
-| `apps/local-server/src/storage/team-store.ts` | **New file** — ProjectTeamPreset CRUD |
+| `apps/local-server/src/storage/project-team-preset-store.ts` | **New file** — `InMemoryProjectTeamPresetStore`: CRUD for `ProjectTeamPreset`, snapshot persistence via `exportPresets`/`hydratePreset`, independent of existing `InMemoryTeamSpecStore` in `team-store.ts` |
 | `apps/local-server/src/routes/bridge-api.ts` | Add `GET/PUT /bridge/projects/:key/team-preset` routes |
-| `apps/local-server/src/routes/console.ts` | Add `pair` command handling |
+| `apps/local-server/src/routes/project-console.ts` | Add `pair` command handling in the composer (`handleCommand` at L2040); show current default team in project view |
 | `apps/local-server/src/routes/console-goals.ts` | Show "will use: X → Y → Z" on goal creation |
-| `apps/local-server/src/routes/project-console.ts` | Show current default team in project view |
 
 ### 5.5 Goal binding snapshot (EX-3)
 
@@ -397,7 +409,7 @@ phases. This is a **read-only inventory** — no code is changed in this RP.
 
 | File | What changes |
 |------|-------------|
-| `apps/local-server/src/routes/console.ts` | Add online endpoints list, project default team, goal binding, execution proposal target views |
+| `apps/local-server/src/routes/project-console.ts` | Add online endpoints list, project default team, goal binding, execution proposal target views in workspace context |
 | `apps/local-server/src/routes/project-ui-theme.ts` | May need minor CSS additions for pairing display |
 
 ### 5.8 Tests that WILL change in EX phases
@@ -459,9 +471,149 @@ EX-1.
 
 ---
 
-## 7. Gate
+## 7. Snapshot Persistence & Migration
 
-### 7.1 RP gate (this document)
+### 7.1 Storage location
+
+All preset and snapshot data is persisted in `CLI_BRIDGE_DATA_DIR` (same
+directory used by `json-snapshot-store.ts` for goals, plans, projects).
+
+```
+CLI_BRIDGE_DATA_DIR/
+├── project-team-presets.json     # EX-2: array of ProjectTeamPreset
+├── goal-binding-snapshots.json   # EX-3: array of GoalBindingSnapshot
+├── goals.json                    # existing
+├── plans.json                    # existing
+├── projects.json                 # existing
+└── ...
+```
+
+### 7.2 Fail-closed migration rules
+
+| Condition | Behavior |
+|-----------|----------|
+| Preset file missing | Server starts with empty preset store; no error |
+| Preset references unknown endpoint | Preset is valid but un-usable; `pair status` shows warning; goal creation uses `no preset` path |
+| Preset references offline endpoint | Same as unknown endpoint: goal creation falls back, `pair status` shows "offline" |
+| Snapshot references endpoint not in registry | Snapshot loads but validator rejects plan creation with that snapshot |
+| Snapshot missing `version` field (pre-versioning) | Hydrate as version 1, source `'project-preset'` |
+| Snapshot has duplicate `snapshotId` | Keep newest by `createdAt`; log duplicate |
+| Preset file corrupted (invalid JSON) | Skip the file, start with empty store, log warning |
+| Goal has snapshots but no preset | Normal — manual mode; no error |
+
+### 7.3 Hydration order
+
+1. Load endpoints from registry (EX-1)
+2. Load project team presets (EX-2)
+3. Load goal binding snapshots (EX-3)
+4. Validate cross-references (endpoint exists, goal exists, project exists)
+
+Invalid cross-references are **skipped** (fail-open) — the server starts, but
+the affected preset/snapshot is unavailable. The operator sees a warning in
+`pair status`.
+
+---
+
+## 8. Command Acceptance Tests (pair / rebind / binding)
+
+These are the canonical command behaviors. Implementation must satisfy all of
+them; EX-5 deduplication against these is fine.
+
+### 8.1 `pair status`
+
+```text
+GIVEN a project with a team preset
+WHEN  operator enters "pair status"
+THEN  console shows:
+        Planner:  claude-code-command (online)
+        Executor: workbuddy (online)
+        Verifier: codex-command (online)
+        Mode:     sequential / isolation: patch-only
+
+GIVEN a project without a team preset
+WHEN  operator enters "pair status"
+THEN  console shows:
+        No default team preset for this project.
+        Use "pair planner X executor Y" to set one.
+
+GIVEN a project where preset's executor is offline
+WHEN  operator enters "pair status"
+THEN  console shows executor as "offline" with warning icon
+```
+
+### 8.2 `pair planner X executor Y`
+
+```text
+GIVEN online endpoints claude-code-command, workbuddy, codex-command
+WHEN  operator enters "pair planner claude-code-command executor workbuddy"
+THEN  team preset is saved/updated
+AND   console shows confirmation: "Default team: Claude → WorkBuddy"
+
+GIVEN endpoint codex-command has canExecute=false
+WHEN  operator enters "pair planner claude-code-command executor codex-command"
+THEN  rejected: "codex-command cannot execute"
+
+GIVEN endpoint workbuddy is offline
+WHEN  operator enters "pair planner claude-code-command executor workbuddy"
+THEN  accepted with warning: "workbuddy is offline; execution will be blocked"
+
+WHEN  operator enters "pair planner claude-code-command executor workbuddy verifier codex-command"
+THEN  all three roles are set
+```
+
+### 8.3 `pair reset`
+
+```text
+GIVEN a project with a team preset
+WHEN  operator enters "pair reset"
+THEN  preset is cleared
+AND   console shows: "Default team preset removed. Existing goals unchanged."
+AND   existing goal snapshots are NOT affected
+```
+
+### 8.4 `rebind` (goal scope)
+
+```text
+GIVEN a goal with binding snapshot v1 (planner: claude, executor: codex)
+AND   no plan has been created yet
+WHEN  operator enters "rebind executor workbuddy"
+THEN  snapshot v2 is created (source: 'manual-rebind', parent: v1.snapshotId)
+AND   console shows: "Executor changed: codex → workbuddy (snapshot v2)"
+AND   v1 is retained in audit
+
+GIVEN a goal with binding snapshot v1
+AND   a plan has been approved (binding locked)
+WHEN  operator enters "rebind executor workbuddy"
+THEN  rejected: "Cannot rebind: plan is locked. Derive a new plan instead."
+
+GIVEN a goal without any binding snapshot
+WHEN  operator enters "rebind executor workbuddy"
+THEN  rejected: "No binding snapshot. Use 'pair' to create one."
+```
+
+### 8.5 `binding status` (console)
+
+```text
+GIVEN an active goal with binding snapshot
+WHEN  operator enters "binding status"
+THEN  shows:
+        Goal: <goal summary>
+        Snapshot: v1 (source: project-preset)
+        Planner:  claude-code-command
+        Executor: workbuddy
+        Status:   unlocked (no plan approved yet)
+
+GIVEN a goal where a plan is approved and binding is locked
+WHEN  operator enters "binding status"
+THEN  shows "Status: locked (plan <planId> approved at <time>)"
+AND   rebind controls are disabled
+```
+
+---
+
+## 9. Gate
+
+### 9.1 RP gate (this document)
 
 - [ ] Only document changes — zero code modifications.
 - [ ] Explicitly lists which tests will change in each EX phase.
@@ -470,7 +622,7 @@ EX-1.
 - [ ] Preserves the rule: terminals do not directly control terminals.
 - [ ] Preserves the rule: WorkBuddy execution is behind full middle-layer gating.
 
-### 7.2 Acceptance gate for implementation
+### 9.2 Acceptance gate for implementation
 
 After all EX phases:
 ```bash
@@ -480,7 +632,7 @@ npm test
 npm run build-extension
 ```
 
-### 7.3 Behavioral gate scenarios (for EX-6)
+### 9.3 Behavioral gate scenarios (for EX-6)
 
 1. New project without preset → no endpoint auto-selected
 2. Set project preset → new goal auto-inherits
@@ -493,7 +645,7 @@ npm run build-extension
 
 ---
 
-## 8. Risk Acceptance
+## 10. Risk Acceptance
 
 | Risk | Mitigation |
 |------|-----------|
@@ -505,7 +657,7 @@ npm run build-extension
 
 ---
 
-## 9. Relationship to Existing Decisions
+## 11. Relationship to Existing Decisions
 
 | Decision | Relationship |
 |----------|-------------|
@@ -517,14 +669,176 @@ npm run build-extension
 
 ---
 
-## 10. Next Steps
+## 12. Next Steps
 
 1. **Review this RP document.** Explicit operator reply of `接受` (or equivalent)
    required before any EX phase begins.
 
-2. **After acceptance**: Execute EX-1 through EX-6 in order, each returning to
-   an RP/REVIEW batch between phases.
+2. **After RP acceptance, before EX-1**: Produce ADR amendments for ADR-0003 §7
+   and ADR-0024 §6. These amendments remove the "WorkBuddy MUST NOT execute"
+   hard boundary and authorize the WorkBuddy execution endpoint identity. ADR
+   amendments must be accepted before EX-4 changes `canExecute=true`; producing
+   them early avoids EX-4 being blocked on a missing authorizing decision.
 
-3. **After EX-6**: Update README security boundaries, mark old "non-executing"
-   language as historical in docs, and open an ADR amendment for ADR-0003 §7
-   and ADR-0024 §6.
+3. **After ADR amendments accepted**: Execute EX-1 through EX-6 in order, each
+   returning to an RP/REVIEW batch between phases.
+
+4. **After EX-6**: Update README security boundaries, mark old "non-executing"
+   language as historical in docs, and update the ADR amendments from §2 above
+   with implementation notes (which tests pass, what the final capability
+   declarations are).
+
+---
+
+## 13. EX-1 Execution Prompt — Endpoint Session Registry
+
+> **Ownership**: This section is the complete, self-contained execution prompt
+> for the EX-1 batch. The executing agent must follow it without expanding scope.
+
+### 13.1 Objective
+
+Add runtime endpoint registration, heartbeat, and offline detection to
+`InMemoryEndpointRegistry`. Endpoints must declare their capabilities at
+registration and remain discoverable while online. No dispatch, no task
+routing, no execution — registry only.
+
+### 13.2 Allowed modification range
+
+- `apps/local-server/src/endpoints/endpoint-registry.ts` — extend existing class
+- `apps/local-server/src/endpoints/mock-endpoints.ts` — update DEFAULT_ENDPOINTS
+- `packages/shared/src/types.ts` — add `'terminal'`, `'workbuddy'` to transport
+  union; add `EndpointSession` fields to `AgentEndpoint`
+- `packages/shared/src/schemas.ts` — validators for new fields
+- `packages/shared/src/constants.ts` — route constants
+- `apps/local-server/src/routes/bridge-api.ts` — four new routes
+- `tests/endpoint-registry.test.mjs` — must pass; update as needed
+
+**Forbidden in EX-1**:
+- Do NOT create new capability fields (`canReason`, `canVerify`). Existing
+  `canReview`/`canSummarize`/`canExecute` are sufficient for EX-2 role selection.
+- Do NOT create provider-capability changes or WorkBuddy execution paths.
+- Do NOT add `pair` / `rebind` commands.
+- Do NOT touch `team-store.ts` or create `project-team-preset-store.ts`.
+- Do NOT add `/inbox`, `/results`, `/log` routes — those are EX-4.
+
+### 13.3 Implementation steps
+
+**Step 1 — Extend AgentEndpoint type**
+
+In `packages/shared/src/types.ts`:
+- Add `'terminal'` and `'workbuddy'` to the `AgentEndpointTransport` union.
+- Add optional fields to `AgentEndpoint`:
+  ```ts
+  projectRef?: string;
+  status?: 'online' | 'offline' | 'busy';
+  lastSeenAt?: number;  // Unix ms timestamp
+  ```
+- Do NOT add `canReason`/`canVerify` to `AgentEndpointCapabilities`.
+
+**Step 2 — Add schemas**
+
+In `packages/shared/src/schemas.ts`:
+- Add `validateAgentEndpointStatus` function: accepts only `'online' | 'offline' | 'busy'`.
+- Add `validateEndpointTransport` function: must include `'terminal'` and `'workbuddy'` in valid set.
+- Add `validateEndpointRegistration` function: checks `endpointId`, `label`,
+  `transport`, `capabilities`; rejects registration with unknown transport.
+- Do NOT modify the WorkBuddy execution rejection on line 1117 — that's EX-4.
+
+**Step 3 — Add route constants**
+
+In `packages/shared/src/constants.ts`:
+- Add `ENDPOINTS_PATH = '/bridge/endpoints'` (or inline in routes).
+
+**Step 4 — Extend InMemoryEndpointRegistry**
+
+In `apps/local-server/src/endpoints/endpoint-registry.ts`:
+- Add `register(endpoint: AgentEndpoint): EndpointRegistryResult` — stores
+  endpoint with `status: 'online'`, `lastSeenAt: Date.now()`. Rejects duplicate
+  `endpointId` unless re-registering (same id → update status to online).
+- Add `heartbeat(endpointId: string): EndpointRegistryResult` — updates
+  `lastSeenAt` to `Date.now()`, sets status to `online`. Returns error if
+  endpoint not found or already `offline`.
+- Add `offline(endpointId: string, reason?: string): EndpointRegistryResult` —
+  sets status to `offline`, records reason in returned result.
+- Add `listOnline(): AgentEndpoint[]` — returns endpoints with `status === 'online'`.
+- Add `listByProject(projectRef: string): AgentEndpoint[]` — filters by `projectRef`.
+- Add `exportEndpoints()` / `hydrateEndpoint(endpoint: AgentEndpoint)` for
+  snapshot persistence (follow same pattern as `json-snapshot-store.ts`).
+
+**Step 5 — Add mock endpoints**
+
+In `apps/local-server/src/endpoints/mock-endpoints.ts`:
+- Add `workbuddy-executor` endpoint definition:
+  ```ts
+  {
+    id: 'workbuddy-executor',
+    label: 'WorkBuddy Executor',
+    transport: 'workbuddy',
+    risk: 'medium',
+    capabilities: { canAcceptPrompt: true, canReturnOutput: true,
+                    canReview: true, canExecute: false, canSummarize: false },
+    adapterName: 'workbuddy-execution',
+    experimental: true,
+  }
+  ```
+  Note: `canExecute: false` in mock — stays false until EX-4. This endpoint
+  exists in the registry but won't pass execution dispatch until EX-4.
+- Add `claude-code-command` with `transport: 'command'` (if not already present
+  with that transport — verify against existing definitions).
+- Extend `DEFAULT_AGENT_ENDPOINTS` array.
+
+**Step 6 — Add HTTP routes**
+
+In `apps/local-server/src/routes/bridge-api.ts`:
+- `POST /bridge/endpoints/register` — body: `{ endpointId, label, transport,
+  capabilities, projectRef? }`. Validates with schemas, calls `registry.register()`.
+  Returns 201 with registered endpoint or 409 on duplicate.
+- `POST /bridge/endpoints/:id/heartbeat` — calls `registry.heartbeat(id)`.
+  Returns 200 or 404.
+- `GET /bridge/endpoints` — calls `registry.list()`. Supports optional query
+  params: `?projectRef=X` → `listByProject(X)`, `?online=true` → `listOnline()`.
+- `POST /bridge/endpoints/:id/offline` — body: `{ reason? }`. Calls
+  `registry.offline(id, reason)`. Returns 200 or 404.
+- All routes require origin guard + pairing token (standard `/bridge/*` auth).
+
+**Step 7 — Tests**
+
+In `tests/endpoint-registry.test.mjs`:
+- Test: register endpoint → status online, lastSeenAt set.
+- Test: heartbeat updates lastSeenAt.
+- Test: offline sets status offline.
+- Test: duplicate register returns error (unless re-registering same id).
+- Test: listOnline excludes offline endpoints.
+- Test: listByProject filters correctly.
+- Test: heartbeat on offline endpoint returns error.
+- Test: endpoint with `transport: 'workbuddy'` registers successfully.
+- Test: endpoint with `transport: 'terminal'` registers successfully.
+- Test: transport union validation rejects unknown transports.
+- Test: status union validation rejects invalid status values.
+
+### 13.4 Verification commands
+
+```bash
+node --experimental-strip-types --test tests/endpoint-registry.test.mjs
+npm run typecheck
+npm test
+```
+
+All existing tests must continue to pass. No test regressions.
+
+### 13.5 Deliverables
+
+- Modified: `packages/shared/src/types.ts`, `schemas.ts`, `constants.ts`
+- Modified: `endpoint-registry.ts`, `mock-endpoints.ts`
+- Modified: `bridge-api.ts` (four new routes)
+- Modified/verified: `tests/endpoint-registry.test.mjs`
+- Report: changed files list, test results, any boundary evidence
+
+---
+
+## 14. Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v1 (initial) | 2026-06-29 | Initial RP draft |
+| v2 (review patch) | 2026-06-29 | Must-fix: (1) team-store.ts → new `project-team-preset-store.ts` (2) `console.ts` → `project-console.ts` for command routing (3) ADR amendment timing moved before EX-4 (4) "already reviews" → target capability language (5) Added complete EX-1 prompt. Recommended: (6) snapshot immutable→versioned/audited replacement (7) removed `canReason`/`canVerify` from AgentEndpoint (8) persistence & migration §7 (9) command acceptance tests §8 |
