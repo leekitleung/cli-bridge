@@ -2170,6 +2170,42 @@ export function isBridgePath(pathname: string): boolean {
     (typeof pathname === 'string' && pathname.startsWith(`${BRIDGE_ENDPOINTS_PATH}/`));
 }
 
+/**
+ * Validate endpoint references for rebind: must exist, be online, and have
+ * correct role capabilities (planner → canReview, executor → canExecute).
+ */
+function validateRebindEndpoints(
+  runtime: BridgeRuntime,
+  plannerEndpointId: string,
+  executorEndpointId: string,
+  verifierEndpointId?: string,
+): BridgeResult | null {
+  const plannerEp = runtime.endpointRegistry.get(plannerEndpointId);
+  if (!plannerEp || plannerEp.status === 'offline') {
+    return error(400, `Planner endpoint "${plannerEndpointId}" not found or offline`);
+  }
+  if (!plannerEp.capabilities.canReview) {
+    return error(400, `Planner endpoint "${plannerEndpointId}" does not have canReview capability`);
+  }
+  const execEp = runtime.endpointRegistry.get(executorEndpointId);
+  if (!execEp || execEp.status === 'offline') {
+    return error(400, `Executor endpoint "${executorEndpointId}" not found or offline`);
+  }
+  if (!execEp.capabilities.canExecute) {
+    return error(400, `Executor endpoint "${executorEndpointId}" does not have canExecute capability`);
+  }
+  if (verifierEndpointId) {
+    const verEp = runtime.endpointRegistry.get(verifierEndpointId);
+    if (!verEp || verEp.status === 'offline') {
+      return error(400, `Verifier endpoint "${verifierEndpointId}" not found or offline`);
+    }
+    if (!verEp.capabilities.canReview) {
+      return error(400, `Verifier endpoint "${verifierEndpointId}" does not have canReview capability`);
+    }
+  }
+  return null;
+}
+
 export async function handleBridgeRequest(
   runtime: BridgeRuntime,
   method: string,
@@ -3001,6 +3037,12 @@ export async function handleBridgeRequest(
     const body = parsed.body as Record<string, unknown>;
     const taskId = requireString(body, 'taskId');
     if (!taskId) return error(400, 'taskId is required');
+    // Validate the task belongs to this endpoint — prevent cross-endpoint result injection.
+    const task = runtime.workbuddyExecution.getTask(taskId);
+    if (!task) return error(404, 'Task not found');
+    if (task.endpointId !== resultsMatch.id) {
+      return error(403, 'Task belongs to endpoint ' + task.endpointId + ', not ' + resultsMatch.id);
+    }
     const outcomeOk = typeof body.ok === 'boolean' ? body.ok : false;
     const result = runtime.workbuddyExecution.recordResult(taskId, {
       ok: outcomeOk,
@@ -3209,8 +3251,7 @@ export async function handleBridgeRequest(
       if (typeof body.executorEndpointId !== 'string' || body.executorEndpointId.trim().length === 0) {
         return error(400, 'executorEndpointId is required');
       }
-      // Validate endpoints are registered and online.
-      const onlineIds = new Set(runtime.endpointRegistry.listOnline().map(e => e.id));
+      // Validate endpoints are registered, online, and have correct role capabilities.
       const preset = {
         projectId: presetPath.key,
         plannerEndpointId: body.plannerEndpointId as string,
@@ -3220,7 +3261,7 @@ export async function handleBridgeRequest(
         isolation: 'patch-only' as const,
         updatedAt: 0,
       };
-      const validation = validateProjectTeamPreset(preset, onlineIds);
+      const validation = validateProjectTeamPreset(preset, runtime.endpointRegistry);
       if (!validation.ok) {
         return error(400, `Invalid preset: ${validation.errors.join(', ')}`);
       }
@@ -4150,6 +4191,10 @@ export async function handleBridgeRequest(
     const goalId = requireString(parsed.body, 'goalId');
     if (!goalId) return error(400, 'goalId is required');
 
+    // Validate goal exists.
+    const goal = runtime.goalStore.getGoal(goalId);
+    if (!goal) return error(404, 'Goal not found');
+
     // Reject rebind after plan is locked.
     const plan = runtime.goalStore.getPlanByGoal(goalId);
     if (plan && plan.status !== 'draft' && plan.status !== 'awaiting-approval') {
@@ -4163,6 +4208,10 @@ export async function handleBridgeRequest(
       if (!plannerEndpointId || !executorEndpointId) {
         return error(400, 'plannerEndpointId and executorEndpointId are required for first binding');
       }
+      // Validate endpoints exist, are online, and have required capabilities.
+      const epErr = validateRebindEndpoints(runtime, plannerEndpointId, executorEndpointId,
+        typeof parsed.body.verifierEndpointId === 'string' ? parsed.body.verifierEndpointId : undefined);
+      if (epErr) return epErr;
       const snapshot = runtime.bindingSnapshotStore.createManual({
         goalId,
         plannerEndpointId,
@@ -4174,15 +4223,21 @@ export async function handleBridgeRequest(
       return created({ binding: snapshot });
     }
 
-    // Rebind existing snapshot — versioned replacement.
+    // Rebind existing snapshot — versioned replacement. Validate any new endpoints.
     const updates: Record<string, string | undefined> = {};
     if (typeof parsed.body.executorEndpointId === 'string') updates.executorEndpointId = parsed.body.executorEndpointId;
     if (typeof parsed.body.plannerEndpointId === 'string') updates.plannerEndpointId = parsed.body.plannerEndpointId;
-    if (typeof parsed.body.verifierEndpointId === 'string') updates.verifierEndpointId = parsed.body.verifierEndpointId;
+    const newVerifier = typeof parsed.body.verifierEndpointId === 'string' ? parsed.body.verifierEndpointId : undefined;
+    if (newVerifier !== undefined) updates.verifierEndpointId = newVerifier;
     if (Object.keys(updates).length === 0) {
       const latest = runtime.bindingSnapshotStore.getLatest(goalId);
       return ok({ binding: latest, message: 'No changes requested' });
     }
+    const epErr = validateRebindEndpoints(runtime,
+      updates.plannerEndpointId ?? runtime.bindingSnapshotStore.getLatest(goalId)?.plannerEndpointId ?? '',
+      updates.executorEndpointId ?? runtime.bindingSnapshotStore.getLatest(goalId)?.executorEndpointId ?? '',
+      updates.verifierEndpointId);
+    if (epErr) return epErr;
     const snapshot = runtime.bindingSnapshotStore.rebind(goalId, updates);
     if (!snapshot) return error(404, 'Goal not found or has no snapshot');
     runtime.persist();

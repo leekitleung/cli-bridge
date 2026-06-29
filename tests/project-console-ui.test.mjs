@@ -106,12 +106,15 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
     '/bridge/projects',
     '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
+    '/bridge/endpoints?online=true',
     '/bridge/goals/approve',
     '/bridge/goals/step',
     '/bridge/goals/cancel',
     '/bridge/goals/plan',
     '/bridge/goals/gate',
     '/bridge/goals',
+    '/bridge/goals/binding?goalId=',
+    '/bridge/goals/rebind',
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
@@ -246,12 +249,15 @@ test('project switch loading still only fetches /bridge/projects*', () => {
     '/bridge/projects',
     '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
+    '/bridge/endpoints?online=true',
     '/bridge/goals/approve',
     '/bridge/goals/step',
     '/bridge/goals/cancel',
     '/bridge/goals/plan',
     '/bridge/goals/gate',
     '/bridge/goals',
+    '/bridge/goals/binding?goalId=',
+    '/bridge/goals/rebind',
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
@@ -311,12 +317,15 @@ test('all bridge paths in console are within the allowed set', () => {
     '/bridge/projects',
     '/bridge/projects?includeArchived=true',
     '/bridge/projects/',
+    '/bridge/endpoints?online=true',
     '/bridge/goals/approve',
     '/bridge/goals/step',
     '/bridge/goals/cancel',
     '/bridge/goals/plan',
     '/bridge/goals/gate',
     '/bridge/goals',
+    '/bridge/goals/binding?goalId=',
+    '/bridge/goals/rebind',
     '/bridge/reviews',
     '/bridge/reviews/confirm',
     '/bridge/reviews/dispatch',
@@ -343,11 +352,10 @@ test('project create is command-only and calls POST /bridge/projects', () => {
   assert.equal(/\/(exec|shell)['"`]/.test(html), false);
 });
 
-// v2.2/v2.20: Tasks/WorkBuddy context present and non-executing labeled.
+// v2.2/v2.20/EX-4: Tasks/WorkBuddy context present, execution gated.
 test('Tasks context is present and no exec/shell paths', () => {
   const html = renderProjectConsoleHtml();
   assert.ok(html.includes('workbuddy'), 'workbuddy tasks context should exist');
-  assert.ok(html.includes('Non-executing') || html.includes('non-executing'),
-    'workbuddy should be labeled as non-executing');
+  // EX-4: WorkBuddy is now a gated execution endpoint — "Non-executing" label removed.
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
 });

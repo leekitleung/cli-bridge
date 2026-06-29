@@ -9,6 +9,7 @@
 // capture their own binding snapshots at creation time (EX-3).
 
 import type { ProjectTeamPreset } from '../../../../packages/shared/src/types.ts';
+import type { InMemoryEndpointRegistry } from '../endpoints/endpoint-registry.ts';
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -23,7 +24,7 @@ export interface PresetValidationResult {
 
 export function validateProjectTeamPreset(
   value: unknown,
-  onlineEndpointIds: Set<string>,
+  registry: InMemoryEndpointRegistry,
 ): PresetValidationResult {
   const errors: string[] = [];
   if (!value || typeof value !== 'object') {
@@ -34,21 +35,39 @@ export function validateProjectTeamPreset(
   if (typeof p.projectId !== 'string' || p.projectId.trim().length === 0) {
     errors.push('projectId is required');
   }
+  // Planner: must be online and canReview=true.
   if (typeof p.plannerEndpointId !== 'string' || p.plannerEndpointId.trim().length === 0) {
     errors.push('plannerEndpointId is required');
-  } else if (!onlineEndpointIds.has(p.plannerEndpointId)) {
-    errors.push(`planner endpoint "${p.plannerEndpointId}" not found or offline`);
+  } else {
+    const plannerEp = registry.get(p.plannerEndpointId);
+    if (!plannerEp || plannerEp.status !== 'online') {
+      errors.push(`planner endpoint "${p.plannerEndpointId}" not found or offline`);
+    } else if (!plannerEp.capabilities.canReview) {
+      errors.push(`planner endpoint "${p.plannerEndpointId}" does not have canReview capability`);
+    }
   }
+  // Executor: must be online and canExecute=true.
   if (typeof p.executorEndpointId !== 'string' || p.executorEndpointId.trim().length === 0) {
     errors.push('executorEndpointId is required');
-  } else if (!onlineEndpointIds.has(p.executorEndpointId)) {
-    errors.push(`executor endpoint "${p.executorEndpointId}" not found or offline`);
+  } else {
+    const execEp = registry.get(p.executorEndpointId);
+    if (!execEp || execEp.status !== 'online') {
+      errors.push(`executor endpoint "${p.executorEndpointId}" not found or offline`);
+    } else if (!execEp.capabilities.canExecute) {
+      errors.push(`executor endpoint "${p.executorEndpointId}" does not have canExecute capability`);
+    }
   }
+  // Verifier: must be online and canReview=true if specified.
   if (p.verifierEndpointId !== undefined) {
     if (typeof p.verifierEndpointId !== 'string' || p.verifierEndpointId.trim().length === 0) {
       errors.push('verifierEndpointId must be a non-empty string when present');
-    } else if (!onlineEndpointIds.has(p.verifierEndpointId)) {
-      errors.push(`verifier endpoint "${p.verifierEndpointId}" not found or offline`);
+    } else {
+      const verEp = registry.get(p.verifierEndpointId);
+      if (!verEp || verEp.status !== 'online') {
+        errors.push(`verifier endpoint "${p.verifierEndpointId}" not found or offline`);
+      } else if (!verEp.capabilities.canReview) {
+        errors.push(`verifier endpoint "${p.verifierEndpointId}" does not have canReview capability`);
+      }
     }
   }
   if (p.mode !== 'sequential') {

@@ -13,6 +13,7 @@ import {
 } from '../adapters/command-review-adapter.ts';
 import type { ProviderCapabilityDeclaration } from '../storage/provider-capability.ts';
 import type { InMemoryExecutionProposalStore } from '../storage/execution-proposal-store.ts';
+import type { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 
 export interface DispatchExecutionProposalInput extends CommandRunOptions {
   store: InMemoryExecutionProposalStore;
@@ -20,6 +21,10 @@ export interface DispatchExecutionProposalInput extends CommandRunOptions {
   binding: RunEndpointBinding;
   plan: Plan;
   providerCapability: ProviderCapabilityDeclaration | undefined;
+  /** Required for dispatch to workbuddy endpoints. */
+  workbuddyAdapter?: WorkBuddyExecutionAdapter;
+  /** Working directory for workbuddy execution tasks. */
+  workingDirectory?: string;
   now?: number;
 }
 
@@ -94,6 +99,37 @@ export async function dispatchExecutionProposal(
       proposal: input.store.pause(proposal.id, 'provider-endpoint-mismatch', now),
     };
   }
+
+  // WorkBuddy execution path: enqueue to inbox instead of running a CLI command.
+  // WorkBuddy pulls tasks via GET /bridge/endpoints/:id/inbox/next and returns
+  // structured results via POST /bridge/endpoints/:id/results.
+  if (input.providerCapability.kind === 'workbuddy') {
+    if (!input.workbuddyAdapter) {
+      return {
+        ok: false,
+        failureReason: 'workbuddy-adapter-not-configured',
+        proposal: input.store.pause(proposal.id, 'workbuddy-adapter-not-configured', now),
+      };
+    }
+    const endpoint = input.binding.executionEndpointId;
+    input.store.markDispatching(proposal.id, now);
+    const task = input.workbuddyAdapter.enqueue({
+      endpointId: endpoint,
+      proposalId: proposal.id,
+      planId: input.binding.planId,
+      goalId: input.binding.goalId,
+      bindingHash: input.binding.bindingHash,
+      prompt: proposal.stdin ?? '',
+      workingDirectory: input.workingDirectory ?? process.cwd(),
+      timeoutMs: input.timeoutMs,
+    });
+    // Proposal stays in 'dispatching' — result arrives via POST /results.
+    return {
+      ok: true,
+      proposal: input.store.get(input.proposalId),
+    };
+  }
+
   const invocationFailure = validateExecutionInvocation(
     input.providerCapability,
     proposal.command,

@@ -5,6 +5,28 @@ import {
   InMemoryProjectTeamPresetStore,
   validateProjectTeamPreset,
 } from '../apps/local-server/src/storage/project-team-preset-store.ts';
+import { InMemoryEndpointRegistry } from '../apps/local-server/src/endpoints/endpoint-registry.ts';
+
+// Helper: create a registry with endpoints having given capabilities.
+function makeRegistry(endpoints) {
+  const registry = new InMemoryEndpointRegistry();
+  for (const ep of endpoints) {
+    registry.register({
+      id: ep.id,
+      label: ep.label ?? ep.id,
+      transport: 'command',
+      risk: 'medium',
+      capabilities: {
+        canAcceptPrompt: true,
+        canReturnOutput: true,
+        canReview: ep.canReview ?? false,
+        canExecute: ep.canExecute ?? false,
+        canSummarize: false,
+      },
+    });
+  }
+  return registry;
+}
 
 // ── Store CRUD ──
 
@@ -105,40 +127,76 @@ test('hydratePreset skips invalid records', () => {
 // ── Validation ──
 
 test('validateProjectTeamPreset rejects missing planner', () => {
-  const online = new Set(['claude-code-command', 'codex-command']);
+  const registry = makeRegistry([
+    { id: 'codex-command', canExecute: true },
+  ]);
   const result = validateProjectTeamPreset({
     projectId: 'test', executorEndpointId: 'codex-command', mode: 'sequential', isolation: 'patch-only',
-  }, online);
+  }, registry);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(e => e.includes('planner')));
 });
 
-test('validateProjectTeamPreset rejects offline endpoint', () => {
-  const online = new Set(['claude-code-command']); // codex-command not in set
+test('validateProjectTeamPreset rejects offline/missing endpoint', () => {
+  const registry = makeRegistry([
+    { id: 'claude-code-command', canReview: true },
+  ]);
   const result = validateProjectTeamPreset({
     projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'codex-command',
     mode: 'sequential', isolation: 'patch-only',
-  }, online);
+  }, registry);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(e => e.includes('codex-command')));
 });
 
+test('validateProjectTeamPreset rejects executor without canExecute', () => {
+  const registry = makeRegistry([
+    { id: 'claude-code-command', canReview: true },
+    { id: 'codex-command', canReview: true, canExecute: false },
+  ]);
+  const result = validateProjectTeamPreset({
+    projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'codex-command',
+    mode: 'sequential', isolation: 'patch-only',
+  }, registry);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(e => e.includes('canExecute')));
+});
+
+test('validateProjectTeamPreset rejects planner without canReview', () => {
+  const registry = makeRegistry([
+    { id: 'claude-code-command', canReview: false, canExecute: true },
+    { id: 'codex-command', canExecute: true },
+  ]);
+  const result = validateProjectTeamPreset({
+    projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'codex-command',
+    mode: 'sequential', isolation: 'patch-only',
+  }, registry);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(e => e.includes('canReview')));
+});
+
 test('validateProjectTeamPreset rejects invalid mode', () => {
-  const online = new Set(['claude-code-command', 'codex-command']);
+  const registry = makeRegistry([
+    { id: 'claude-code-command', canReview: true },
+    { id: 'codex-command', canExecute: true },
+  ]);
   const result = validateProjectTeamPreset({
     projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'codex-command',
     mode: 'parallel', isolation: 'patch-only',
-  }, online);
+  }, registry);
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(e => e.includes('mode')));
 });
 
 test('validateProjectTeamPreset accepts valid preset', () => {
-  const online = new Set(['claude-code-command', 'codex-command']);
+  const registry = makeRegistry([
+    { id: 'workbuddy', canExecute: true, canReview: true },
+    { id: 'claude-code-command', canReview: true },
+  ]);
   const result = validateProjectTeamPreset({
-    projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'codex-command',
-    verifierEndpointId: 'codex-command', mode: 'sequential', isolation: 'patch-only',
-  }, online);
+    projectId: 'test', plannerEndpointId: 'claude-code-command', executorEndpointId: 'workbuddy',
+    mode: 'sequential', isolation: 'patch-only',
+  }, registry);
   assert.equal(result.ok, true);
   assert.equal(result.errors.length, 0);
 });

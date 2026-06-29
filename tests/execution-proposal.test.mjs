@@ -463,7 +463,7 @@ test('dispatch only uses locked execution endpoint through bounded adapter and p
   assert.equal(store.get(uncertain.id).status, 'paused');
 });
 
-test('dispatch rejects WorkBuddy and arbitrary command or argv input', async () => {
+test('dispatch rejects WorkBuddy without adapter and validates arbitrary command input', async () => {
   const store = new InMemoryExecutionProposalStore();
   const workbuddy = createProposal(store, {
     binding: {
@@ -471,8 +471,8 @@ test('dispatch rejects WorkBuddy and arbitrary command or argv input', async () 
       executionEndpoint: {
         id: 'workbuddy',
         label: 'WorkBuddy',
-        transport: 'mock',
-        capabilities: { canExecute: false },
+        transport: 'workbuddy',
+        capabilities: { canExecute: true },
       },
     },
     plan: { targetEndpointId: 'workbuddy' },
@@ -493,6 +493,7 @@ test('dispatch rejects WorkBuddy and arbitrary command or argv input', async () 
     now: 1793000000005,
   });
 
+  // No workbuddyAdapter → fails with adapter-not-configured.
   const rejected = await dispatchExecutionProposal({
     store,
     proposalId: workbuddy.id,
@@ -501,24 +502,16 @@ test('dispatch rejects WorkBuddy and arbitrary command or argv input', async () 
       executionEndpoint: {
         id: 'workbuddy',
         label: 'WorkBuddy',
-        transport: 'mock',
-        capabilities: { canExecute: false },
+        transport: 'workbuddy',
+        capabilities: { canExecute: true },
       },
     }),
     plan: samplePlan(),
     providerCapability: KNOWN_PROVIDER_CAPABILITIES.workbuddy,
     now: 1793000000006,
-    runner: {
-      async run() {
-        throw new Error('must not run');
-      },
-    },
-    launcherResolver(command) {
-      return { executable: `/fake/${command}`, prependArgs: [] };
-    },
   });
   assert.equal(rejected.ok, false);
-  assert.equal(rejected.failureReason, 'execution-endpoint-cannot-execute');
+  assert.equal(rejected.failureReason, 'workbuddy-adapter-not-configured');
 
   const wrongCommand = createProposal(store, {
     artifact: { artifactId: 'artifact-wrong-command' },
