@@ -338,10 +338,19 @@ boundaries, not "best effort."
 
 ### 4.1 ADRs that need amendment
 
-| ADR | Current statement | Change |
-|-----|-------------------|--------|
-| ADR-0003 §7 | WorkBuddy "MUST NOT trigger execution, MUST NOT bypass plan approval, MUST NOT become a controller" | Keep MUST NOT bypass/must-not-controller. Remove MUST NOT trigger execution — instead, WorkBuddy may execute *through the middle layer only*. Add: "WorkBuddy execution is mediated by the controlled execution layer (this ADR) and subject to all gates, confirmations, and audit." |
-| ADR-0024 §6 | "Current WorkBuddy identity remains non-executing. A future WorkBuddy execution route requires a separately registered endpoint identity..." | Now is that future. The separately registered endpoint identity is canonical endpoint id `workbuddy`, registered through the endpoint registry with bounded adapter, capability evidence, focused tests. This ADR amendment is the explicit authorization. |
+| ADR | Amendment | Status |
+|-----|-----------|--------|
+| ADR-0003 §7 | `docs/planning/ADR-0003-AMENDMENT-workbuddy-execution.md` | Proposed — awaiting acceptance |
+| ADR-0024 §6 | `docs/planning/ADR-0024-AMENDMENT-workbuddy-endpoint.md` | Proposed — awaiting acceptance |
+
+Full amendment texts are in the linked files. Summary:
+
+- **ADR-0003 §7**: Remove "MUST NOT trigger execution"; add gated execution
+  through controlled execution layer with pull-based inbox, human confirmation,
+  and no self-authorization.
+- **ADR-0024 §6**: Invoke the "future WorkBuddy execution route" clause.
+  Authorize `workbuddy-executor` endpoint (separate from task-system identity).
+  Gate `canExecute=true` behind EX-4 completion.
 
 ### 4.2 New ADR
 
