@@ -163,7 +163,7 @@ test('EX-1: workbuddy executor endpoint registers with correct capabilities', ()
   assert.equal(result.ok, true);
   const ep = registry.get('workbuddy');
   assert.equal(ep.transport, 'workbuddy');
-  assert.equal(ep.capabilities.canExecute, false, 'stays false until EX-4');
+  assert.equal(ep.capabilities.canExecute, true, 'EX-4: canExecute → true');
   assert.equal(ep.capabilities.canReview, true);
   assert.equal(ep.status, 'online');
 });

@@ -34,6 +34,7 @@ import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryProjectTeamPresetStore, validateProjectTeamPreset } from '../storage/project-team-preset-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
+import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { GithubTokenStore } from '../verification/github-token-store.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
@@ -154,6 +155,7 @@ export interface BridgeRuntime {
   teamStore: InMemoryTeamSpecStore;
   presetStore: InMemoryProjectTeamPresetStore;
   bindingSnapshotStore: InMemoryGoalBindingSnapshotStore;
+  workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
@@ -1448,6 +1450,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const teamStore = new InMemoryTeamSpecStore();
   const presetStore = new InMemoryProjectTeamPresetStore();
   const bindingSnapshotStore = new InMemoryGoalBindingSnapshotStore();
+  const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
@@ -1588,6 +1591,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     teamStore,
     presetStore,
     bindingSnapshotStore,
+    workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
@@ -2087,6 +2091,25 @@ function matchEndpointAction(
 ): { matched: true; id: string } | { matched: false } {
   const prefix = `${BRIDGE_ENDPOINTS_PATH}/`;
   const suffix = `/${action}`;
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
+  const raw = pathname.slice(prefix.length, -suffix.length);
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  let decoded: string | undefined;
+  try { decoded = decodeURIComponent(raw); } catch {
+    return { matched: true, id: '' };
+  }
+  return { matched: true, id: decoded.trim() };
+}
+
+/**
+ * Match `/bridge/endpoints/:id/:subPath`.
+ */
+function matchEndpointSubPath(
+  pathname: string,
+  subPath: string,
+): { matched: true; id: string } | { matched: false } {
+  const prefix = `${BRIDGE_ENDPOINTS_PATH}/`;
+  const suffix = `/${subPath}`;
   if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
   const raw = pathname.slice(prefix.length, -suffix.length);
   if (raw.length === 0 || raw.includes('/')) return { matched: false };
@@ -2953,6 +2976,67 @@ export async function handleBridgeRequest(
       return error(status, result.failureReason ?? 'Offline failed');
     }
     return ok({ status: 'offline', endpointId: offlineMatch.id });
+  }
+
+  // ── EX-4: WorkBuddy inbox/result protocol ──
+
+  // GET /bridge/endpoints/:id/inbox/next
+  const inboxMatch = matchEndpointSubPath(pathname, 'inbox/next');
+  if (inboxMatch.matched && method === 'GET') {
+    if (!inboxMatch.id) return error(400, 'Invalid endpoint id');
+    const endpoint = runtime.endpointRegistry.get(inboxMatch.id);
+    if (!endpoint) return error(404, 'Endpoint not found');
+    if (endpoint.transport !== 'workbuddy') return error(400, 'Inbox is only available for workbuddy endpoints');
+    const task = runtime.workbuddyExecution.claimNext(inboxMatch.id);
+    if (!task) return ok({ task: null, message: 'No pending tasks' });
+    return ok({ task });
+  }
+
+  // POST /bridge/endpoints/:id/results
+  const resultsMatch = matchEndpointSubPath(pathname, 'results');
+  if (resultsMatch.matched && method === 'POST') {
+    if (!resultsMatch.id) return error(400, 'Invalid endpoint id');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const body = parsed.body as Record<string, unknown>;
+    const taskId = requireString(body, 'taskId');
+    if (!taskId) return error(400, 'taskId is required');
+    const outcomeOk = typeof body.ok === 'boolean' ? body.ok : false;
+    const result = runtime.workbuddyExecution.recordResult(taskId, {
+      ok: outcomeOk,
+      proposalId: typeof body.proposalId === 'string' ? body.proposalId : '',
+      output: body.output,
+      stdout: typeof body.stdout === 'string' ? body.stdout : undefined,
+      stderr: typeof body.stderr === 'string' ? body.stderr : undefined,
+      exitCode: typeof body.exitCode === 'number' ? body.exitCode : undefined,
+      failureReason: typeof body.failureReason === 'string' ? body.failureReason : undefined,
+      durationMs: typeof body.durationMs === 'number' ? body.durationMs : 0,
+    });
+    if (!result) return error(409, 'Task not found or not claimed');
+    return ok({ result });
+  }
+
+  // POST /bridge/endpoints/:id/log
+  const logMatch = matchEndpointSubPath(pathname, 'log');
+  if (logMatch.matched && method === 'POST') {
+    if (!logMatch.id) return error(400, 'Invalid endpoint id');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const body = parsed.body as Record<string, unknown>;
+    const taskId = requireString(body, 'taskId');
+    if (!taskId) return error(400, 'taskId is required');
+    const kind = typeof body.kind === 'string'
+      && ['info', 'warning', 'error', 'progress'].includes(body.kind)
+      ? body.kind as 'info' | 'warning' | 'error' | 'progress'
+      : 'info';
+    const message = typeof body.message === 'string' ? body.message : '';
+    const entry = runtime.workbuddyExecution.recordLog({
+      taskId,
+      endpointId: logMatch.id,
+      kind,
+      message,
+    });
+    return created({ log: entry });
   }
 
   // ── Phase B Project aggregation and metadata/archive controls ──

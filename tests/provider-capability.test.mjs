@@ -6,8 +6,10 @@ import {
   validateProviderCapability,
 } from '../apps/local-server/src/storage/provider-capability.ts';
 
-test('execution capability registry keeps WorkBuddy non-executing and codex-medium bounded', () => {
-  assert.equal(KNOWN_PROVIDER_CAPABILITIES.workbuddy.canExecute, false);
+test('execution capability registry: WorkBuddy is gated executable, codex-medium bounded', () => {
+  assert.equal(KNOWN_PROVIDER_CAPABILITIES.workbuddy.canExecute, true, 'EX-4: WorkBuddy canExecute → true');
+  assert.equal(KNOWN_PROVIDER_CAPABILITIES.workbuddy.canReview, true);
+  assert.equal(KNOWN_PROVIDER_CAPABILITIES.workbuddy.canVerify, true);
   assert.equal(KNOWN_PROVIDER_CAPABILITIES['codex-medium'].canExecute, true);
   assert.equal(KNOWN_PROVIDER_CAPABILITIES['codex-medium'].endpointId, 'codex-medium');
   assert.equal(KNOWN_PROVIDER_CAPABILITIES['codex-medium'].maxConcurrentBridgeSlots, 1);
@@ -16,8 +18,7 @@ test('execution capability registry keeps WorkBuddy non-executing and codex-medi
 
 test('provider capability validation rejects WorkBuddy execution and endpoint mismatch', () => {
   const workbuddy = validateProviderCapability('workbuddy', 'sequential', 'patch-only', 1, 'workbuddy');
-  assert.equal(workbuddy.ok, false);
-  assert.ok(workbuddy.errors.some(error => error.includes('cannot execute')));
+  assert.equal(workbuddy.ok, true, 'EX-4: WorkBuddy passes execution validation');
 
   const mismatch = validateProviderCapability('codex-medium', 'sequential', 'patch-only', 1, 'codex-command');
   assert.equal(mismatch.ok, false);

@@ -104,11 +104,9 @@ export const MOCK_INBOUND_AGENT_ENDPOINT: AgentEndpoint = {
   adapterName: 'mock-agent',
 };
 
-// WorkBuddy execution endpoint — registered through endpoint registry with
-// pull-based inbox/result protocol. canExecute remains false until EX-4
-// gates are met (inbox/result protocol + adapter). This endpoint exists in
-// the registry so pairing discovery can surface it; execution dispatch
-// rejects it until EX-4.
+// WorkBuddy execution endpoint — pull-based inbox/result protocol.
+// canExecute is now true (EX-4). Execution is gated behind the full
+// middle-layer chain: proposal → confirm → dispatch → audit.
 export const WORKBUDDY_ENDPOINT: AgentEndpoint = {
   id: 'workbuddy',
   label: 'WorkBuddy Executor',
@@ -118,7 +116,7 @@ export const WORKBUDDY_ENDPOINT: AgentEndpoint = {
     canAcceptPrompt: true,
     canReturnOutput: true,
     canReview: true,
-    canExecute: false,
+    canExecute: true,
     canSummarize: false,
   },
   adapterName: 'workbuddy-execution',

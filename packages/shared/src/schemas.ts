@@ -1212,7 +1212,7 @@ export function validateTeamSpecCreate(value: Record<string, unknown>): TeamSpec
 
   // provider
   requireNonEmptyString(value, 'provider', errors);
-  if (value.provider === 'workbuddy') errors.push('WorkBuddy cannot be an executor');
+  // EX-4: WorkBuddy is now a gated execution endpoint. See ADR-0003 amendment.
   requireNonEmptyString(value, 'endpointId', errors);
 
   // Reject forbidden execution fields

@@ -1071,6 +1071,13 @@ async function goalAction(path, body, msg) {
   }
   if (el) { el.textContent = 'done'; }
   setCommandStatus('done');
+  // EX-5: Show binding snapshot if goal creation returned one.
+  if (res.data?.bindingSnapshot) {
+    const snap = res.data.bindingSnapshot;
+    const info = 'Will use: <code>' + escapeHtml(snap.plannerEndpointId) +
+      '</code> → <code>' + escapeHtml(snap.executorEndpointId) + '</code>';
+    appendCommandMessage('goal', info);
+  }
   await refreshAll();
 }
 
@@ -2054,6 +2061,47 @@ async function pairSetCommand(input) {
   setCommandStatus('preset saved');
 }
 
+async function pairContextCommand() {
+  if (!store.activeProjectKey) {
+    appendCommandMessage('pair context', 'No active project.', true);
+    setCommandStatus('no project', true);
+    return;
+  }
+  // Fetch endpoints and preset in parallel.
+  const [epsRes, presetRes] = await Promise.all([
+    api('/bridge/endpoints?online=true', 'GET'),
+    api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/team-preset', 'GET'),
+  ]);
+  const lines = [];
+  // Online endpoints
+  if (epsRes.ok && Array.isArray(epsRes.data?.endpoints)) {
+    lines.push('<strong>Online endpoints:</strong>');
+    for (const ep of epsRes.data.endpoints) {
+      const role = ep.capabilities?.canExecute ? ' (exec)' : ep.capabilities?.canReview ? ' (review)' : '';
+      lines.push('  ' + escapeHtml(ep.id) + role + ' [' + escapeHtml(ep.transport) + ']');
+    }
+  }
+  // Team preset
+  if (presetRes.ok && presetRes.data?.preset) {
+    const p = presetRes.data.preset;
+    lines.push('<strong>Default team:</strong> ' +
+      escapeHtml(p.plannerEndpointId) + ' → ' + escapeHtml(p.executorEndpointId) +
+      (p.verifierEndpointId ? ' → ' + escapeHtml(p.verifierEndpointId) : ''));
+  } else {
+    lines.push('<strong>Default team:</strong> not set');
+  }
+  appendCommandMessage('pair context', lines.join('<br>'));
+  setCommandStatus('pair context shown');
+}
+
+function pairDispatch(input) {
+  appendCommandMessage(input, 'Unknown pair command. Try: ' +
+    '<span class="command-chip">pair context</span> ' +
+    '<span class="command-chip">pair status</span> ' +
+    '<span class="command-chip">pair planner X executor Y</span>', true);
+  setCommandStatus('unknown pair command', true);
+}
+
 function pairHelp() {
   appendCommandMessage('pair', [
     '<span class="command-chip">pair status</span> — show current team preset',
@@ -2312,7 +2360,9 @@ async function handleCommand() {
   if (lc === 'pair status') { await pairStatusCommand(); return; }
   if (lc === 'pair reset') { await pairResetCommand(); return; }
   if (lc.startsWith('pair planner ')) { await pairSetCommand(input); return; }
+  if (lc === 'pair context') { await pairContextCommand(); return; }
   if (lc === 'pair' || lc === 'pair help') { pairHelp(); return; }
+  if (lc.startsWith('pair ')) { await pairDispatch(input); return; }
 
   // ── EX-3: Binding commands ──
 
