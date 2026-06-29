@@ -33,6 +33,7 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryProjectTeamPresetStore, validateProjectTeamPreset } from '../storage/project-team-preset-store.ts';
+import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { GithubTokenStore } from '../verification/github-token-store.ts';
 import { WorkspaceApplyStore } from '../storage/workspace-apply-store.ts';
@@ -152,6 +153,7 @@ export interface BridgeRuntime {
   workbuddyStore: InMemoryWorkBuddyStateStore;
   teamStore: InMemoryTeamSpecStore;
   presetStore: InMemoryProjectTeamPresetStore;
+  bindingSnapshotStore: InMemoryGoalBindingSnapshotStore;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
@@ -1445,6 +1447,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const workbuddyStore = new InMemoryWorkBuddyStateStore();
   const teamStore = new InMemoryTeamSpecStore();
   const presetStore = new InMemoryProjectTeamPresetStore();
+  const bindingSnapshotStore = new InMemoryGoalBindingSnapshotStore();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
@@ -1508,6 +1511,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const p of read.snapshot.teamPresets ?? []) {
         try { presetStore.hydratePreset(p); } catch { }
       }
+      for (const s of read.snapshot.bindingSnapshots ?? []) {
+        try { bindingSnapshotStore.hydrateSnapshot(s); } catch { }
+      }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
         try { verificationRunStore.add(r.projectKey, r); } catch { }
@@ -1544,6 +1550,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teams: teamStore.exportTeams(),
       teamArtifacts: teamStore.exportArtifacts(),
       teamPresets: presetStore.exportPresets(),
+      bindingSnapshots: bindingSnapshotStore.exportSnapshots(),
     }));
     if (!result.ok) {
       persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
@@ -1580,6 +1587,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     workbuddyStore,
     teamStore,
     presetStore,
+    bindingSnapshotStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
@@ -2008,6 +2016,9 @@ export const BRIDGE_GOALS_APPROVE_PATH = '/bridge/goals/approve';
 export const BRIDGE_GOALS_STEP_PATH = '/bridge/goals/step';
 export const BRIDGE_GOALS_GATE_PATH = '/bridge/goals/gate';
 export const BRIDGE_GOALS_CANCEL_PATH = '/bridge/goals/cancel';
+// EX-3: Goal binding snapshot routes.
+export const BRIDGE_GOALS_BINDING_PATH = '/bridge/goals/binding';
+export const BRIDGE_GOALS_REBIND_PATH = '/bridge/goals/rebind';
 export const BRIDGE_AUTOMATION_BINDINGS_PATH = '/bridge/automation/bindings';
 export const BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH = '/bridge/automation/bindings/derive';
 export const BRIDGE_EXECUTION_PROPOSALS_PATH = '/bridge/execution-proposals';
@@ -3387,8 +3398,20 @@ export async function handleBridgeRequest(
     }
     const goal = runtime.goalStore.createGoal({ sessionId, description, projectId: projectId ?? undefined });
     if (projectId) runtime.projectStore.upsert({ key: projectId });
+    // EX-3: Auto-create binding snapshot from project preset.
+    const effectiveProjectId = projectId ?? 'cli-bridge';
+    const preset = runtime.presetStore.get(effectiveProjectId);
+    let bindingSnapshot = null;
+    if (preset) {
+      bindingSnapshot = runtime.bindingSnapshotStore.createFromPreset({
+        goalId: goal.id,
+        plannerEndpointId: preset.plannerEndpointId,
+        executorEndpointId: preset.executorEndpointId,
+        verifierEndpointId: preset.verifierEndpointId,
+      });
+    }
     runtime.persist();
-    return created({ goal });
+    return created({ goal, bindingSnapshot });
   }
 
   if (pathname === BRIDGE_GOALS_PLAN_PATH && method === 'POST') {
@@ -4020,6 +4043,66 @@ export async function handleBridgeRequest(
     }
     runtime.persist();
     return ok({ goal, plan: runtime.goalStore.getPlanByGoal(goalId) });
+  }
+
+  // ── EX-3: Goal Binding Snapshot ──
+
+  // GET /bridge/goals/binding?goalId=...
+  if (pathname === BRIDGE_GOALS_BINDING_PATH && method === 'GET') {
+    const goalId = query?.get('goalId');
+    if (!goalId) return error(400, 'goalId query parameter is required');
+    const snapshot = runtime.bindingSnapshotStore.getLatest(goalId);
+    if (!snapshot) return error(404, 'No binding snapshot for this goal');
+    const history = runtime.bindingSnapshotStore.getHistory(goalId);
+    const plan = runtime.goalStore.getPlanByGoal(goalId);
+    const locked = !!(plan && plan.status !== 'draft' && plan.status !== 'awaiting-approval');
+    return ok({ binding: snapshot, history, locked });
+  }
+
+  // POST /bridge/goals/rebind
+  if (pathname === BRIDGE_GOALS_REBIND_PATH && method === 'POST') {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const goalId = requireString(parsed.body, 'goalId');
+    if (!goalId) return error(400, 'goalId is required');
+
+    // Reject rebind after plan is locked.
+    const plan = runtime.goalStore.getPlanByGoal(goalId);
+    if (plan && plan.status !== 'draft' && plan.status !== 'awaiting-approval') {
+      return error(409, 'Cannot rebind: plan is locked. Derive a new plan instead.');
+    }
+
+    // If no snapshot exists yet, use manual creation path.
+    if (!runtime.bindingSnapshotStore.hasSnapshot(goalId)) {
+      const plannerEndpointId = requireString(parsed.body, 'plannerEndpointId');
+      const executorEndpointId = requireString(parsed.body, 'executorEndpointId');
+      if (!plannerEndpointId || !executorEndpointId) {
+        return error(400, 'plannerEndpointId and executorEndpointId are required for first binding');
+      }
+      const snapshot = runtime.bindingSnapshotStore.createManual({
+        goalId,
+        plannerEndpointId,
+        executorEndpointId,
+        verifierEndpointId: typeof parsed.body.verifierEndpointId === 'string'
+          ? parsed.body.verifierEndpointId : undefined,
+      });
+      runtime.persist();
+      return created({ binding: snapshot });
+    }
+
+    // Rebind existing snapshot — versioned replacement.
+    const updates: Record<string, string | undefined> = {};
+    if (typeof parsed.body.executorEndpointId === 'string') updates.executorEndpointId = parsed.body.executorEndpointId;
+    if (typeof parsed.body.plannerEndpointId === 'string') updates.plannerEndpointId = parsed.body.plannerEndpointId;
+    if (typeof parsed.body.verifierEndpointId === 'string') updates.verifierEndpointId = parsed.body.verifierEndpointId;
+    if (Object.keys(updates).length === 0) {
+      const latest = runtime.bindingSnapshotStore.getLatest(goalId);
+      return ok({ binding: latest, message: 'No changes requested' });
+    }
+    const snapshot = runtime.bindingSnapshotStore.rebind(goalId, updates);
+    if (!snapshot) return error(404, 'Goal not found or has no snapshot');
+    runtime.persist();
+    return ok({ binding: snapshot });
   }
 
   return error(405, 'Method not allowed');

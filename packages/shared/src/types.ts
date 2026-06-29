@@ -773,6 +773,26 @@ export interface ProjectTeamPreset {
   updatedAt: number;
 }
 
+/**
+ * Goal-scoped binding snapshot — copied from project preset at goal creation.
+ * Versioned: rebind creates a new version (audited replacement, not silent
+ * mutation). After plan approval, rebind is forbidden; the locked
+ * RunEndpointBinding is the authoritative version.
+ */
+export interface GoalBindingSnapshot {
+  snapshotId: string;
+  goalId: string;
+  version: number;
+  plannerEndpointId: string;
+  executorEndpointId: string;
+  verifierEndpointId?: string;
+  mode: 'sequential';
+  isolation: 'patch-only';
+  source: 'project-preset' | 'manual' | 'manual-rebind';
+  parentSnapshotId?: string;
+  createdAt: number;
+}
+
 export const REASONING_ARTIFACT_KINDS = [
   'plan-draft',
   'review-result',

@@ -2064,6 +2064,91 @@ function pairHelp() {
   setCommandStatus('pair help shown');
 }
 
+// ── EX-3: Binding commands ──
+
+async function bindingStatusCommand() {
+  const activeGoal = getActiveGoalEntry();
+  if (!activeGoal) {
+    appendCommandMessage('binding status', 'No active goal. Select a goal first.', true);
+    setCommandStatus('no goal', true);
+    return;
+  }
+  const path = '/bridge/goals/binding?goalId=' + encodeURIComponent(activeGoal.goal.id);
+  const res = await api(path, 'GET');
+  if (!res.ok) {
+    if (res.status === 404) {
+      appendCommandMessage('binding status', 'No binding snapshot for this goal.' +
+        '<br>Use <span class="command-chip">rebind planner X executor Y</span> to create one.');
+    } else {
+      appendCommandMessage('binding status', 'Failed: ' + escapeHtml(res.status), true);
+    }
+    setCommandStatus('no binding', true);
+    return;
+  }
+  const data = res.data;
+  const snap = data.binding;
+  const locked = data.locked;
+  const lines = [
+    'Goal: ' + escapeHtml((activeGoal.goal.description || '').slice(0, 80)),
+    'Snapshot: v' + escapeHtml(String(snap.version)) + ' (source: ' + escapeHtml(snap.source) + ')',
+    'Planner:  ' + escapeHtml(snap.plannerEndpointId),
+    'Executor: ' + escapeHtml(snap.executorEndpointId),
+  ];
+  if (snap.verifierEndpointId) {
+    lines.push('Verifier: ' + escapeHtml(snap.verifierEndpointId));
+  }
+  lines.push('Status: ' + (locked ? '<span class="pill gate">locked</span> (plan approved)' : 'unlocked (no plan approved)'));
+  if (data.history && data.history.length > 1) {
+    lines.push('History: ' + data.history.length + ' versions');
+  }
+  appendCommandMessage('binding status', lines.join('<br>'));
+  setCommandStatus('binding shown');
+}
+
+async function rebindCommand(input) {
+  // Usage: rebind executor X | rebind planner X executor Y
+  const activeGoal = getActiveGoalEntry();
+  if (!activeGoal) {
+    appendCommandMessage(input, 'No active goal.', true);
+    setCommandStatus('no goal', true);
+    return;
+  }
+  const args = input.slice('rebind '.length).trim();
+  const parts = args.split(' ');
+  const body = { goalId: activeGoal.goal.id };
+  let i = 0;
+  while (i < parts.length) {
+    const tok = parts[i].toLowerCase();
+    if ((tok === 'executor' || tok === 'planner' || tok === 'verifier') && i + 1 < parts.length) {
+      body[tok + 'EndpointId'] = parts[i + 1];
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+  if (Object.keys(body).length <= 1) {
+    appendCommandMessage(input,
+      'Usage: <span class="command-chip">rebind executor &lt;id&gt;</span> or ' +
+      '<span class="command-chip">rebind planner &lt;id&gt; executor &lt;id&gt;</span>',
+      true);
+    setCommandStatus('rebind syntax error', true);
+    return;
+  }
+  setCommandStatus('rebinding…');
+  const res = await api('/bridge/goals/rebind', 'POST', body);
+  if (!res.ok) {
+    const msg = res.data?.message || res.data?.error || res.status;
+    appendCommandMessage(input, 'Rebind failed: ' + escapeHtml(msg), true);
+    setCommandStatus('rebind failed', true);
+    return;
+  }
+  const snap = res.data.binding;
+  appendCommandMessage(input, 'Binding updated: v' + escapeHtml(String(snap.version)) +
+    ' (<code>' + escapeHtml(snap.plannerEndpointId) + '</code> → ' +
+    '<code>' + escapeHtml(snap.executorEndpointId) + '</code>)');
+  setCommandStatus('rebound');
+}
+
 async function archiveProjectCommand(input, key, action) {
   if (!key) {
     appendCommandMessage(input, 'Usage: <span class="command-chip">project ' + escapeHtml(action) + ' &lt;key&gt;</span>', true);
@@ -2228,6 +2313,11 @@ async function handleCommand() {
   if (lc === 'pair reset') { await pairResetCommand(); return; }
   if (lc.startsWith('pair planner ')) { await pairSetCommand(input); return; }
   if (lc === 'pair' || lc === 'pair help') { pairHelp(); return; }
+
+  // ── EX-3: Binding commands ──
+
+  if (lc === 'binding status') { await bindingStatusCommand(); return; }
+  if (lc.startsWith('rebind ')) { await rebindCommand(input); return; }
 
   if (lc.startsWith('switch project ')) {
     const key = input.slice('switch project '.length).trim();

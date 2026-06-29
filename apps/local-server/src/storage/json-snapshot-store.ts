@@ -77,6 +77,7 @@ export interface BridgeSnapshot {
   teams: TeamSpec[];
   teamArtifacts: SlotArtifact[];
   teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
+  bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
@@ -292,6 +293,7 @@ export interface BuildSnapshotInput {
   teams?: TeamSpec[];
   teamArtifacts?: SlotArtifact[];
   teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
+  bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
 
@@ -316,6 +318,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     teams: input.teams ?? [],
     teamArtifacts: input.teamArtifacts ?? [],
     teamPresets: input.teamPresets ?? [],
+    bindingSnapshots: input.bindingSnapshots ?? [],
     verificationRunRecords: input.verificationRunRecords ?? [],
   };
 }
