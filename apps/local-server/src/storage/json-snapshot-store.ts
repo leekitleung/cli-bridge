@@ -32,6 +32,7 @@ import type {
   InboundMessage,
   RelayContext,
   WebRelayLoop,
+  ExecutionProposal,
 } from '../../../../packages/shared/src/types.ts';
 import {
   assertAuditEvent,
@@ -76,6 +77,8 @@ export interface BridgeSnapshot {
   workbuddyExecutionLedgerEvents: WorkBuddyExecutionLedgerEvent[];
   teams: TeamSpec[];
   teamArtifacts: SlotArtifact[];
+  /** EX-1/2/3/4: execution proposals including WorkBuddy-dispatching proposals. */
+  executionProposals?: ExecutionProposal[];
   teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
   bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
@@ -134,6 +137,7 @@ function parseSnapshot(text: string): SnapshotReadResult {
       workbuddyExecutionLedgerEvents: Array.isArray(parsed.workbuddyExecutionLedgerEvents) ? parsed.workbuddyExecutionLedgerEvents : [],
       teams: Array.isArray(parsed.teams) ? parsed.teams : [],
       teamArtifacts: Array.isArray(parsed.teamArtifacts) ? parsed.teamArtifacts : [],
+      executionProposals: Array.isArray(parsed.executionProposals) ? parsed.executionProposals : undefined,
       teamPresets: Array.isArray(parsed.teamPresets) ? parsed.teamPresets : undefined,
       bindingSnapshots: Array.isArray(parsed.bindingSnapshots) ? parsed.bindingSnapshots : undefined,
       workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
@@ -296,6 +300,7 @@ export interface BuildSnapshotInput {
   workbuddyExecutionLedgerEvents?: WorkBuddyExecutionLedgerEvent[];
   teams?: TeamSpec[];
   teamArtifacts?: SlotArtifact[];
+  executionProposals?: ExecutionProposal[];
   teamPresets?: import('../../../../packages/shared/src/types.ts').ProjectTeamPreset[];
   bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
@@ -322,6 +327,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     workbuddyExecutionLedgerEvents: input.workbuddyExecutionLedgerEvents ?? [],
     teams: input.teams ?? [],
     teamArtifacts: input.teamArtifacts ?? [],
+    executionProposals: input.executionProposals ?? [],
     teamPresets: input.teamPresets ?? [],
     bindingSnapshots: input.bindingSnapshots ?? [],
     workbuddyTasks: input.workbuddyTasks ?? [],

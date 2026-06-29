@@ -548,3 +548,116 @@ test('workbuddyTasks, teamPresets, and bindingSnapshots survive snapshot round-t
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// P1: WorkBuddy task→proposal cross-restart test. WorkBuddy tasks survive
+// restart, but execution proposals must also survive so that POST results
+// does not throw proposal-not-found.
+test('WorkBuddy execution proposals survive restart alongside tasks', () => {
+  const dir = tempDir();
+  try {
+    // Setup a runtime and directly insert a proposal + task into the stores.
+    const first = createBridgeRuntime({ dataDir: dir });
+    first.endpointRegistry.register({
+      id: 'workbuddy', label: 'WorkBuddy Executor', transport: 'workbuddy',
+      risk: 'medium',
+      capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: true, canExecute: true, canSummarize: false },
+    });
+    first.projectStore.upsert({ key: 'test-proj' });
+    const goal = first.goalStore.createGoal({ sessionId: 's1', description: 'Test', projectId: 'test-proj' });
+    const plan = first.goalStore.attachPlan({
+      goalId: goal.id,
+      steps: [{ intent: 'Test step', kind: 'propose-patch', targetEndpointId: 'workbuddy', tier: 'patch-proposal' }],
+    });
+    first.goalStore.approvePlan(plan.id);
+
+    const now = Date.now();
+    const proposal = first.executionProposalStore.createDraft({
+      artifact: {
+        artifactId: 'art-1', goalId: goal.id, planId: plan.id,
+        endpointId: 'chatgpt-web', bindingHash: 'sha256:fake',
+        kind: 'execution-proposal', contentHash: 'sha256:abc', summary: 'test',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      plan,
+      binding: {
+        goalId: goal.id, planId: plan.id,
+        reasoningEndpointId: 'chatgpt-web', executionEndpointId: 'workbuddy',
+        reasoningEndpoint: { id: 'chatgpt-web', label: 'ChatGPT', transport: 'web', capabilities: { canReview: true, canExecute: false } },
+        executionEndpoint: { id: 'workbuddy', label: 'WB', transport: 'workbuddy', capabilities: { canReview: true, canExecute: true } },
+        reasoningTier: 'high', executionTier: 'medium',
+        executionPermissionProfile: 'patch-proposal',
+        executionWorkingDirectoryRef: 'default',
+        maxSteps: 3, maxReasoningRounds: 2, deadlineAt: String(now + 3600000),
+        bindingHash: 'sha256:fake', createdAt: now, updatedAt: now,
+      },
+      stepId: plan.steps[0].id, command: 'codex', args: ['-p'],
+      stdin: 'build a todo app', preview: 'Test preview',
+      expiresAt: now + 300000,
+    });
+    first.executionProposalStore.requestConfirmation(proposal.id);
+    const confirmResult = first.executionProposalStore.confirm({
+      proposalId: proposal.id, planId: plan.id, stepId: plan.steps[0].id,
+      artifactId: 'art-1', contentHash: proposal.contentHash,
+      bindingHash: 'sha256:fake', executionEndpointId: 'workbuddy',
+      executionPermissionProfile: 'patch-proposal', projectId: 'default',
+    });
+    assert.ok(confirmResult.ok, 'confirmation succeeded: ' + (confirmResult.failureReason ?? ''));
+    first.workbuddyExecution.enqueue({
+      endpointId: 'workbuddy', proposalId: proposal.id,
+      planId: plan.id, goalId: goal.id, bindingHash: 'sha256:fake',
+      prompt: 'test prompt', workingDirectory: '/tmp',
+    });
+
+    // Build snapshot manually and write raw JSON (avoid Windows fsync EPERM).
+    const snapshot = buildSnapshot({
+      packets: [],
+      auditEvents: [],
+      pendingPrompts: [],
+      goals: [goal],
+      plans: [plan],
+      projects: [{ key: 'test-proj', label: 'Test Project', createdAt: now }],
+      automationBindings: [],
+      workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [],
+      workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [],
+      teams: [],
+      teamArtifacts: [],
+      teamPresets: [],
+      bindingSnapshots: [],
+      workbuddyTasks: first.workbuddyExecution.exportTasks(),
+      executionProposals: first.executionProposalStore.exportAll(),
+    });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, SNAPSHOT_FILENAME), JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+
+    assert.equal(first.executionProposalStore.exportAll().length, 1, 'proposal exists before restart');
+
+    // Simulate restart: load a fresh runtime from the same data dir.
+    const second = createBridgeRuntime({ dataDir: dir });
+    const restoredProposals = second.executionProposalStore.exportAll();
+    assert.equal(restoredProposals.length, 1, 'proposal survives restart');
+    assert.equal(restoredProposals[0].id, proposal.id);
+    assert.equal(restoredProposals[0].status, 'confirmed', 'proposal status preserved');
+
+    // WorkBuddy task should also be restored.
+    assert.equal(second.workbuddyExecution.exportTasks().length, 1, 'task survives restart');
+
+    // Claim the restored task and POST result — must not throw proposal-not-found.
+    const task = second.workbuddyExecution.claimNext('workbuddy');
+    assert.ok(task, 'task can be claimed');
+    const result = second.workbuddyExecution.recordResult(task.taskId, {
+      ok: true, proposalId: task.proposalId, stdout: 'done', stderr: '', exitCode: 0, durationMs: 100,
+    });
+    assert.ok(result, 'result recorded without error');
+    second.executionProposalStore.markReturned(task.proposalId, {
+      stdout: 'done', stderr: '', exitCode: 0,
+    }, Date.now());
+
+    // Final status check.
+    const final = second.executionProposalStore.get(proposal.id);
+    assert.equal(final.status, 'returned', 'proposal lifecycle closed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

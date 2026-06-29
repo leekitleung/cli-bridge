@@ -319,4 +319,15 @@ export class InMemoryExecutionProposalStore {
     this.proposals.set(proposal.id, clone(proposal));
     return clone(proposal);
   }
+
+  /** Snapshot persistence: export all proposals. */
+  exportAll(): ExecutionProposal[] {
+    return Array.from(this.proposals.values(), clone);
+  }
+
+  /** Snapshot persistence: restore a proposal from disk. */
+  hydrateProposal(proposal: ExecutionProposal): void {
+    if (!proposal.id || !proposal.planId || !proposal.goalId) return;
+    this.proposals.set(proposal.id, clone(proposal));
+  }
 }

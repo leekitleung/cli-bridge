@@ -1520,6 +1520,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
+      for (const p of read.snapshot.executionProposals ?? []) {
+        try { executionProposalStore.hydrateProposal(p); } catch { }
+      }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
         try { verificationRunStore.add(r.projectKey, r); } catch { }
@@ -1558,6 +1561,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teamPresets: presetStore.exportPresets(),
       bindingSnapshots: bindingSnapshotStore.exportSnapshots(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
+      executionProposals: executionProposalStore.exportAll(),
     }));
     if (!result.ok) {
       persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
