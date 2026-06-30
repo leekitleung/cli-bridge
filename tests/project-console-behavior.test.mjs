@@ -390,6 +390,25 @@ test('typo input creates a goal instead of failing closed', async () => {
   assert.ok(!document.getElementById('command-log').textContent.includes('Unknown command'));
 });
 
+test('unknown slash input strips leading slash and creates a goal', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/goals', { ok: true, status: 201, payload: { goal: { id: 'new-goal', status: 'draft' } } });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await new Promise(r => setTimeout(r, 200));
+
+  await runCommand(document, '/not-a-command');
+
+  const goalCreate = fetchCalls.find(c => c.path === '/bridge/goals' && c.method === 'POST');
+  assert.ok(goalCreate, 'unknown slash input must create a goal');
+  assert.equal(goalCreate.body.description, 'not-a-command', 'leading slash is stripped');
+});
+
 test('command-first workspace renders goal, plan, and next action in the main area', async () => {
   const { document, setFixture } = setupConsole();
 
