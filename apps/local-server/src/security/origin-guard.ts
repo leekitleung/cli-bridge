@@ -71,3 +71,15 @@ export function assertAllowedOrigin(
     message: origin ? 'Invalid origin' : 'Missing origin',
   };
 }
+
+// ADR-0025: Narrow origin gate for the extension claim route.
+// Unlike the general bridge guard, this route must reject non-loopback
+// web origins (including chatgpt.com). Only same-origin Console requests
+// (no Origin header), loopback, and valid Chrome extension origins are
+// permitted. The general ALLOWED_ORIGINS set is NOT included here.
+export function isAllowedClaimOrigin(origin: string | null): boolean {
+  if (!origin) return true;
+  if (isLoopbackOrigin(origin)) return true;
+  if (CHROME_EXTENSION_ORIGIN_PATTERN.test(origin)) return true;
+  return false;
+}

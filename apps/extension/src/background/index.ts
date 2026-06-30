@@ -329,7 +329,7 @@ export async function handleConsoleAutoPairClaim(
     `${LOCAL_SERVER_BASE_URL}/bridge/local-auto-pair/extension-claim`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: ALLOWED_EXTENSION_ORIGIN },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ nonce }),
     },
   );

@@ -184,6 +184,9 @@ test('background exchanges console claim nonce and stores extension session toke
   const result = await handleConsoleAutoPairClaim('claim-abc', async (_url, init) => {
     assert.equal(init.method, 'POST');
     assert.equal(JSON.parse(init.body).nonce, 'claim-abc');
+    // The background must NOT manually set an Origin header; the browser
+    // controls it automatically for extension service worker requests.
+    assert.equal('origin' in (init.headers || {}), false);
     return { ok: true, status: 200, json: async () => ({ extensionSessionToken: 'ext-session' }) };
   });
 

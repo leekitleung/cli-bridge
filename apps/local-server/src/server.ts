@@ -34,7 +34,7 @@ import {
 import {
   assertAllowedOrigin,
   getRequestOrigin,
-  isAllowedOrigin,
+  isAllowedClaimOrigin,
 } from './security/origin-guard.ts';
 import {
   createPairingToken,
@@ -210,8 +210,8 @@ export async function startLocalServer(
 
     if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/extension-claim') {
       const origin = getRequestOrigin(request);
-      if (!isAllowedOrigin(origin, isTestEnvironment())) {
-        writeJson(403, { status: 'error', message: 'Claim only allowed from loopback' }, response);
+      if (!isAllowedClaimOrigin(origin)) {
+        writeJson(403, { status: 'error', message: 'Claim only allowed from loopback or extension' }, response);
         return;
       }
       const chunks: Buffer[] = [];

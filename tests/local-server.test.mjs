@@ -30,6 +30,7 @@ import {
 } from '../packages/shared/src/constants.ts';
 import {
   getRequestOrigin,
+  isAllowedClaimOrigin,
   isAllowedOrigin,
   ORIGIN_HEADER,
 } from '../apps/local-server/src/security/origin-guard.ts';
@@ -174,6 +175,29 @@ test('origin guard helpers work for allowed, blocked, and missing origins', () =
   assert.equal(getRequestOrigin(request), 'https://chatgpt.com');
   assert.equal(ALLOWED_ORIGINS.includes('https://chatgpt.com'), true);
   assert.equal(ALLOWED_ORIGINS.includes(ALLOWED_EXTENSION_ORIGIN), true);
+});
+
+// ADR-0025: narrow claim origin gate — excludes chatgpt.com and general ALLOWED_ORIGINS
+test('narrow claim origin rejects chatgpt.com and unknown origins, allows loopback/extension/null', () => {
+  // null origin (same-origin Console, non-browser client) → allowed
+  assert.equal(isAllowedClaimOrigin(null), true);
+
+  // loopback → allowed
+  assert.equal(isAllowedClaimOrigin('http://127.0.0.1:31337'), true);
+  assert.equal(isAllowedClaimOrigin('http://localhost:9999'), true);
+
+  // valid chrome-extension origin → allowed
+  assert.equal(isAllowedClaimOrigin('chrome-extension://fhchgdnhoghcjnlajjhejikndobkenmi'), true);
+
+  // chatgpt.com → REJECTED (key difference from isAllowedOrigin)
+  assert.equal(isAllowedClaimOrigin('https://chatgpt.com'), false);
+
+  // invalid extension ID → rejected
+  assert.equal(isAllowedClaimOrigin('chrome-extension://not-a-valid-extension-id'), false);
+
+  // random external origins → rejected
+  assert.equal(isAllowedClaimOrigin('https://example.com'), false);
+  assert.equal(isAllowedClaimOrigin('https://evil.example'), false);
 });
 
 test('private health endpoint treats the pairing token as the gate when origin is absent', async (t) => {

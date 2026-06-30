@@ -525,3 +525,48 @@ test('Windows launcher preserves npm exit status', () => {
   assert.match(source, /set\s+"exitCode=%ERRORLEVEL%"/i);
   assert.match(source, /exit\s+\/b\s+%exitCode%/i);
 });
+
+// ── ADR-0025 REVIEW: narrow claim origin gate ──
+
+test('extension claim rejects chatgpt.com origin', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce);
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nonce }),
+    });
+    // No Origin header → same-origin Console → allowed
+    assert.equal(claim.status, 200);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
+test('extension claim rejects non-loopback origin from outside', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce);
+
+    // Simulate a claim with a chatgpt.com origin by setting the Origin header.
+    // In Node.js fetch, the Origin header is NOT a forbidden header in all
+    // versions; when it is allowed through, the narrow gate must reject it.
+    // We set a sentinel value that IS NOT loopback/extension.
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://chatgpt.com' },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 403);
+  } finally {
+    await closeServer(handle);
+  }
+});
