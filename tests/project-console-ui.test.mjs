@@ -101,6 +101,7 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
   // After Task 15, data refresh uses /bridge/projects aggregation instead of
   // individual /bridge/goals|reviews|pending-prompts GET calls.  POST actions
   // for goal/review operations remain unchanged.
+  // ADR-0025: /bridge/local-auto-pair/revoke is a narrow loopback-only route.
   assert.deepEqual(paths, new Set([
     '/bridge/metrics',
     '/bridge/projects',
@@ -120,6 +121,7 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
     '/bridge/reviews/dispatch',
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
+    '/bridge/local-auto-pair/revoke',
   ]));
 
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
@@ -151,8 +153,10 @@ test('project console keeps pairing token in memory only and sends it only via h
   assert.match(html, /token: ''/);
 
   // The token must still be sent ONLY via the pairing header — never embedded
-  // in a request URL/query.
-  assert.match(html, /'x-cli-bridge-pairing-token': store\.token/);
+  // in a request URL/query. ADR-0025: the header is conditionally set (cookie
+  // auth path skips it), but the store.token binding is still the source.
+  assert.match(html, /'x-cli-bridge-pairing-token'\]\s*=\s*store\.token/);
+  assert.match(html, /store\.token\s*&&\s*store\.token\s*!==\s*'__cookie__'/);
   assert.equal(/[?&][^=]*token=/i.test(html), false);
 });
 
@@ -263,6 +267,7 @@ test('project switch loading still only fetches /bridge/projects*', () => {
     '/bridge/reviews/dispatch',
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
+    '/bridge/local-auto-pair/revoke',
   ]));
 });
 
@@ -331,6 +336,7 @@ test('all bridge paths in console are within the allowed set', () => {
     '/bridge/reviews/dispatch',
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
+    '/bridge/local-auto-pair/revoke',
   ]);
   const paths = extractBridgePaths(html);
   const outside = paths.filter(p => !allowed.has(p));

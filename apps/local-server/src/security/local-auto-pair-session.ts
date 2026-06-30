@@ -23,6 +23,16 @@ function token(): string {
   return randomBytes(32).toString('hex');
 }
 
+export interface LocalAutoPairSessionStore {
+  createConsoleSession(): ConsoleSessionBootstrap;
+  verifyConsoleSession(consoleSessionToken: string): boolean;
+  claimExtensionSession(extensionClaimNonce: string):
+    | { ok: true; extensionSessionToken: string }
+    | { ok: false; message: string };
+  verifyExtensionSession(extensionSessionToken: string): boolean;
+  revokeConsoleSession(consoleSessionToken: string): boolean;
+}
+
 export function createLocalAutoPairSessionStore(
   options: LocalAutoPairSessionStoreOptions = {},
 ) {

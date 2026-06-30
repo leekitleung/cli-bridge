@@ -26,12 +26,19 @@ import {
 
 export const CONSOLE_PROJECT_PATH = '/console/project';
 
-export function renderProjectConsoleHtml(): string {
+export function renderProjectConsoleHtml(
+  options?: { extensionClaimNonce?: string },
+): string {
+  const extensionClaimNonce = options?.extensionClaimNonce ?? '';
+  const autoPairMeta = extensionClaimNonce
+    ? `<meta name="cli-bridge-extension-claim" data-extension-claim-nonce="${extensionClaimNonce}" />`
+    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+${autoPairMeta}
 <title>CLI Bridge — Project Workspace</title>
 <style>
 ${PROJECT_UI_BASE_CSS}
@@ -510,6 +517,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <input id="token" type="password" placeholder="pairing token" size="28" aria-label="Pairing token" />
     <button class="secondary" id="connect" aria-label="Connect"><span class="conn-dot" id="conn-dot" aria-hidden="true"></span><span>Connect</span></button>
     <span class="conn-status" id="conn-status" aria-live="polite" role="status"></span>
+    <button type="button" class="secondary" id="revoke-local-session" style="display:none" aria-label="Revoke local session">Revoke</button>
   </div>
 </header>
 
@@ -653,7 +661,10 @@ $('mobile-nav-toggle').addEventListener('click', () => {
 // ─── API ───
 async function api(path, method, body) {
   if (method === undefined) method = 'GET';
-  const headers = { 'x-cli-bridge-pairing-token': store.token };
+  const headers = {};
+  if (store.token && store.token !== '__cookie__') {
+    headers['x-cli-bridge-pairing-token'] = store.token;
+  }
   if (body) headers['content-type'] = 'application/json';
   const res = await fetch(store.base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
@@ -681,6 +692,7 @@ $('connect').addEventListener('click', async () => {
     $('conn-status').textContent = '';
     $('token').value = '';
     appendCommandMessage('connect', 'Connected. Try <span class="command-chip">status</span><span class="command-chip">goal improve README</span><span class="command-chip">verify</span>');
+    $('revoke-local-session').style.display = '';
     await refreshAll();
     if (store.contextView === 'pairing') await openPairingContext();
   } else {
@@ -695,6 +707,61 @@ $('connect').addEventListener('click', async () => {
     appendCommandMessage('connect', 'Connection failed. Check the pairing token printed by the local server and try again.', true);
   }
 });
+
+// ─── Auto-pair (cookie-based) ───
+async function autoPair() {
+  const res = await fetch(store.base + '/health/private', { headers: { origin: store.base } });
+  if (!res.ok) return false;
+  store.connected = true;
+  store.token = '__cookie__';
+  $('conn-dot').classList.add('ok');
+  $('access-pill').classList.remove('pending', 'error');
+  $('access-pill-label').textContent = '自动配对';
+  $('connect').setAttribute('aria-label', 'Connect: auto-paired');
+  $('connect').setAttribute('title', 'Auto-paired');
+  $('conn-status').textContent = 'Local console paired';
+  $('revoke-local-session').style.display = '';
+  $('token').style.display = 'none';
+  $('connect').style.display = 'none';
+  await refreshAll();
+  return true;
+}
+
+// ─── Revoke local session ───
+$('revoke-local-session').addEventListener('click', async () => {
+  $('revoke-local-session').disabled = true;
+  $('revoke-local-session').textContent = 'Revoking…';
+  try {
+    const res = await fetch(store.base + '/bridge/local-auto-pair/revoke', {
+      method: 'POST',
+      headers: { origin: store.base },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      store.connected = false;
+      store.token = '';
+      $('conn-dot').classList.remove('ok');
+      $('access-pill').classList.remove('pending');
+      $('access-pill').classList.add('pending');
+      $('access-pill-label').textContent = '等待配对';
+      $('conn-status').textContent = 'Session revoked. Enter manual token.';
+      $('token').style.display = '';
+      $('connect').style.display = '';
+      $('revoke-local-session').style.display = 'none';
+      appendCommandMessage('revoke', 'Local session revoked. Manual token fallback active.', true);
+    } else {
+      $('conn-status').textContent = data.message || 'Revoke failed';
+    }
+  } finally {
+    $('revoke-local-session').disabled = false;
+    $('revoke-local-session').textContent = 'Revoke';
+  }
+});
+
+// Try auto-pair on load, only when the server has enabled it (nonce meta present)
+if (document.querySelector('[data-extension-claim-nonce]')) {
+  autoPair();
+}
 
 // ─── Refresh — uses /bridge/projects aggregation endpoints ───
 async function refreshAll() {

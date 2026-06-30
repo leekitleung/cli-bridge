@@ -44,6 +44,69 @@ async function closeServer(handle) {
   await new Promise((res) => handle.server.close(() => res()));
 }
 
+// ── RP-2.25 §6: local auto-pair (run first to avoid state interference) ──
+
+test('Project Console auto-pairs with HttpOnly cookie and no token in URL', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    assert.equal(consoleRes.status, 200);
+    const html = await consoleRes.text();
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    assert.match(cookie, /cli_bridge_console_session=/);
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /SameSite=Strict/);
+    assert.equal(html.includes(handle.pairingToken), false);
+    assert.equal(consoleRes.url.includes(handle.pairingToken), false);
+
+    const privateRes = await fetch(`${handle.url}/health/private`, {
+      headers: {
+        cookie,
+        origin: handle.url,
+      },
+    });
+    assert.equal(privateRes.status, 200);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
+test('extension claim nonce can be used once to obtain extension session token', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce, 'expected extension claim nonce');
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+    const payload = await claim.json();
+    assert.equal(typeof payload.extensionSessionToken, 'string');
+    assert.equal(payload.extensionSessionToken.includes(handle.pairingToken), false);
+
+    const replay = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(replay.status, 409);
+
+    const health = await fetch(`${handle.url}/health/private`, {
+      headers: {
+        'x-cli-bridge-pairing-token': payload.extensionSessionToken,
+      },
+    });
+    assert.equal(health.status, 200);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
 // ── §5.1 Passthrough: injected runtime options reach the runtime ──
 
 test('startLocalServer(0, options) threads verifyProfiles/roots into the runtime', async () => {
@@ -394,7 +457,7 @@ test('browser opener handles asynchronous spawn errors without throwing', () => 
 });
 
 test('Windows launcher preserves npm exit status', () => {
-  const source = readFileSync(resolve(__dirname, '../scripts/start-local.cmd'), 'utf8');
+  const   source = readFileSync(resolve(__dirname, '../scripts/start-local.cmd'), 'utf8');
   assert.match(source, /set\s+"exitCode=%ERRORLEVEL%"/i);
   assert.match(source, /exit\s+\/b\s+%exitCode%/i);
 });

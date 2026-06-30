@@ -34,12 +34,17 @@ import {
 import {
   assertAllowedOrigin,
   getRequestOrigin,
+  isAllowedOrigin,
 } from './security/origin-guard.ts';
 import {
   createPairingToken,
   extractPairingTokenFromRequest,
   verifyPairingToken,
 } from './security/pairing.ts';
+import {
+  createLocalAutoPairSessionStore,
+  type LocalAutoPairSessionStore,
+} from './security/local-auto-pair-session.ts';
 
 export interface LocalServerHandle {
   server: ReturnType<typeof createServer>;
@@ -68,6 +73,20 @@ function writeJson(
   response.end(`${JSON.stringify(payload)}\n`);
 }
 
+function parseConsoleSessionCookie(
+  request: IncomingMessage,
+): string | null {
+  const cookieHeader = request.headers.cookie;
+  if (typeof cookieHeader !== 'string') return null;
+  for (const pair of cookieHeader.split(';')) {
+    const [name, ...rest] = pair.trim().split('=');
+    if (name === 'cli_bridge_console_session') {
+      return rest.join('=') || null;
+    }
+  }
+  return null;
+}
+
 function isTestEnvironment(): boolean {
   return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'node:test';
 }
@@ -77,6 +96,7 @@ export async function startLocalServer(
   runtimeOptions?: BridgeRuntimeOptions,
 ): Promise<LocalServerHandle> {
   const pairingToken = createPairingToken();
+  const autoPairStore: LocalAutoPairSessionStore = createLocalAutoPairSessionStore();
   const bridgeRuntime: BridgeRuntime = createBridgeRuntime(runtimeOptions);
   let boundPort = port;
 
@@ -95,6 +115,13 @@ export async function startLocalServer(
       return false;
     }
 
+    // 1. Console cookie auth (same-origin Console requests)
+    const consoleSessionToken = parseConsoleSessionCookie(request);
+    if (consoleSessionToken && autoPairStore.verifyConsoleSession(consoleSessionToken)) {
+      return true;
+    }
+
+    // 2. Pairing token header auth (printed pairing token or extension session token)
     const receivedToken = extractPairingTokenFromRequest(request);
     if (!receivedToken) {
       writeJson(
@@ -105,16 +132,20 @@ export async function startLocalServer(
       return false;
     }
 
-    if (!verifyPairingToken(receivedToken, pairingToken)) {
-      writeJson(
-        403,
-        { status: 'error', message: 'Invalid pairing token' },
-        response,
-      );
-      return false;
+    if (verifyPairingToken(receivedToken, pairingToken)) {
+      return true;
     }
 
-    return true;
+    if (autoPairStore.verifyExtensionSession(receivedToken)) {
+      return true;
+    }
+
+    writeJson(
+      403,
+      { status: 'error', message: 'Invalid pairing token' },
+      response,
+    );
+    return false;
   }
 
   const requestHandler: RequestListener = (request, response) => {
@@ -149,9 +180,14 @@ export async function startLocalServer(
     }
 
     if (request.method === 'GET' && url.pathname === CONSOLE_PROJECT_PATH) {
+      const session = autoPairStore.createConsoleSession();
       response.statusCode = 200;
       response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(renderProjectConsoleHtml());
+      response.setHeader(
+        'set-cookie',
+        `cli_bridge_console_session=${session.consoleSessionToken}; HttpOnly; SameSite=Strict; Path=/`,
+      );
+      response.end(renderProjectConsoleHtml({ extensionClaimNonce: session.extensionClaimNonce }));
       return;
     }
 
@@ -167,6 +203,49 @@ export async function startLocalServer(
         .catch(() => {
           writeJson(500, { status: 'error', message: 'Internal bridge error' }, response);
         });
+      return;
+    }
+
+    // ── Local auto-pair routes (narrow, loopback-only) ──
+
+    if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/extension-claim') {
+      const origin = getRequestOrigin(request);
+      if (!isAllowedOrigin(origin, isTestEnvironment())) {
+        writeJson(403, { status: 'error', message: 'Claim only allowed from loopback' }, response);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString());
+          const result = autoPairStore.claimExtensionSession(body.nonce ?? '');
+          if (!result.ok) {
+            writeJson(409, { status: 'error', message: result.message }, response);
+            return;
+          }
+          writeJson(200, { extensionSessionToken: result.extensionSessionToken }, response);
+        } catch {
+          writeJson(400, { status: 'error', message: 'Invalid request body' }, response);
+        }
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/revoke') {
+      const consoleSessionToken = parseConsoleSessionCookie(request);
+      if (consoleSessionToken && autoPairStore.revokeConsoleSession(consoleSessionToken)) {
+        response.setHeader('set-cookie', 'cli_bridge_console_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+        writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
+        return;
+      }
+      const pairingHeader = extractPairingTokenFromRequest(request);
+      if (pairingHeader && autoPairStore.verifyExtensionSession(pairingHeader)) {
+        autoPairStore.revokeConsoleSession(pairingHeader);
+        writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
+        return;
+      }
+      writeJson(404, { status: 'error', message: 'No active local session found' }, response);
       return;
     }
 
