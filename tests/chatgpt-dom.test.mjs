@@ -987,6 +987,10 @@ test('extension manifest adds ChatGPT content script, clipboard and storage perm
       matches: ['https://chatgpt.com/*'],
       js: ['dist/content/index.js'],
     },
+    {
+      matches: ['http://127.0.0.1:31337/console/project'],
+      js: ['dist/content/console-auto-pair.js'],
+    },
   ]);
   assert.deepEqual(manifest.background, {
     service_worker: 'dist/background/index.js',
