@@ -325,9 +325,10 @@ export class InMemoryExecutionProposalStore {
     return Array.from(this.proposals.values(), clone);
   }
 
-  /** Snapshot persistence: restore a proposal from disk. */
+  /** Snapshot persistence: restore a proposal from disk with schema validation. */
   hydrateProposal(proposal: ExecutionProposal): void {
     if (!proposal.id || !proposal.planId || !proposal.goalId) return;
+    assertExecutionProposal(proposal);
     this.proposals.set(proposal.id, clone(proposal));
   }
 }

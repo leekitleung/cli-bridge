@@ -661,3 +661,31 @@ test('WorkBuddy execution proposals survive restart alongside tasks', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// P2: malformed executionProposals in snapshot must be rejected, not silently
+// loaded into the runtime. v3 fail-closed contract for core records.
+test('malformed executionProposals in snapshot are rejected', () => {
+  const dir = tempDir();
+  try {
+    const snapshot = buildSnapshot({
+      packets: [], auditEvents: [], pendingPrompts: [],
+      goals: [], plans: [], projects: [],
+      automationBindings: [], workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [], workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [], teams: [], teamArtifacts: [],
+      // Malformed: missing required fields (status, command, etc.)
+      executionProposals: [{ id: 'bad-1', planId: 'p1', goalId: 'g1' }],
+    });
+    const rawPath = resolve(dir, SNAPSHOT_FILENAME);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(rawPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+
+    // parseSnapshot via store.read() should reject the malformed record.
+    const store = new JsonSnapshotStore(dir);
+    const read = store.read();
+    assert.equal(read.ok, false, 'malformed snapshot should be rejected');
+    assert.equal(read.error, 'snapshot-invalid-record');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

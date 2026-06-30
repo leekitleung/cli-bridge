@@ -44,6 +44,7 @@ import {
   assertProject,
   assertRunEndpointBinding,
   assertWebRelayLoop,
+  assertExecutionProposal,
 } from '../../../../packages/shared/src/schemas.ts';
 
 export const SNAPSHOT_VERSION = 3;
@@ -155,6 +156,7 @@ function parseSnapshot(text: string): SnapshotReadResult {
       snapshot.plans.forEach(assertPlan);
       snapshot.projects.forEach(assertProject);
       snapshot.automationBindings.forEach(assertRunEndpointBinding);
+      for (const p of snapshot.executionProposals ?? []) assertExecutionProposal(p);
       for (const context of snapshot.relayContexts) {
         if (
           !context ||
