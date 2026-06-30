@@ -550,7 +550,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <span class="composer-pill pending" id="access-pill" title="Local bridge access. Commands route through governed project endpoints."><span class="shield" aria-hidden="true"></span><span id="access-pill-label">未连接</span></span>
       <span class="composer-spacer"></span>
       <span class="composer-mode" title="Project-scoped command mode">Project</span>
-      <button id="command-send" aria-label="Send project command" disabled>↑</button>
+      <button id="command-send" aria-label="Send project command">↑</button>
     </div>
   </div>
   <span class="command-hints">/goals · /reviews · /project · help</span>
@@ -621,7 +621,6 @@ $('connect').addEventListener('click', async () => {
     $('connect').setAttribute('title', 'Connected');
     $('conn-status').textContent = '';
     $('token').value = '';
-    $('command-send').disabled = false;
     appendCommandMessage('connect', 'Connected. Try <span class="command-chip">status</span><span class="command-chip">goal improve README</span><span class="command-chip">verify</span>');
     await refreshAll();
   } else {

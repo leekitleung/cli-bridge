@@ -1151,7 +1151,7 @@ test('v2.14: git-status branch name is HTML-escaped', async () => {
 
 /** Show teams context through the command composer. */
 async function switchToTeamsTab(window, document) {
-  if (document.getElementById('command-send')?.disabled) {
+  if (!document.getElementById('conn-dot')?.classList.contains('ok')) {
     document.getElementById('token').value = 'test';
     document.getElementById('connect').click();
     await new Promise(r => setTimeout(r, 200));
@@ -2014,12 +2014,19 @@ function setupConsoleRp219(seed = {}) {
   return { window: dom.window, document: dom.window.document, calls, storage };
 }
 
-test('RP-2.19: stored pairing token does not pre-fill and does NOT auto-connect', () => {
-  const { document } = setupConsoleRp219({ 'cli-bridge-pairing-token': RP219_TOKEN });
+test('RP-2.19: stored pairing token does not pre-fill and unpaired send only shows inline guidance', () => {
+  const { document, calls } = setupConsoleRp219({ 'cli-bridge-pairing-token': RP219_TOKEN });
   assert.equal(document.getElementById('token').value, '');
   // Manual entry contract: not connected until the operator clicks Connect.
   assert.equal(document.getElementById('conn-status').textContent || '', '');
-  assert.equal(document.getElementById('command-send').disabled, true);
+  assert.equal(document.getElementById('command-send').disabled, false);
+
+  document.getElementById('command-input').value = 'fix README';
+  document.getElementById('command-send').click();
+
+  assert.equal(document.getElementById('command-status').textContent, 'connect required');
+  assert.match(document.getElementById('command-log').textContent, /Connect with the pairing token first/);
+  assert.equal(calls.some((c) => c.url.includes('/bridge/goals')), false);
 });
 
 test('RP-2.19: connect keeps token in memory and sends it only in the pairing header', async () => {
