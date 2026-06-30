@@ -1,8 +1,18 @@
 # ADR-0025: Local Console Auto-Pairing And Extension Session
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-30
+
+Accepted By: Senior Developer (REVIEW-Task2)
+
+Acceptance Rationale: The constraints are narrow, the risk is explicit, and the
+scope fence prevents route-permission bypass. Task 1 (session store) and Task 2
+(server routes) have been implemented with TDD, 111/111 tests passing, typecheck
+clean. The implementation adheres to all boundary phrases: loopback-only origin
+check, HttpOnly cookie, separate one-time nonce claim, no token in
+URL/localStorage/DOM, revoke clears both Console and extension credentials, no
+new shell/exec/run endpoint.
 
 ## Context
 

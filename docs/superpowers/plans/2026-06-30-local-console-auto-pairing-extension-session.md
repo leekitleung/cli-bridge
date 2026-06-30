@@ -914,6 +914,17 @@ Do not commit screenshots or token-bearing artifacts.
 - Are extension permissions limited to `http://127.0.0.1:31337/console/project` and `https://chatgpt.com/*`?
 - Does the implementation preserve route-level authorization and existing operation hashes?
 
+## Execution Status
+
+- ADR-0025: **Accepted** (2026-06-30, REVIEW-Task2)
+- Task 0: ✅ ADR created
+- Task 1: ✅ Session store implemented
+- Task 2: ✅ Server auto-pair routes implemented
+- Task 3: 🔲 Console UI token discipline
+- Task 4: 🔲 Extension claim from local Console
+- Task 5: 🔲 Revoke + safety regression
+- Task 6: 🔲 Browser automation acceptance
+
 ## Execution Recommendation
 
 Use Subagent-Driven execution after ADR acceptance:
@@ -924,4 +935,4 @@ Use Subagent-Driven execution after ADR acceptance:
 4. Task 5 as a bounded repair/hardening batch.
 5. Task 6 by the reviewing agent with real browser/extension evidence.
 
-Do not execute before ADR-0025 is explicitly accepted.
+Do not execute Task 3+ before REVIEW-Task2 is complete.
