@@ -748,10 +748,9 @@ $('revoke-local-session').addEventListener('click', async () => {
       $('token').style.display = '';
       $('connect').style.display = '';
       $('revoke-local-session').style.display = 'none';
-      // Also clear the extension's stored session token when available.
-      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        chrome.runtime.sendMessage({ type: 'cli-bridge-clear-local-session' });
-      }
+      // Notify the extension content script (isolated world) via postMessage
+      // so it can relay the clear request to the extension background.
+      window.postMessage({ type: 'cli-bridge-clear-local-session' }, window.location.origin);
       appendCommandMessage('revoke', 'Local session revoked. Manual token fallback active.', true);
     } else {
       $('conn-status').textContent = data.message || 'Revoke failed';
