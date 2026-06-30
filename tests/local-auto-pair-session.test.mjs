@@ -46,6 +46,18 @@ test('local auto-pair store expires and revokes sessions', () => {
   assert.equal(store.verifyExtensionSession(claimed.extensionSessionToken), false);
 });
 
+test('local auto-pair store revokes sessions by extension token', () => {
+  const store = createLocalAutoPairSessionStore({ now: () => 1000 });
+  const session = store.createConsoleSession();
+  const claimed = store.claimExtensionSession(session.extensionClaimNonce);
+  assert.equal(claimed.ok, true);
+
+  assert.equal(store.revokeExtensionSession(claimed.extensionSessionToken), true);
+  assert.equal(store.verifyConsoleSession(session.consoleSessionToken), false);
+  assert.equal(store.verifyExtensionSession(claimed.extensionSessionToken), false);
+  assert.equal(store.revokeExtensionSession('missing'), false);
+});
+
 test('local auto-pair store rejects unknown tokens', () => {
   const store = createLocalAutoPairSessionStore({ now: () => 1000 });
   assert.equal(store.verifyConsoleSession('nonexistent'), false);

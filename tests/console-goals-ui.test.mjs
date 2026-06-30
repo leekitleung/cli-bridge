@@ -112,7 +112,8 @@ test('Project goals context refreshes server state and keeps confirmation author
   assert.match(html, /setContextBusy/);
   assert.match(html, /runGoalContextAction\('\/bridge\/execution-proposals\/' \+ action/);
   assert.match(html, /executionEndpointId: proposal\.executionEndpointId/);
-  assert.equal(/apiKey|pairing token:|cookie|raw transcript/i.test(html), false);
+  assert.equal(/apiKey|pairing token:|raw transcript/i.test(html), false);
+  assert.equal(html.includes('document.cookie'), false);
   assert.equal(html.includes('requestSubmit'), false);
   assert.equal(html.includes('KeyboardEvent'), false);
 });

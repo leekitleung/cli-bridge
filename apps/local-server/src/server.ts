@@ -233,6 +233,17 @@ export async function startLocalServer(
     }
 
     if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/revoke') {
+      const origin = getRequestOrigin(request);
+      const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
+      if (!originCheck.ok) {
+        writeJson(
+          originCheck.statusCode,
+          { status: 'error', message: originCheck.message },
+          response,
+        );
+        return;
+      }
+
       const consoleSessionToken = parseConsoleSessionCookie(request);
       if (consoleSessionToken && autoPairStore.revokeConsoleSession(consoleSessionToken)) {
         response.setHeader('set-cookie', 'cli_bridge_console_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
@@ -240,8 +251,7 @@ export async function startLocalServer(
         return;
       }
       const pairingHeader = extractPairingTokenFromRequest(request);
-      if (pairingHeader && autoPairStore.verifyExtensionSession(pairingHeader)) {
-        autoPairStore.revokeConsoleSession(pairingHeader);
+      if (pairingHeader && autoPairStore.revokeExtensionSession(pairingHeader)) {
         writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
         return;
       }

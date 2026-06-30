@@ -31,6 +31,7 @@ export interface LocalAutoPairSessionStore {
     | { ok: false; message: string };
   verifyExtensionSession(extensionSessionToken: string): boolean;
   revokeConsoleSession(consoleSessionToken: string): boolean;
+  revokeExtensionSession(extensionSessionToken: string): boolean;
 }
 
 export function createLocalAutoPairSessionStore(
@@ -87,6 +88,12 @@ export function createLocalAutoPairSessionStore(
     revokeConsoleSession(consoleSessionToken: string): boolean {
       const record = byConsole.get(consoleSessionToken);
       if (!record) return false;
+      record.revokedAt = now();
+      return true;
+    },
+    revokeExtensionSession(extensionSessionToken: string): boolean {
+      const record = byExtension.get(extensionSessionToken);
+      if (!active(record)) return false;
       record.revokedAt = now();
       return true;
     },

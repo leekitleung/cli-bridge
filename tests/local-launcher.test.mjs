@@ -107,6 +107,70 @@ test('extension claim nonce can be used once to obtain extension session token',
   }
 });
 
+test('local auto-pair revoke with extension token invalidates the local session', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    const html = await consoleRes.text();
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce, 'expected extension claim nonce');
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+    const payload = await claim.json();
+
+    const beforeRevoke = await fetch(`${handle.url}/health/private`, {
+      headers: {
+        'x-cli-bridge-pairing-token': payload.extensionSessionToken,
+      },
+    });
+    assert.equal(beforeRevoke.status, 200);
+
+    const revoked = await fetch(`${handle.url}/bridge/local-auto-pair/revoke`, {
+      method: 'POST',
+      headers: {
+        origin: handle.url,
+        'x-cli-bridge-pairing-token': payload.extensionSessionToken,
+      },
+    });
+    assert.equal(revoked.status, 200);
+
+    const extensionAfterRevoke = await fetch(`${handle.url}/health/private`, {
+      headers: {
+        'x-cli-bridge-pairing-token': payload.extensionSessionToken,
+      },
+    });
+    assert.equal(extensionAfterRevoke.status, 403);
+
+    const consoleAfterRevoke = await fetch(`${handle.url}/health/private`, {
+      headers: { cookie, origin: handle.url },
+    });
+    assert.equal(consoleAfterRevoke.status, 401);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
+test('local auto-pair revoke rejects disallowed origins', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    const revoked = await fetch(`${handle.url}/bridge/local-auto-pair/revoke`, {
+      method: 'POST',
+      headers: { cookie, origin: 'https://example.invalid' },
+    });
+    assert.equal(revoked.status, 403);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
 // ── §5.1 Passthrough: injected runtime options reach the runtime ──
 
 test('startLocalServer(0, options) threads verifyProfiles/roots into the runtime', async () => {
