@@ -1917,11 +1917,6 @@ async function fetchGithubChecksCommand(input) {
   }
 }
 
-function connectRequired(input) {
-  appendCommandMessage(input, 'Connect first with the pairing token printed by the local server. Then retry <span class="command-chip">' + escapeHtml(input) + '</span>.', true);
-  setCommandStatus('connect required', true);
-}
-
 function showHelp(input) {
   appendCommandMessage(input, 'Commands: <span class="command-chip">describe work directly</span><span class="command-chip">/goals</span><span class="command-chip">/reviews</span><span class="command-chip">/project</span><span class="command-chip">goal &lt;task&gt;</span><span class="command-chip">status</span><span class="command-chip">history</span><span class="command-chip">plan</span><span class="command-chip">continue</span><span class="command-chip">verify</span><span class="command-chip">review &lt;text&gt;</span><span class="command-chip">project create &lt;key&gt;</span><span class="command-chip">project archive &lt;key&gt;</span>');
   setCommandStatus('showing commands');
@@ -2295,8 +2290,11 @@ async function handleCommand() {
     showHelp(input);
     return;
   }
+  // Connection required for server-backed operations.
+  // Shows inline guidance instead of blocking the composer entirely.
   if (!store.connected) {
-    connectRequired(input);
+    appendCommandMessage(input, 'Connect with the pairing token first. Then retry: <span class="command-chip">' + escapeHtml(input) + '</span>.', true);
+    setCommandStatus('connect required', true);
     return;
   }
 
@@ -2452,12 +2450,32 @@ async function handleCommand() {
     await createGoalFromDescription(input, description);
     return;
   }
-  if (!looksLikeMistypedCommand(input)) {
-    await createGoalFromDescription(input, input);
+  // ── Conversational intent router ──
+  // Input that didn't match any explicit slash command flows here.
+  // Unknown/typo input is never fail-closed: it defaults to goal creation.
+  const intent = classifyIntent(input);
+  if (intent === 'empty') return;
+  if (intent === 'slash-hint') {
+    appendCommandMessage(input, 'Commands start with plain text, not <code>/</code>. Try describing the work in a sentence.', true);
+    setCommandStatus('slash not required', true);
     return;
   }
-  appendCommandMessage(input, 'Unknown command. Use <span class="command-chip">help</span> or describe the work as a sentence.', true);
-  setCommandStatus('unknown command', true);
+  // Everything else: create a goal from the input as natural language.
+  await createGoalFromDescription(input, input);
+}
+
+/**
+ * Lightweight local intent classification. No NLP/LLM — simple rules only.
+ * Returns:
+ *   'empty'      – blank input
+ *   'slash-hint' – starts with '/' (guide user to natural language)
+ *   'goal'       – fall through to goal creation (default)
+ */
+function classifyIntent(input) {
+  const text = input.trim();
+  if (!text) return 'empty';
+  if (text.startsWith('/')) return 'slash-hint';
+  return 'goal';
 }
 
 async function createGoalFromDescription(input, description) {
@@ -2468,36 +2486,6 @@ async function createGoalFromDescription(input, description) {
     return;
   }
   await goalAction('/bridge/goals', { sessionId: 'project-console-' + Date.now(), description: text, projectId: store.activeProjectKey }, 'creating goal…');
-}
-
-function looksLikeMistypedCommand(input) {
-  const text = input.trim().toLowerCase();
-  if (!text) return false;
-  if (text.startsWith('/')) return true;
-  if (!/^[a-z][a-z0-9_-]*$/i.test(text)) return false;
-  const commandWords = ['help', 'commands', 'project', 'workspace', 'goals', 'reviews', 'status', 'recent', 'history', 'audit', 'memory', 'verify', 'verification', 'review', 'prompts', 'teams', 'team', 'tasks', 'workbuddy', 'apply', 'plan', 'cancel', 'continue', 'goal'];
-  return commandWords.some(command => commandEditDistance(text, command) <= 1);
-}
-
-function commandEditDistance(a, b) {
-  if (a === b) return 0;
-  if (Math.abs(a.length - b.length) > 1) return 2;
-  let edits = 0;
-  let ai = 0;
-  let bi = 0;
-  while (ai < a.length && bi < b.length) {
-    if (a[ai] === b[bi]) {
-      ai += 1;
-      bi += 1;
-      continue;
-    }
-    edits += 1;
-    if (edits > 1) return edits;
-    if (a.length > b.length) ai += 1;
-    else if (b.length > a.length) bi += 1;
-    else { ai += 1; bi += 1; }
-  }
-  return edits + (a.length - ai) + (b.length - bi);
 }
 
 function escapeHtml(s) {

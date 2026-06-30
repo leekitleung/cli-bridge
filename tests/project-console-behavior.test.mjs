@@ -369,7 +369,7 @@ test('short plain task text creates a project-scoped goal', async () => {
   assert.equal(goalCreate.body.description, 'fix');
 });
 
-test('unknown command fails closed and does not create a goal', async () => {
+test('typo input creates a goal instead of failing closed', async () => {
   const { document, fetchCalls, setFixture } = setupConsole();
 
   setFixture('/bridge/metrics', { ok: true, payload: {} });
@@ -384,8 +384,10 @@ test('unknown command fails closed and does not create a goal', async () => {
   await runCommand(document, 'verfy');
 
   const goalCreate = fetchCalls.find(c => c.path === '/bridge/goals' && c.method === 'POST');
-  assert.equal(goalCreate, undefined, 'typo command must not create a goal');
-  assert.match(document.getElementById('command-log').textContent, /Unknown command/);
+  assert.ok(goalCreate, 'typo text must create a goal as natural language');
+  assert.equal(goalCreate.body.description, 'verfy');
+  // Must not show "Unknown command" message.
+  assert.ok(!document.getElementById('command-log').textContent.includes('Unknown command'));
 });
 
 test('command-first workspace renders goal, plan, and next action in the main area', async () => {
