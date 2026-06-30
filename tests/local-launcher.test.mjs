@@ -570,3 +570,51 @@ test('extension claim rejects non-loopback origin from outside', async () => {
     await closeServer(handle);
   }
 });
+
+// ── ADR-0025 Task 5: E2E revoke regression ──
+
+test('local auto-pair revoke invalidates console and extension credentials', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    // 1. Get console session + nonce
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    assert.match(cookie, /cli_bridge_console_session=/);
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce);
+
+    // 2. Claim extension session
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+    const { extensionSessionToken } = await claim.json();
+    assert.ok(extensionSessionToken);
+
+    // 3. Verify both credentials work
+    assert.equal((await fetch(`${handle.url}/health/private`, { headers: { cookie } })).status, 200);
+    assert.equal((await fetch(`${handle.url}/health/private`, {
+      headers: { 'x-cli-bridge-pairing-token': extensionSessionToken },
+    })).status, 200);
+
+    // 4. Revoke via console cookie
+    const revoke = await fetch(`${handle.url}/bridge/local-auto-pair/revoke`, {
+      method: 'POST',
+      headers: { cookie, origin: handle.url },
+    });
+    assert.equal(revoke.status, 200);
+
+    // 5. Both credentials now fail
+    // Revoked console cookie → no valid credential → 401
+    assert.equal((await fetch(`${handle.url}/health/private`, { headers: { cookie } })).status, 401);
+    // Revoked extension token → invalid credential → 403
+    assert.equal((await fetch(`${handle.url}/health/private`, {
+      headers: { 'x-cli-bridge-pairing-token': extensionSessionToken },
+    })).status, 403);
+  } finally {
+    await closeServer(handle);
+  }
+});

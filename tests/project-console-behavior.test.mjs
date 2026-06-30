@@ -8,6 +8,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { renderProjectConsoleHtml } from '../apps/local-server/src/routes/project-console.ts';
 
@@ -2195,4 +2197,21 @@ test('console revoke calls local auto-pair revoke without exposing token', async
   dom.window.document.getElementById('revoke-local-session').click();
   await waitFor(() => calls.some(c => c.path === '/bridge/local-auto-pair/revoke'));
   assert.equal(JSON.stringify(calls).includes('claim-abc'), false);
+});
+
+// ── ADR-0025 Task 5: source-level safety scan ──
+
+test('local auto-pairing does not add URL token parsing or localStorage token storage', () => {
+  const consoleSource = readFileSync(
+    resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
+    'utf8',
+  );
+  // No URL-based token transport
+  assert.equal(consoleSource.includes('location.hash'), false);
+  assert.equal(consoleSource.includes('URLSearchParams(location.search)'), false);
+  // No localStorage persistence of pairing credentials (the header name
+  // 'x-cli-bridge-pairing-token' is expected; the dangerous pattern is
+  // using it as a localStorage key).
+  assert.equal(consoleSource.includes("localStorage.setItem('cli-bridge-pairing-token'"), false);
+  assert.equal(consoleSource.includes("localStorage.getItem('cli-bridge-pairing-token'"), false);
 });

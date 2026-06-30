@@ -349,6 +349,19 @@ export async function handleConsoleAutoPairClaim(
   return { ok: true, status: response.status };
 }
 
+// ADR-0025 Task 5: Clear the local automation session token from extension
+// storage. Called by the Console on revoke and by the message handler below.
+export async function handleClearLocalSession(): Promise<{ ok: boolean }> {
+  try {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.session) {
+      await chrome.storage.session.remove('cliBridgePairingToken');
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
 // --- Pairing token management ---
 // The background script provides a message-based API for the content script
 // and popup to set/get the memory-only pairing token for this browser session.
@@ -394,6 +407,15 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
         handleConsoleAutoPairClaim(claimMessage.nonce)
           .then((result) => sendResponse(result))
           .catch(() => sendResponse({ ok: false, status: 0, error: 'claim-failed' }));
+        return true; // async response
+      }
+
+      // ADR-0025 Task 5: Clear local session token on revoke
+      const clearMessage = msg as { type?: string };
+      if (clearMessage?.type === 'cli-bridge-clear-local-session') {
+        handleClearLocalSession()
+          .then((result) => sendResponse(result))
+          .catch(() => sendResponse({ ok: false }));
         return true; // async response
       }
 

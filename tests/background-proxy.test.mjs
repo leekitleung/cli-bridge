@@ -193,3 +193,30 @@ test('background exchanges console claim nonce and stores extension session toke
   assert.equal(result.ok, true);
   assert.equal(stored.cliBridgePairingToken, 'ext-session');
 });
+
+// ── ADR-0025 Task 5: background clear local session ──
+
+test('background clears local session token on revoke', async () => {
+  // Simulate a token already stored, then clear it.
+  const stored = { cliBridgePairingToken: 'ext-session' };
+
+  global.chrome = {
+    storage: {
+      session: {
+        set: async () => {},
+        get: async (key) => ({ [key]: stored[key] }),
+        remove: async (key) => { delete stored[key]; },
+      },
+    },
+    runtime: { onMessage: { addListener: () => {} } },
+  };
+
+  const { handleClearLocalSession } = await import(
+    '../apps/extension/src/background/index.ts'
+  );
+
+  assert.equal(stored.cliBridgePairingToken, 'ext-session');
+  const result = await handleClearLocalSession();
+  assert.equal(result.ok, true);
+  assert.equal(stored.cliBridgePairingToken, undefined);
+});
