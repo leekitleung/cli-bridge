@@ -316,6 +316,39 @@ export async function handleProxyFetch(
 }
 
 
+// --- Local auto-pair claim (ADR-0025) ---
+// The extension background exchanges a one-time Console claim nonce for an
+// extension session token via the local server, then stores the token in
+// chrome.storage.session for use by content scripts on chatgpt.com.
+
+export async function handleConsoleAutoPairClaim(
+  nonce: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const response = await fetchImpl(
+    `${LOCAL_SERVER_BASE_URL}/bridge/local-auto-pair/extension-claim`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_EXTENSION_ORIGIN },
+      body: JSON.stringify({ nonce }),
+    },
+  );
+  const data = await response.json().catch(() => null);
+  if (!response.ok || typeof data?.extensionSessionToken !== 'string') {
+    return {
+      ok: false,
+      status: response.status,
+      error: (data && typeof data === 'object' && typeof (data as { message?: unknown }).message === 'string')
+        ? (data as { message: string }).message
+        : 'claim-failed',
+    };
+  }
+  if (typeof chrome !== 'undefined' && chrome?.storage?.session) {
+    await chrome.storage.session.set({ cliBridgePairingToken: data.extensionSessionToken });
+  }
+  return { ok: true, status: response.status };
+}
+
 // --- Pairing token management ---
 // The background script provides a message-based API for the content script
 // and popup to set/get the memory-only pairing token for this browser session.
@@ -352,6 +385,15 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
         }).catch(() => {
           sendResponse({ ok: false, token: null });
         });
+        return true; // async response
+      }
+
+      // ADR-0025: Claim local automation session from console claim nonce
+      const claimMessage = msg as { type?: string; nonce?: string };
+      if (claimMessage?.type === 'cli-bridge-claim-local-session' && typeof claimMessage.nonce === 'string') {
+        handleConsoleAutoPairClaim(claimMessage.nonce)
+          .then((result) => sendResponse(result))
+          .catch(() => sendResponse({ ok: false, status: 0, error: 'claim-failed' }));
         return true; // async response
       }
 

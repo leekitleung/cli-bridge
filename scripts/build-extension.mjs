@@ -32,6 +32,17 @@ await build({
   logLevel: 'silent',
 });
 
+// ADR-0025: separate console auto-pair content script for local Console page
+await build({
+  entryPoints: [resolve(extensionRoot, 'src/content/console-auto-pair.ts')],
+  outfile: resolve(distRoot, 'content/console-auto-pair.js'),
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: 'chrome120',
+  logLevel: 'silent',
+});
+
 await build({
   entryPoints: [resolve(extensionRoot, 'src/popup/index.ts')],
   outfile: resolve(distRoot, 'popup/index.js'),
@@ -58,7 +69,7 @@ const distManifest = {
   },
   content_scripts: sourceManifest.content_scripts.map((contentScript) => ({
     ...contentScript,
-    js: ['content/index.js'],
+    js: contentScript.js.map((p) => p.replace(/^dist\//, '')),
   })),
 };
 

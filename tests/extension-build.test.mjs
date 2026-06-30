@@ -19,10 +19,12 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
   const contentPath = resolve(root, 'apps/extension/dist/content/index.js');
   const popupHtmlPath = resolve(root, 'apps/extension/dist/popup/index.html');
   const popupScriptPath = resolve(root, 'apps/extension/dist/popup/index.js');
+  const consoleAutoPairPath = resolve(root, 'apps/extension/dist/content/console-auto-pair.js');
 
   assert.equal(existsSync(distManifestPath), true);
   assert.equal(existsSync(backgroundPath), true);
   assert.equal(existsSync(contentPath), true);
+  assert.equal(existsSync(consoleAutoPairPath), true);
   assert.equal(existsSync(popupHtmlPath), true);
   assert.equal(existsSync(popupScriptPath), true);
 
@@ -38,6 +40,10 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
     {
       matches: ['https://chatgpt.com/*'],
       js: ['content/index.js'],
+    },
+    {
+      matches: ['http://127.0.0.1:31337/console/project'],
+      js: ['content/console-auto-pair.js'],
     },
   ]);
   assert.deepEqual(manifest.permissions, ['clipboardWrite', 'storage']);

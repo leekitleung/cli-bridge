@@ -162,3 +162,31 @@ test('handleProxyFetch omits the token header when no token is provided', async 
   await handleProxyFetch({ path: '/health/private', method: 'GET' }, fetchImpl);
   assert.equal(calls[0].init.headers[PAIRING_TOKEN_HEADER], undefined);
 });
+
+// ── ADR-0025 Task 4: extension claim from local console ──
+
+test('background exchanges console claim nonce and stores extension session token', async () => {
+  const stored = {};
+  global.chrome = {
+    storage: {
+      session: {
+        set: async (value) => Object.assign(stored, value),
+        get: async (key) => ({ [key]: stored[key] }),
+      },
+    },
+    runtime: { onMessage: { addListener: () => {} } },
+  };
+
+  const { handleConsoleAutoPairClaim } = await import(
+    '../apps/extension/src/background/index.ts'
+  );
+
+  const result = await handleConsoleAutoPairClaim('claim-abc', async (_url, init) => {
+    assert.equal(init.method, 'POST');
+    assert.equal(JSON.parse(init.body).nonce, 'claim-abc');
+    return { ok: true, status: 200, json: async () => ({ extensionSessionToken: 'ext-session' }) };
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(stored.cliBridgePairingToken, 'ext-session');
+});

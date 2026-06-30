@@ -27,6 +27,14 @@
       "js": [
         "dist/content/index.js"
       ]
+    },
+    {
+      "matches": [
+        "http://127.0.0.1:31337/console/project"
+      ],
+      "js": [
+        "dist/content/console-auto-pair.js"
+      ]
     }
   ]
 }
