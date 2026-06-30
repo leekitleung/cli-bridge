@@ -2455,26 +2455,28 @@ async function handleCommand() {
   // Unknown/typo input is never fail-closed: it defaults to goal creation.
   const intent = classifyIntent(input);
   if (intent === 'empty') return;
-  if (intent === 'slash-hint') {
-    appendCommandMessage(input, 'Commands start with plain text, not <code>/</code>. Try describing the work in a sentence.', true);
-    setCommandStatus('slash not required', true);
-    return;
-  }
-  // Everything else: create a goal from the input as natural language.
-  await createGoalFromDescription(input, input);
+  // Normalise: strip leading slash from unknown /input, treat as natural language.
+  const text = intent === 'slash'
+    ? (input.startsWith('/') ? input.slice(1).trim() : input) || input
+    : input;
+  await createGoalFromDescription(input, text);
 }
 
 /**
  * Lightweight local intent classification. No NLP/LLM — simple rules only.
  * Returns:
- *   'empty'      – blank input
- *   'slash-hint' – starts with '/' (guide user to natural language)
- *   'goal'       – fall through to goal creation (default)
+ *   'empty' – blank input
+ *   'slash' – starts with '/' (strip leading slash, use remainder as goal text)
+ *   'goal'  – fall through to goal creation (default)
+ *
+ * Known slash commands (goals, reviews, project, etc.) are matched earlier
+ * in handleCommand.  Anything else — including unknown /prefix — is treated
+ * as natural language after stripping the leading slash.
  */
 function classifyIntent(input) {
   const text = input.trim();
   if (!text) return 'empty';
-  if (text.startsWith('/')) return 'slash-hint';
+  if (text.startsWith('/')) return 'slash';
   return 'goal';
 }
 
