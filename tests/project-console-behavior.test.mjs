@@ -2137,3 +2137,62 @@ test('pairing UI saves conversation pairing to new endpoint', async () => {
   assert.match(document.getElementById('fact-pairing').textContent, /chatgpt-web/);
   assert.match(document.getElementById('fact-pairing').textContent, /workbuddy/);
 });
+
+// ── ADR-0025 Task 3: auto-pair token discipline ──
+
+test('local auto-pair bootstrap does not expose raw token in URL, visible DOM, or localStorage', () => {
+  const html = renderProjectConsoleHtml({ extensionClaimNonce: 'claim-abc' });
+  const storage = {};
+  const dom = new JSDOM(html, {
+    url: 'http://127.0.0.1:31337/console/project',
+    runScripts: 'dangerously',
+    resources: 'usable',
+    beforeParse(win) {
+      Object.defineProperty(win, 'localStorage', {
+        value: {
+          getItem: key => storage[key] ?? null,
+          setItem: (key, value) => { storage[key] = value; },
+          removeItem: key => { delete storage[key]; },
+        },
+        configurable: true,
+      });
+      win.fetch = async (url, init = {}) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/health/private') {
+          return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+      };
+    },
+  });
+
+  assert.equal(dom.window.location.href.includes('claim-abc'), false);
+  assert.equal(dom.window.document.body.textContent.includes('claim-abc'), false);
+  assert.equal(storage['cli-bridge-pairing-token'], undefined);
+  assert.ok(dom.window.document.querySelector('[data-extension-claim-nonce="claim-abc"]'));
+});
+
+test('console revoke calls local auto-pair revoke without exposing token', async () => {
+  const html = renderProjectConsoleHtml({ extensionClaimNonce: 'claim-abc' });
+  const calls = [];
+  const dom = new JSDOM(html, {
+    url: 'http://127.0.0.1:31337/console/project',
+    runScripts: 'dangerously',
+    resources: 'usable',
+    beforeParse(win) {
+      Object.defineProperty(win, 'localStorage', {
+        value: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+        configurable: true,
+      });
+      win.fetch = async (url, init = {}) => {
+        const path = new URL(String(url)).pathname;
+        calls.push({ path, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      };
+    },
+  });
+
+  dom.window.document.getElementById('revoke-local-session').click();
+  await waitFor(() => calls.some(c => c.path === '/bridge/local-auto-pair/revoke'));
+  assert.equal(JSON.stringify(calls).includes('claim-abc'), false);
+});
