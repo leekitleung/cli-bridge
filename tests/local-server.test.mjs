@@ -486,6 +486,10 @@ test('extension manifest and background source stay minimal for W1-4', async () 
       matches: ['https://chatgpt.com/*'],
       js: ['dist/content/index.js'],
     },
+    {
+      matches: ['http://127.0.0.1:31337/console/project'],
+      js: ['dist/content/console-auto-pair.js'],
+    },
   ]);
   assert.equal(JSON.stringify(manifest).includes('.ts'), false);
 
