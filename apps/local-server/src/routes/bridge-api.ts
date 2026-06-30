@@ -33,6 +33,10 @@ import { InMemoryGoalStore } from '../storage/goal-store.ts';
 import { InMemoryWorkBuddyStateStore } from '../workbuddy/workbuddy-state-store.ts';
 import { InMemoryTeamSpecStore } from '../storage/team-store.ts';
 import { InMemoryProjectTeamPresetStore, validateProjectTeamPreset } from '../storage/project-team-preset-store.ts';
+import { InMemoryConversationPairingStore } from '../storage/conversation-pairing-store.ts';
+import type { ConversationPairing, ConversationRouteKind, ConversationPairingStatus } from '../storage/conversation-pairing-store.ts';
+import { InMemoryConversationTranscriptStore } from '../storage/conversation-transcript-store.ts';
+import type { ConversationTranscriptEvent } from '../storage/conversation-transcript-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
@@ -155,6 +159,8 @@ export interface BridgeRuntime {
   teamStore: InMemoryTeamSpecStore;
   presetStore: InMemoryProjectTeamPresetStore;
   bindingSnapshotStore: InMemoryGoalBindingSnapshotStore;
+  conversationPairingStore: InMemoryConversationPairingStore;
+  conversationTranscriptStore: InMemoryConversationTranscriptStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
@@ -1450,6 +1456,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const teamStore = new InMemoryTeamSpecStore();
   const presetStore = new InMemoryProjectTeamPresetStore();
   const bindingSnapshotStore = new InMemoryGoalBindingSnapshotStore();
+  const conversationPairingStore = new InMemoryConversationPairingStore();
+  const conversationTranscriptStore = new InMemoryConversationTranscriptStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
@@ -1517,6 +1525,12 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const s of read.snapshot.bindingSnapshots ?? []) {
         try { bindingSnapshotStore.hydrateSnapshot(s); } catch { }
       }
+      for (const p of read.snapshot.conversationPairings ?? []) {
+        try { conversationPairingStore.hydratePairing(p); } catch { }
+      }
+      for (const e of read.snapshot.conversationTranscriptEvents ?? []) {
+        try { conversationTranscriptStore.hydrateEvent(e); } catch { }
+      }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
@@ -1560,6 +1574,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       teamArtifacts: teamStore.exportArtifacts(),
       teamPresets: presetStore.exportPresets(),
       bindingSnapshots: bindingSnapshotStore.exportSnapshots(),
+      conversationPairings: conversationPairingStore.exportPairings(),
+      conversationTranscriptEvents: conversationTranscriptStore.exportEvents(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
     }));
@@ -1599,6 +1615,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     teamStore,
     presetStore,
     bindingSnapshotStore,
+    conversationPairingStore,
+    conversationTranscriptStore,
     workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -1807,7 +1825,7 @@ function projectDetailPathKey(pathname: string): string | undefined {
 
 function projectActionPathKey(
   pathname: string,
-  action: 'archive' | 'unarchive' | 'team-preset',
+  action: 'archive' | 'unarchive' | 'team-preset' | 'conversation-pairing' | 'conversation/messages',
 ): { matched: true; key: string | undefined } | { matched: false } {
   const prefix = `${BRIDGE_PROJECTS_PATH}/`;
   const suffix = `/${action}`;
@@ -1820,6 +1838,30 @@ function projectActionPathKey(
   }
   const decoded = decodeProjectPathSegment(raw);
   return { matched: true, key: decoded ? (validateProjectKey(decoded) ?? undefined) : undefined };
+}
+
+function resolveConversationRouteKind(endpoint: AgentEndpoint): { kind: ConversationRouteKind; status: ConversationPairingStatus } {
+  if (endpoint.id === 'workbuddy' && endpoint.capabilities.canExecute) {
+    return { kind: 'workbuddy-execution', status: 'ready' };
+  }
+  if (endpoint.transport === 'command' && endpoint.capabilities.canReview) {
+    return { kind: 'review-command', status: 'ready' };
+  }
+  if (endpoint.transport === 'managed-pty' && endpoint.capabilities.canAcceptPrompt && endpoint.capabilities.canReturnOutput) {
+    return { kind: 'managed-pty', status: 'not-implemented' };
+  }
+  if (endpoint.transport === 'web-dom' && endpoint.capabilities.canAcceptPrompt && endpoint.capabilities.canReturnOutput) {
+    return { kind: 'web-relay', status: 'needs-manual-confirmation' };
+  }
+  return { kind: 'unavailable', status: 'not-implemented' };
+}
+
+function validateConversationSource(endpoint: AgentEndpoint | undefined): string | null {
+  if (!endpoint || endpoint.status !== 'online') return 'source endpoint not found or offline';
+  if (!endpoint.capabilities.canAcceptPrompt || !endpoint.capabilities.canReturnOutput) {
+    return `source endpoint "${endpoint.id}" cannot participate in conversation relay`;
+  }
+  return null;
 }
 
 /** Gathers all project-scoped data into an ObservabilityInput for the builders. */
@@ -3245,6 +3287,127 @@ export async function handleBridgeRequest(
     const unarchived = runtime.projectStore.unarchive(key);
     runtime.persist();
     return ok({ project: unarchived });
+  }
+
+  // ── Conversation Pairing Route ──
+
+  const conversationPairingPath = projectActionPathKey(pathname, 'conversation-pairing');
+  if (conversationPairingPath.matched) {
+    if (!conversationPairingPath.key) return error(400, 'Invalid project key');
+    const proj = runtime.projectStore.get(conversationPairingPath.key);
+    if (!proj) return error(404, 'Project not found');
+    if (proj.archivedAt && method !== 'GET') {
+      return error(409, 'Cannot modify conversation pairing in archived project');
+    }
+
+    if (method === 'GET') {
+      return ok({ pairing: runtime.conversationPairingStore.get(conversationPairingPath.key) ?? null });
+    }
+
+    if (method === 'DELETE') {
+      const deleted = runtime.conversationPairingStore.delete(conversationPairingPath.key);
+      runtime.persist();
+      return ok({ deleted });
+    }
+
+    if (method === 'PUT') {
+      const parsed = await readJsonBody(request);
+      if (!parsed.ok) return error(400, parsed.message);
+      const body = parsed.body as Record<string, unknown>;
+      const sourceEndpointId = typeof body.sourceEndpointId === 'string' ? body.sourceEndpointId.trim() : '';
+      const targetEndpointId = typeof body.targetEndpointId === 'string' ? body.targetEndpointId.trim() : '';
+      if (!sourceEndpointId) return error(400, 'sourceEndpointId is required');
+      if (!targetEndpointId) return error(400, 'targetEndpointId is required');
+
+      const source = runtime.endpointRegistry.get(sourceEndpointId);
+      const target = runtime.endpointRegistry.get(targetEndpointId);
+      const sourceError = validateConversationSource(source);
+      if (sourceError) return error(400, sourceError);
+      if (!target || target.status !== 'online') return error(400, 'target endpoint not found or offline');
+
+      const route = resolveConversationRouteKind(target);
+      if (route.kind === 'unavailable') {
+        return error(400, `target endpoint "${targetEndpointId}" has no supported conversation route`);
+      }
+
+      const pairing = runtime.conversationPairingStore.upsert({
+        projectId: conversationPairingPath.key,
+        sourceEndpointId,
+        targetEndpointId,
+        targetRouteKind: route.kind,
+        status: route.status,
+        scope: 'project',
+        updatedAt: 0,
+      });
+      runtime.persist();
+      return ok({ pairing });
+    }
+
+    return error(405, 'Method not allowed');
+  }
+
+  // ── Conversation Messages ──
+
+  const conversationMessagesPath = projectActionPathKey(pathname, 'conversation/messages');
+  if (conversationMessagesPath.matched) {
+    if (!conversationMessagesPath.key) return error(400, 'Invalid project key');
+    const key = conversationMessagesPath.key;
+    const proj = runtime.projectStore.get(key);
+    if (!proj) return error(404, 'Project not found');
+
+    if (method === 'GET') {
+      return ok({ messages: runtime.conversationTranscriptStore.listByProject(key) });
+    }
+
+    if (method === 'POST') {
+      const parsed = await readJsonBody(request);
+      if (!parsed.ok) return error(400, parsed.message);
+      const body = parsed.body as Record<string, unknown>;
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      if (!text) return error(400, 'text is required');
+
+      const pairing = runtime.conversationPairingStore.get(key);
+      if (!pairing) return error(409, 'Conversation pairing is not configured');
+
+      const userEvent = runtime.conversationTranscriptStore.append({
+        projectId: key,
+        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        role: 'user',
+        text,
+        status: 'queued',
+        routeKind: pairing.targetRouteKind,
+      });
+
+      let bridgeText = '';
+      let bridgeStatus: ConversationTranscriptEvent['status'] = 'queued';
+      if (pairing.targetRouteKind === 'managed-pty') {
+        bridgeStatus = 'not-implemented';
+        bridgeText = 'Codex CLI is registered, but general managed-pty conversation dispatch is not implemented in this phase.';
+      } else if (pairing.targetRouteKind === 'review-command') {
+        bridgeStatus = 'not-implemented';
+        bridgeText = 'Claude/Codex command transport is review-only. Use review <text> for the governed review route.';
+      } else if (pairing.targetRouteKind === 'web-relay') {
+        bridgeStatus = 'awaiting-manual-confirmation';
+        bridgeText = 'Web relay requires the existing manual confirmation flow.';
+      } else if (pairing.targetRouteKind === 'workbuddy-execution') {
+        bridgeStatus = 'queued';
+        bridgeText = 'Queued for WorkBuddy execution flow.';
+      }
+
+      const bridgeEvent = runtime.conversationTranscriptStore.append({
+        projectId: key,
+        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        role: 'bridge',
+        text: bridgeText,
+        status: bridgeStatus,
+        routeKind: pairing.targetRouteKind,
+      });
+
+      runtime.persist();
+      return created({ events: [userEvent, bridgeEvent] });
+    }
+
+    return error(405, 'Method not allowed');
   }
 
   // ── EX-2: Project Team Preset ──

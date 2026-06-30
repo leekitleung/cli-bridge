@@ -203,6 +203,50 @@ main .context-grid section { min-width: 0; }
 main .context-grid pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 760px) { main .context-grid { grid-template-columns: 1fr; } }
 main .context-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+main .pairing-summary {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  max-width: 780px;
+}
+main .pairing-route {
+  font-size: 14px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+main .pairing-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+main .pairing-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  max-width: 780px;
+}
+main .pairing-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+main .pairing-form select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--composer-bg);
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+main .pairing-form .pairing-scope { grid-column: 1 / -1; }
+@media (max-width: 760px) { main .pairing-form { grid-template-columns: 1fr; } }
 main .next-action {
   border-top-color: rgba(16, 163, 127, 0.55);
   color: var(--text);
@@ -297,13 +341,14 @@ footer input {
 footer input::placeholder { color: var(--composer-placeholder); }
 .composer-toolbar {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
 }
 .composer-icon,
 .composer-pill,
 .composer-mode,
+.composer-pairing,
 footer #command-send {
   font: inherit;
   border: 0;
@@ -357,6 +402,14 @@ footer #command-send {
   color: var(--composer-mode);
   font-size: 13px;
   white-space: nowrap;
+}
+.composer-pairing {
+  min-height: 44px;
+  color: var(--composer-mode);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 0 4px;
 }
 footer #command-send {
   width: 44px;
@@ -480,6 +533,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   </div>
   <div class="mobile-facts" id="mobile-facts" aria-label="Compact mobile project facts">
     <div data-fact-source="fact-project">Project: not connected</div>
+    <div data-fact-source="fact-pairing">Pairing: not set</div>
     <div data-fact-source="fact-next">Next: connect</div>
     <div data-fact-source="fact-plan">Plan: not available</div>
     <div data-fact-source="fact-verify">Verification: not available</div>
@@ -493,6 +547,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <div class="card" id="goal-card">
     <h3>Conversation</h3>
     <div id="goal-content" class="loading">Connect to load…</div>
+    <div id="conversation-transcript" style="display:none"></div>
   </div>
   <div id="timeline-container">
     <div class="timeline" id="timeline">
@@ -506,6 +561,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 <aside class="facts-rail" id="facts-rail" aria-label="Compact project facts">
   <h2>Facts</h2>
   <div class="fact"><div class="fact-label">Project</div><div class="fact-value" id="fact-project">not connected</div></div>
+  <div class="fact"><div class="fact-label">Pairing</div><div class="fact-value" id="fact-pairing">not set</div></div>
   <div class="fact"><div class="fact-label">Next</div><div class="fact-value" id="fact-next">connect</div></div>
   <div class="fact"><div class="fact-label">Plan</div><div class="fact-value" id="fact-plan">not available</div></div>
   <div class="fact"><div class="fact-label">Verification</div><div class="fact-value" id="fact-verify">not available</div></div>
@@ -549,11 +605,12 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <button type="button" class="composer-icon" id="composer-new-project" aria-label="Insert project create command" title="Insert project create command">+</button>
       <span class="composer-pill pending" id="access-pill" title="Local bridge access. Commands route through governed project endpoints."><span class="shield" aria-hidden="true"></span><span id="access-pill-label">未连接</span></span>
       <span class="composer-spacer"></span>
-      <span class="composer-mode" title="Project-scoped command mode">Project</span>
+      <button type="button" class="composer-mode" id="composer-mode-toggle" aria-label="Toggle composer mode" title="Click to switch between Project and Conversation mode">Project</button>
+      <button type="button" class="composer-pairing" id="composer-pairing" aria-label="Open pairing controls">Pairing</button>
       <button id="command-send" aria-label="Send project command">↑</button>
     </div>
   </div>
-  <span class="command-hints">/goals · /reviews · /project · help</span>
+  <span class="command-hints">/goals · /reviews · /project · pairing · help</span>
   <output class="command-status" id="command-status" aria-live="polite" role="status"></output>
 </footer>
 
@@ -570,8 +627,10 @@ const store = {
   reviewContextResult: null,
   commandMessages: [],
   lastApplyPreviewBase: '',
-  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null, teams: null, automation: { binding: null, proposal: null } },
+  cache: { projects: [], detail: null, metrics: null, timeline: null, audit: null, memory: null, verification: null, workbuddy: null, teams: null, pairing: { endpoints: [], preset: null, loaded: false }, automation: { binding: null, proposal: null } },
   switchingProject: false,
+  composerMode: (localStorage.getItem('cli-bridge-composer-mode') || 'project'),
+  conversationEvents: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -623,6 +682,7 @@ $('connect').addEventListener('click', async () => {
     $('token').value = '';
     appendCommandMessage('connect', 'Connected. Try <span class="command-chip">status</span><span class="command-chip">goal improve README</span><span class="command-chip">verify</span>');
     await refreshAll();
+    if (store.contextView === 'pairing') await openPairingContext();
   } else {
     store.connected = false;
     $('conn-dot').classList.remove('ok');
@@ -674,6 +734,7 @@ function renderAll() {
   renderWorkspace();
   renderFactsRail();
   syncMobileFacts();
+  renderComposerMode();
 }
 
 function renderProjectList() {
@@ -712,6 +773,7 @@ function renderProjectList() {
       store.cache.verification = null;
       store.cache.workbuddy = null;
       store.cache.teams = null;
+      store.cache.pairing = { endpoints: [], preset: null, loaded: false };
       store.cache.automation = { binding: null, proposal: null };
       store.goalContextId = '';
       renderWorkspace();
@@ -871,9 +933,113 @@ function renderWorkspace() {
   renderTimeline();
   renderCommandLog();
   renderCommandContext();
-  const contextIsPrimary = store.contextView === 'goals' || store.contextView === 'reviews';
+  renderConversationTranscript();
+  const contextIsPrimary = store.contextView === 'goals' || store.contextView === 'reviews' || store.contextView === 'pairing';
   $('timeline-container').style.display = contextIsPrimary ? 'none' : '';
   $('goal-card').style.display = contextIsPrimary ? 'none' : '';
+}
+
+function endpointLabel(endpointId) {
+  const endpoint = (store.cache.pairing.endpoints || []).find(ep => ep.id === endpointId);
+  return endpoint ? endpoint.label + ' (' + endpoint.id + ')' : endpointId;
+}
+
+function endpointCapabilityLabel(endpoint) {
+  const caps = endpoint.capabilities || {};
+  const roles = [];
+  if (caps.canReview) roles.push('planner');
+  if (caps.canExecute) roles.push('executor');
+  if (caps.canAcceptPrompt) roles.push('prompt');
+  return roles.length ? roles.join(', ') : 'no pairing role';
+}
+
+function renderEndpointOptions(selectedId, role) {
+  const endpoints = store.cache.pairing.endpoints || [];
+  const roleOk = (endpoint) => {
+    const caps = endpoint.capabilities || {};
+    if (role === 'planner') return !!caps.canReview;
+    if (role === 'executor') return !!caps.canExecute;
+    if (role === 'verifier') return !!caps.canReview;
+    return true;
+  };
+  const eligible = endpoints.filter(roleOk);
+  const selected = selectedId || (role === 'verifier' ? '' : eligible[0]?.id) || '';
+  if (!endpoints.length) return '<option value="">No endpoints loaded</option>';
+  return endpoints.map(endpoint => {
+    const disabled = roleOk(endpoint) ? '' : ' disabled';
+    const selectedAttr = endpoint.id === selected ? ' selected' : '';
+    return '<option value="' + escapeHtml(endpoint.id) + '"' + selectedAttr + disabled + '>'
+      + escapeHtml(endpoint.label + ' · ' + endpoint.id + ' · ' + endpointCapabilityLabel(endpoint))
+      + '</option>';
+  }).join('');
+}
+
+// ─── Conversation Pairing: Source/Target selectors ───
+
+function canBeConversationSource(endpoint) {
+  const caps = endpoint.capabilities || {};
+  return endpoint.status === 'online' && !!caps.canAcceptPrompt && !!caps.canReturnOutput;
+}
+
+function conversationRouteKindLabel(endpoint) {
+  const caps = endpoint.capabilities || {};
+  if (endpoint.id === 'workbuddy' && caps.canExecute) return { kind: 'workbuddy-execution', status: 'ready' };
+  if (endpoint.transport === 'command' && caps.canReview) return { kind: 'review-command', status: 'ready for review route' };
+  if (endpoint.transport === 'managed-pty' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'managed-pty', status: 'not implemented' };
+  if (endpoint.transport === 'web-dom' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'web-relay', status: 'manual confirmation' };
+  return { kind: 'unavailable', status: 'not available' };
+}
+
+function renderSourceOptions(selectedId) {
+  const endpoints = store.cache.pairing.endpoints || [];
+  const eligible = endpoints.filter(canBeConversationSource);
+  const selected = selectedId || eligible[0]?.id || '';
+  if (!eligible.length) return '<option value="">No eligible sources</option>';
+  return eligible.map(endpoint => {
+    const sel = endpoint.id === selected ? ' selected' : '';
+    return '<option value="' + escapeHtml(endpoint.id) + '"' + sel + '>'
+      + escapeHtml(endpoint.label + ' · ' + endpoint.id)
+      + '</option>';
+  }).join('');
+}
+
+function renderTargetOptions(selectedId) {
+  const endpoints = store.cache.pairing.endpoints || [];
+  const allOnline = endpoints.filter(e => e.status === 'online');
+  const selected = selectedId || allOnline[0]?.id || '';
+  if (!allOnline.length) return '<option value="">No online targets</option>';
+  return allOnline.map(endpoint => {
+    const route = conversationRouteKindLabel(endpoint);
+    const sel = endpoint.id === selected ? ' selected' : '';
+    const disabled = route.kind === 'unavailable' ? ' disabled' : '';
+    return '<option value="' + escapeHtml(endpoint.id) + '"' + sel + disabled + '>'
+      + escapeHtml(endpoint.label + ' · ' + endpoint.id + ' · ' + route.kind + ' · ' + route.status)
+      + '</option>';
+  }).join('');
+}
+
+function getPairingSummaryHtml() {
+  const pairingData = store.cache.pairing.pairing;
+  if (!pairingData) return '<span class="unavailable">No project pairing saved</span>';
+  return '<code>' + escapeHtml(pairingData.sourceEndpointId) + '</code> → <code>' + escapeHtml(pairingData.targetEndpointId) + '</code>'
+    + (pairingData.targetRouteKind ? '<br><span class="pill">' + escapeHtml(pairingData.targetRouteKind) + ' · ' + escapeHtml(pairingData.status || '') + '</span>' : '');
+}
+
+async function loadPairingContext() {
+  if (!store.connected) {
+    store.cache.pairing = { endpoints: [], preset: null, loaded: false };
+    return false;
+  }
+  const [epsRes, pairingRes] = await Promise.all([
+    api('/bridge/endpoints?online=true', 'GET'),
+    api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation-pairing', 'GET'),
+  ]);
+  store.cache.pairing = {
+    endpoints: epsRes.ok && Array.isArray(epsRes.data?.endpoints) ? epsRes.data.endpoints : [],
+    pairing: pairingRes.ok ? (pairingRes.data?.pairing || null) : null,
+    loaded: true,
+  };
+  return epsRes.ok && pairingRes.ok;
 }
 
 function renderFactsRail() {
@@ -892,6 +1058,8 @@ function renderFactsRail() {
   $('fact-project').innerHTML = project
     ? escapeHtml(project.label || project.key) + '<br><span class="unavailable">' + escapeHtml(summary?.status || 'unknown') + '</span>'
     : (store.connected ? '<span class="unavailable">not available</span>' : '<span class="unavailable">connect first</span>');
+
+  $('fact-pairing').innerHTML = getPairingSummaryHtml();
 
   $('fact-next').innerHTML = '<code>' + escapeHtml(next.command) + '</code><br><span class="unavailable">' + escapeHtml(next.label) + '</span>';
 
@@ -1207,6 +1375,30 @@ function renderCommandContext() {
       html += '</tbody></table>';
     }
     html += '</div>';
+  } else if (store.contextView === 'pairing') {
+    const pairing = store.cache.pairing || { endpoints: [], pairing: null, loaded: false };
+    const pairingData = pairing.pairing;
+    const sourceId = pairingData?.sourceEndpointId || 'chatgpt-web';
+    const targetId = pairingData?.targetEndpointId || 'workbuddy';
+    html = '<div class="card" id="conversation-pairing-context"><h3>Pairing</h3>';
+    html += '<div class="pairing-summary"><div class="context-label">Conversation Pairing</div>';
+    html += '<div class="pairing-route" id="pairing-current-route">' + getPairingSummaryHtml() + '</div>';
+    html += '<div class="pairing-meta">Route ChatGPT Web prompts to target tools. New goals snapshot this pairing; existing goals keep their own binding.</div>';
+    html += '</div>';
+    if (!store.connected) {
+      html += '<div class="context-block"><span class="unavailable">Connect with the pairing token first to load endpoints and save pairing.</span></div>';
+    } else if (!pairing.loaded) {
+      html += '<div class="context-block"><span class="unavailable">Pairing context not loaded yet.</span></div>';
+    } else {
+      html += '<div class="context-block"><div class="pairing-form">';
+      html += '<label for="conversation-source">Source (where prompts come from)<select id="conversation-source">' + renderSourceOptions(sourceId) + '</select></label>';
+      html += '<label for="conversation-target">Target (where prompts are routed)<select id="conversation-target">' + renderTargetOptions(targetId) + '</select></label>';
+      html += '<div class="pairing-scope pairing-meta">Each target shows its route kind and honest readiness status.</div>';
+      html += '</div><div class="context-actions" style="margin-top:12px;">';
+      html += '<button id="pairing-test">Test pairing</button><button id="pairing-save">Save pairing</button><button id="pairing-reset">Unpair</button><span id="pairing-status" class="action-status" aria-live="polite"></span>';
+      html += '</div></div>';
+    }
+    html += '</div>';
   } else if (store.contextView === 'prompts') {
     html = '<div class="card"><h3>Pending Prompts</h3><p style="font-size:11px;color:var(--muted)">Drafts require explicit confirm — never auto-sent.</p>';
     const prompts = detail ? (detail.pendingPrompts || []) : [];
@@ -1420,6 +1612,7 @@ function renderCommandContext() {
 
   if (store.contextView === 'goals') bindGoalsContext();
   if (store.contextView === 'reviews') bindReviewsContext();
+  if (store.contextView === 'pairing') bindPairingContext();
 
   // Bind read-only apply-result viewer if in teams view (GET-only; no write).
   if (store.contextView === 'teams') {
@@ -1545,6 +1738,72 @@ function bindReviewsContext() {
     await runReviewCommand(text, target);
     store.contextBusy = false;
     renderCommandContext();
+  });
+}
+
+function selectedPairingBody() {
+  const sourceEndpointId = $('conversation-source')?.value || '';
+  const targetEndpointId = $('conversation-target')?.value || '';
+  const body = { sourceEndpointId, targetEndpointId };
+  return body;
+}
+
+function bindPairingContext() {
+  $('pairing-test')?.addEventListener('click', () => {
+    const body = selectedPairingBody();
+    const source = (store.cache.pairing.endpoints || []).find(ep => ep.id === body.sourceEndpointId);
+    const target = (store.cache.pairing.endpoints || []).find(ep => ep.id === body.targetEndpointId);
+    const sourceOk = source && canBeConversationSource(source);
+    const route = target ? conversationRouteKindLabel(target) : { kind: 'unavailable', status: 'not available' };
+    const targetOk = route.kind !== 'unavailable';
+    if (sourceOk && targetOk) {
+      $('pairing-status').textContent = route.kind + ' · ' + route.status;
+      setCommandStatus('pairing route: ' + route.kind);
+    } else {
+      $('pairing-status').textContent = (sourceOk ? '' : 'source invalid; ') + (!targetOk ? 'target has no supported conversation route' : '');
+      setCommandStatus('pairing test failed', true);
+    }
+  });
+  $('pairing-save')?.addEventListener('click', async () => {
+    const body = selectedPairingBody();
+    if (!body.sourceEndpointId || !body.targetEndpointId) {
+      $('pairing-status').textContent = 'source and target are required';
+      setCommandStatus('pairing incomplete', true);
+      return;
+    }
+    $('pairing-status').textContent = 'saving…';
+    setCommandStatus('saving pairing…');
+    const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation-pairing', 'PUT', body);
+    if (!res.ok) {
+      const msg = res.data?.message || res.data?.error || res.status;
+      $('pairing-status').textContent = 'save failed: ' + msg;
+      appendCommandMessage('pairing save', 'Pairing save failed: ' + escapeHtml(msg), true);
+      setCommandStatus('pairing save failed', true);
+      return;
+    }
+    store.cache.pairing.pairing = res.data?.pairing || null;
+    appendCommandMessage('pairing save', 'Project pairing saved: ' + getPairingSummaryHtml());
+    setCommandStatus('pairing saved');
+    renderAll();
+    store.contextView = 'pairing';
+    renderWorkspace();
+  });
+  $('pairing-reset')?.addEventListener('click', async () => {
+    $('pairing-status').textContent = 'removing…';
+    setCommandStatus('removing pairing…');
+    const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation-pairing', 'DELETE');
+    if (!res.ok && res.status !== 404) {
+      const msg = res.data?.message || res.data?.error || res.status;
+      $('pairing-status').textContent = 'remove failed: ' + msg;
+      setCommandStatus('pairing remove failed', true);
+      return;
+    }
+    store.cache.pairing.pairing = null;
+    appendCommandMessage('pairing reset', 'Project pairing removed. Existing goal bindings are unchanged.');
+    setCommandStatus('pairing removed');
+    renderAll();
+    store.contextView = 'pairing';
+    renderWorkspace();
   });
 }
 
@@ -1853,6 +2112,16 @@ function showCommandContext(view) {
   renderWorkspace();
 }
 
+async function openPairingContext() {
+  store.contextView = 'pairing';
+  if (store.connected) {
+    setCommandStatus('loading pairing…');
+    await loadPairingContext();
+  }
+  renderWorkspace();
+  setCommandStatus(store.connected ? 'showing pairing controls' : 'connect required for pairing');
+}
+
 function setCommandStatus(message, isError) {
   const el = $('command-status');
   if (!el) return;
@@ -1917,7 +2186,7 @@ async function fetchGithubChecksCommand(input) {
 }
 
 function showHelp(input) {
-  appendCommandMessage(input, 'Commands: <span class="command-chip">describe work directly</span><span class="command-chip">/goals</span><span class="command-chip">/reviews</span><span class="command-chip">/project</span><span class="command-chip">goal &lt;task&gt;</span><span class="command-chip">status</span><span class="command-chip">history</span><span class="command-chip">plan</span><span class="command-chip">continue</span><span class="command-chip">verify</span><span class="command-chip">review &lt;text&gt;</span><span class="command-chip">project create &lt;key&gt;</span><span class="command-chip">project archive &lt;key&gt;</span>');
+  appendCommandMessage(input, 'Commands: <span class="command-chip">describe work directly</span><span class="command-chip">pairing</span><span class="command-chip">/goals</span><span class="command-chip">/reviews</span><span class="command-chip">/project</span><span class="command-chip">goal &lt;task&gt;</span><span class="command-chip">status</span><span class="command-chip">history</span><span class="command-chip">plan</span><span class="command-chip">continue</span><span class="command-chip">verify</span><span class="command-chip">review &lt;text&gt;</span><span class="command-chip">project create &lt;key&gt;</span><span class="command-chip">project archive &lt;key&gt;</span>');
   setCommandStatus('showing commands');
 }
 
@@ -1944,6 +2213,7 @@ async function createProjectCommand(input, key) {
       store.cache.verification = null;
       store.cache.workbuddy = null;
       store.cache.teams = null;
+      store.cache.pairing = { endpoints: [], preset: null, loaded: false };
       store.cache.automation = { binding: null, proposal: null };
       store.goalContextId = '';
   await refreshAll();
@@ -1997,6 +2267,8 @@ async function pairResetCommand() {
     return;
   }
   appendCommandMessage('pair reset', 'Default team preset removed. Existing goals unchanged.');
+  store.cache.pairing.preset = null;
+  renderFactsRail();
   setCommandStatus('preset removed');
 }
 
@@ -2051,6 +2323,8 @@ async function pairSetCommand(input) {
   const preset = res.data?.preset;
   const line = 'Default team: <code>' + escapeHtml(preset.plannerEndpointId) +
     '</code> → <code>' + escapeHtml(preset.executorEndpointId) + '</code>';
+  store.cache.pairing.preset = preset;
+  renderFactsRail();
   appendCommandMessage(input, line);
   setCommandStatus('preset saved');
 }
@@ -2275,8 +2549,73 @@ $('composer-new-project').addEventListener('click', () => {
   }
   setCommandStatus('edit project key, then send');
 });
+$('composer-pairing').addEventListener('click', openPairingContext);
 $('command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCommand(); });
 $('command-send').addEventListener('click', handleCommand);
+$('composer-mode-toggle')?.addEventListener('click', toggleComposerMode);
+
+function toggleComposerMode() {
+  store.composerMode = store.composerMode === 'project' ? 'conversation' : 'project';
+  localStorage.setItem('cli-bridge-composer-mode', store.composerMode);
+  renderComposerMode();
+}
+
+function renderComposerMode() {
+  const btn = $('composer-mode-toggle');
+  if (btn) {
+    btn.textContent = store.composerMode === 'project' ? 'Project' : 'Conversation';
+  }
+  const hints = document.querySelector('.command-hints');
+  if (hints) {
+    hints.textContent = store.composerMode === 'project'
+      ? '/goals · /reviews · /project · pairing · help'
+      : '/goals to create · pair to configure · help';
+  }
+  // Show/hide transcript vs goal content
+  const goalContent = $('goal-content');
+  const transcript = document.getElementById('conversation-transcript');
+  if (goalContent && transcript) {
+    goalContent.style.display = store.composerMode === 'conversation' ? 'none' : '';
+    transcript.style.display = store.composerMode === 'conversation' ? '' : 'none';
+  }
+  renderConversationTranscript();
+}
+
+function renderConversationTranscript() {
+  const el = document.getElementById('conversation-transcript');
+  if (!el) return;
+  const events = store.conversationEvents || [];
+  if (!events.length) {
+    el.innerHTML = store.composerMode === 'conversation'
+      ? '<span class="unavailable">No conversation messages yet. Type a message and send.</span>'
+      : '';
+    return;
+  }
+  el.innerHTML = events.map(event =>
+    '<div class="timeline-entry"><div class="origin ' + (event.role === 'user' ? 'user' : 'system') + '">'
+    + escapeHtml(event.role)
+    + '</div><div class="body">' + escapeHtml(event.text)
+    + '<div class="time"><span class="pill">' + escapeHtml(event.status) + '</span> '
+    + escapeHtml(event.routeKind || '') + '</div></div></div>'
+  ).join('');
+}
+
+async function sendConversationMessage(input) {
+  if (!store.connected) {
+    appendCommandMessage(input, 'Connect with the pairing token first.', true);
+    setCommandStatus('connect required', true);
+    return;
+  }
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages', 'POST', { text: input });
+  if (!res.ok) {
+    appendCommandMessage(input, 'Conversation send failed: ' + escapeHtml(res.data?.message || res.status), true);
+    setCommandStatus('conversation failed', true);
+    return;
+  }
+  store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
+  renderConversationTranscript();
+  setCommandStatus('conversation routed');
+}
 
 async function handleCommand() {
   const input = $('command-input').value.trim();
@@ -2285,8 +2624,18 @@ async function handleCommand() {
   const lc = input.toLowerCase();
   const activeGoal = getActiveGoalEntry();
 
+  // Conversation mode: route to conversation pairing unless it's a known project command
+  if (store.composerMode === 'conversation' && !lc.startsWith('/goal ') && !lc.startsWith('goal ') && !lc.startsWith('review ') && lc !== 'pairing' && lc !== '/pairing' && lc !== 'pair' && !lc.startsWith('pair ')) {
+    await sendConversationMessage(input);
+    return;
+  }
+
   if (lc === 'help' || lc === '?' || lc === 'commands') {
     showHelp(input);
+    return;
+  }
+  if (lc === 'pairing' || lc === '/pairing' || lc === 'pair ui' || input === '配对') {
+    await openPairingContext();
     return;
   }
   // Connection required for server-backed operations.
@@ -2358,7 +2707,8 @@ async function handleCommand() {
   if (lc === 'pair reset') { await pairResetCommand(); return; }
   if (lc.startsWith('pair planner ')) { await pairSetCommand(input); return; }
   if (lc === 'pair context') { await pairContextCommand(); return; }
-  if (lc === 'pair' || lc === 'pair help') { pairHelp(); return; }
+  if (lc === 'pair') { await openPairingContext(); return; }
+  if (lc === 'pair help') { pairHelp(); return; }
   if (lc.startsWith('pair ')) { await pairDispatch(input); return; }
 
   // ── EX-3: Binding commands ──
@@ -2383,6 +2733,7 @@ async function handleCommand() {
     store.cache.verification = null;
     store.cache.workbuddy = null;
     store.cache.teams = null;
+    store.cache.pairing = { endpoints: [], preset: null, loaded: false };
     store.cache.automation = { binding: null, proposal: null };
     store.goalContextId = '';
     renderWorkspace();

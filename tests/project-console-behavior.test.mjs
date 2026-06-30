@@ -2054,3 +2054,86 @@ test('RP-2.19: connect keeps token in memory and sends it only in the pairing he
   // The token must never be rendered as visible DOM text.
   assert.ok(!document.body.textContent.includes(RP219_TOKEN));
 });
+
+test('pairing button opens visible pairing controls before connection', async () => {
+  const { document, fetchCalls } = setupConsole();
+
+  document.getElementById('composer-pairing').click();
+
+  await waitFor(() => document.getElementById('conversation-pairing-context'));
+  assert.match(document.getElementById('conversation-pairing-context').textContent, /Conversation Pairing/);
+  assert.match(document.getElementById('conversation-pairing-context').textContent, /Connect with the pairing token first/);
+  assert.equal(document.getElementById('command-status').textContent, 'connect required for pairing');
+  assert.equal(fetchCalls.some((call) => call.path.includes('/team-preset')), false);
+});
+
+test('pairing UI saves conversation pairing to new endpoint', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/endpoints', {
+    ok: true,
+    payload: {
+      endpoints: [
+        {
+          id: 'chatgpt-web',
+          label: 'ChatGPT Web',
+          transport: 'web-dom',
+          status: 'online',
+          capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: false, canExecute: false, canSummarize: false },
+        },
+        {
+          id: 'claude-code-command',
+          label: 'Claude Code Review',
+          transport: 'command',
+          status: 'online',
+          capabilities: { canReview: true, canExecute: false, canAcceptPrompt: false, canReturnOutput: true, canSummarize: false },
+        },
+        {
+          id: 'workbuddy',
+          label: 'WorkBuddy Executor',
+          transport: 'workbuddy',
+          status: 'online',
+          capabilities: { canReview: true, canExecute: true, canAcceptPrompt: true, canReturnOutput: true, canSummarize: false },
+        },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation-pairing', {
+    ok: true,
+    payload: { pairing: null },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await waitFor(() => document.getElementById('conn-dot').classList.contains('ok'));
+
+  document.getElementById('composer-pairing').click();
+  await waitFor(() => document.getElementById('pairing-save'));
+  document.getElementById('conversation-source').value = 'chatgpt-web';
+  document.getElementById('conversation-target').value = 'workbuddy';
+
+  setFixture('/bridge/projects/cli-bridge/conversation-pairing', {
+    ok: true,
+    payload: {
+      pairing: {
+        projectId: 'cli-bridge',
+        sourceEndpointId: 'chatgpt-web',
+        targetEndpointId: 'workbuddy',
+        targetRouteKind: 'workbuddy-execution',
+        status: 'ready',
+        scope: 'project',
+        updatedAt: 1,
+      },
+    },
+  });
+  document.getElementById('pairing-save').click();
+
+  await waitFor(() => document.getElementById('command-status').textContent === 'pairing saved');
+  const saveCall = fetchCalls.find((call) => call.path === '/bridge/projects/cli-bridge/conversation-pairing' && call.method === 'PUT');
+  assert.ok(saveCall, 'expected PUT /conversation-pairing');
+  assert.deepEqual(saveCall.body, {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+  });
+  assert.match(document.getElementById('fact-pairing').textContent, /chatgpt-web/);
+  assert.match(document.getElementById('fact-pairing').textContent, /workbuddy/);
+});
