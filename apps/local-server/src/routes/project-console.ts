@@ -273,6 +273,47 @@ main .timeline-entry .origin { font-size: 11px; font-weight: 600; margin-bottom:
 main .timeline-entry .origin.user { color: var(--accent); }
 main .timeline-entry .origin.system { color: var(--muted); }
 main .timeline-entry .body { white-space: pre-wrap; }
+#conversation-transcript {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 8px 0 24px;
+}
+.conversation-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0;
+}
+.conversation-message.user { align-items: flex-end; }
+.conversation-message.bridge,
+.conversation-message.target,
+.conversation-message.action { align-items: flex-start; }
+.conversation-meta,
+.conversation-state {
+  color: var(--muted);
+  font-size: 11px;
+}
+.conversation-bubble {
+  max-width: min(680px, 82%);
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 14px;
+}
+.conversation-message.user .conversation-bubble {
+  background: var(--composer-bg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 10px 14px;
+}
+.conversation-message.bridge .conversation-bubble,
+.conversation-message.target .conversation-bubble,
+.conversation-message.action .conversation-bubble {
+  padding: 2px 0;
+}
+.conversation-message.action {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
 
 /* ─── Right Facts Rail ─── */
 .facts-rail {
@@ -618,7 +659,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <span class="composer-pill pending" id="access-pill" title="Local bridge access. Commands route through governed project endpoints."><span class="shield" aria-hidden="true"></span><span id="access-pill-label">未连接</span></span>
       <span class="composer-spacer"></span>
       <button type="button" class="composer-mode" id="composer-mode-toggle" aria-label="Toggle composer mode" title="Click to switch between Project and Conversation mode">Project</button>
-      <button type="button" class="composer-pairing" id="conversation-auto-dispatch" aria-label="Toggle conversation auto dispatch">Manual</button>
+      <button type="button" class="composer-pairing" id="conversation-auto-dispatch" aria-label="Toggle conversation auto dispatch">Auto dispatch</button>
       <button type="button" class="composer-pairing" id="composer-pairing" aria-label="Open pairing controls">Pairing</button>
       <button id="command-send" aria-label="Send project command">↑</button>
     </div>
@@ -645,7 +686,7 @@ const store = {
   composerMode: (localStorage.getItem('cli-bridge-composer-mode') || 'project'),
   conversationEvents: [],
   conversationActions: [],
-  conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') === '1',
+  conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -801,7 +842,28 @@ async function refreshAll() {
   if (wbR.status === 'fulfilled' && wbR.value.ok) store.cache.workbuddy = wbR.value.data;
   if (tsR.status === 'fulfilled' && tsR.value.ok) store.cache.teams = tsR.value.data;
   if (alR.status === 'fulfilled' && alR.value.ok) store.cache.automationLoops = alR.value.data.loops || [];
+  await refreshConversationMessages({ render: false });
   renderAll();
+}
+
+async function refreshConversationMessages(options) {
+  if (options === undefined) options = {};
+  if (!store.connected) return;
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages');
+  if (!res.ok) return;
+  store.conversationEvents = res.data?.messages || res.data?.events || [];
+  store.conversationActions = res.data?.actions || [];
+  if (options.render !== false) renderConversationTranscript();
+}
+
+async function pollConversationMessages() {
+  if (store.connected && store.composerMode === 'conversation') {
+    await refreshConversationMessages();
+  }
+}
+
+if (!/jsdom/i.test(navigator.userAgent || '')) {
+  window.setInterval(pollConversationMessages, 3000);
 }
 
 // ─── Render ───
@@ -2755,9 +2817,9 @@ function renderComposerMode() {
 function setConversationAutoDispatch(enabled) {
   store.conversationAutoDispatch = !!enabled;
   if (store.conversationAutoDispatch) {
-    sessionStorage.setItem('cli-bridge-conversation-auto-dispatch', '1');
-  } else {
     sessionStorage.removeItem('cli-bridge-conversation-auto-dispatch');
+  } else {
+    sessionStorage.setItem('cli-bridge-conversation-auto-dispatch', '0');
   }
   renderComposerMode();
 }
@@ -2778,16 +2840,20 @@ function renderConversationTranscript() {
       : '';
     return;
   }
-  const eventsHtml = events.map(event =>
-    '<div class="timeline-entry"><div class="origin ' + (event.role === 'user' ? 'user' : 'system') + '">'
-    + escapeHtml(event.role)
-    + '</div><div class="body">' + escapeHtml(event.text)
-    + '<div class="time"><span class="pill">' + escapeHtml(event.status) + '</span> '
-    + escapeHtml(event.routeKind || '') + '</div></div></div>'
-  ).join('');
+  const eventsHtml = events.map(renderConversationEvent).join('');
   const actionsHtml = actions.map(renderConversationAction).join('');
   el.innerHTML = eventsHtml + actionsHtml;
   bindConversationActionButtons();
+}
+
+function renderConversationEvent(event) {
+  const roleClass = event.role === 'user' ? 'user' : event.role === 'target' ? 'target' : 'bridge';
+  const label = event.role === 'user' ? 'user' : event.role === 'target' ? 'target' : 'bridge';
+  return '<div class="conversation-message ' + roleClass + '"><div class="conversation-meta">'
+    + escapeHtml(label)
+    + '</div><div class="conversation-bubble">' + escapeHtml(event.text)
+    + '</div><div class="conversation-state"><span class="pill">' + escapeHtml(event.status) + '</span> '
+    + escapeHtml(event.routeKind || '') + '</div></div>';
 }
 
 function mergeConversationActions(existing, incoming) {
@@ -2800,10 +2866,10 @@ function mergeConversationActions(existing, incoming) {
 function renderConversationAction(action) {
   const canConfirm = action.status === 'previewed';
   const canDispatch = action.status === 'confirmed';
-  return '<div class="timeline-entry" data-conversation-action="' + escapeHtml(action.id) + '">'
-    + '<div class="origin system">action</div>'
-    + '<div class="body">' + escapeHtml(action.preview || action.routeKind)
-    + '<div class="time"><span class="pill">' + escapeHtml(action.status) + '</span> ' + escapeHtml(action.routeKind || '') + '</div>'
+  return '<div class="conversation-message action" data-conversation-action="' + escapeHtml(action.id) + '">'
+    + '<div class="conversation-meta">action</div>'
+    + '<div class="conversation-bubble">' + escapeHtml(action.preview || action.routeKind) + '</div>'
+    + '<div class="conversation-state"><span class="pill">' + escapeHtml(action.status) + '</span> ' + escapeHtml(action.routeKind || '') + '</div>'
     + '<div class="context-actions">'
     + '<button data-conversation-action-confirm="' + escapeHtml(action.id) + '"' + (canConfirm ? '' : ' disabled') + '>Confirm</button>'
     + '<button data-conversation-action-dispatch="' + escapeHtml(action.id) + '"' + (canDispatch ? '' : ' disabled') + '>Dispatch</button>'

@@ -1688,6 +1688,13 @@ function error(statusCode: number, message: string): BridgeResult {
   return { statusCode, payload: { status: 'error', message } };
 }
 
+function formatWorkBuddyConversationResult(output: unknown, stdout?: string): string {
+  if (typeof stdout === 'string' && stdout.trim()) return stdout.trim();
+  if (typeof output === 'string' && output.trim()) return output.trim();
+  if (output !== undefined) return JSON.stringify(output);
+  return 'WorkBuddy completed with no output.';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -3198,6 +3205,25 @@ export async function handleBridgeRequest(
       durationMs: typeof body.durationMs === 'number' ? body.durationMs : 0,
     });
     if (!result) return error(409, 'Task not found or not claimed');
+    const conversationAction = runtime.conversationActionStore.findByWorkBuddyTaskId(taskId);
+    if (conversationAction) {
+      const updatedAction = outcomeOk
+        ? runtime.conversationActionStore.markWorkBuddyReturned(conversationAction.id)
+        : runtime.conversationActionStore.fail(conversationAction.id, result.failureReason ?? 'workbuddy-execution-failed');
+      const resultText = outcomeOk
+        ? formatWorkBuddyConversationResult(result.output, result.stdout)
+        : (result.failureReason ?? result.stderr ?? 'WorkBuddy execution failed');
+      const event = runtime.conversationTranscriptStore.append({
+        projectId: conversationAction.projectId,
+        pairingId: `${conversationAction.sourceEndpointId}→${conversationAction.targetEndpointId}`,
+        role: 'target',
+        text: resultText,
+        status: outcomeOk ? 'returned' : 'failed',
+        routeKind: conversationAction.routeKind,
+      });
+      runtime.persist();
+      return ok({ result, action: updatedAction, event });
+    }
     // Update ExecutionProposal lifecycle: dispatching → returned/failed.
     if (result.ok) {
       runtime.executionProposalStore.markReturned(task.proposalId, {

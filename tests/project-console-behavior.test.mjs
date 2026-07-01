@@ -2139,6 +2139,7 @@ test('pairing UI saves conversation pairing to new endpoint', async () => {
   assert.match(document.getElementById('fact-pairing').textContent, /chatgpt-web/);
   assert.match(document.getElementById('fact-pairing').textContent, /workbuddy/);
   assert.equal(document.getElementById('composer-mode-toggle').textContent, 'Conversation');
+  assert.equal(document.getElementById('conversation-auto-dispatch').textContent, 'Auto dispatch');
   assert.equal(document.getElementById('conversation-pairing-context'), null);
   assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
 });
@@ -2248,6 +2249,9 @@ test('conversation mode auto-dispatches previewed workbuddy actions after pairin
   await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/dispatch')));
   assert.equal(document.getElementById('command-status').textContent, 'conversation auto-dispatched');
   assert.match(document.getElementById('conversation-transcript').textContent, /queued/);
+  assert.ok(document.querySelector('.conversation-message.user'));
+  assert.ok(document.querySelector('.conversation-message.bridge'));
+  assert.ok(document.querySelector('.conversation-message.action'));
 });
 
 // ── ADR-0025 Task 3: auto-pair token discipline ──

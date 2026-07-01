@@ -158,6 +158,38 @@ test('workbuddy conversation action confirms and queues a WorkBuddy inbox task',
   assert.equal(typeof inbox.payload.task.prompt, 'string');
 });
 
+test('workbuddy result returns to conversation transcript', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+  });
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'say hello from workbuddy',
+  });
+  const action = created.payload.actions[0];
+  await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
+  const taskId = dispatched.payload.task.taskId;
+  await call(runtime, 'GET', '/bridge/endpoints/workbuddy/inbox/next');
+
+  const result = await call(runtime, 'POST', '/bridge/endpoints/workbuddy/results', {
+    taskId,
+    ok: true,
+    stdout: 'hello from workbuddy',
+    exitCode: 0,
+    durationMs: 12,
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.action.status, 'returned');
+  assert.equal(result.payload.event.role, 'target');
+  assert.equal(result.payload.event.text, 'hello from workbuddy');
+
+  const messages = await call(runtime, 'GET', '/bridge/projects/cli-bridge/conversation/messages');
+  assert.equal(messages.payload.actions[0].status, 'returned');
+  assert.match(messages.payload.messages.map((event) => event.text).join('\n'), /hello from workbuddy/);
+});
+
 // --- Task 6: Route-Generic Conversation API ---
 
 test('conversation routes custom workbuddy transport target through route adapter', async () => {

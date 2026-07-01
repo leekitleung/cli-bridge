@@ -111,6 +111,15 @@ export class InMemoryConversationActionStore {
     return clone(action);
   }
 
+  markWorkBuddyReturned(actionId: string, now: number = Date.now()): ConversationAction | undefined {
+    const action = this.actions.get(actionId);
+    if (!action || action.routeKind !== 'workbuddy-execution' || !['queued', 'dispatching'].includes(action.status)) return undefined;
+    action.status = 'returned';
+    action.updatedAt = now;
+    this.actions.set(action.id, clone(action));
+    return clone(action);
+  }
+
   fail(actionId: string, failureReason: string, now: number = Date.now()): ConversationAction | undefined {
     const action = this.actions.get(actionId);
     if (!action) return undefined;
@@ -119,6 +128,13 @@ export class InMemoryConversationActionStore {
     action.updatedAt = now;
     this.actions.set(action.id, clone(action));
     return clone(action);
+  }
+
+  findByWorkBuddyTaskId(taskId: string): ConversationAction | undefined {
+    for (const action of this.actions.values()) {
+      if (action.linkedWorkBuddyTaskId === taskId) return clone(action);
+    }
+    return undefined;
   }
 
   hydrateAction(action: ConversationAction): void {
