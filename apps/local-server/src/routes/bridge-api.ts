@@ -38,6 +38,7 @@ import type { ConversationPairing, ConversationRouteKind, ConversationPairingSta
 import { InMemoryConversationTranscriptStore } from '../storage/conversation-transcript-store.ts';
 import type { ConversationTranscriptEvent } from '../storage/conversation-transcript-store.ts';
 import { InMemoryConversationActionStore } from '../storage/conversation-action-store.ts';
+import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
@@ -1876,19 +1877,8 @@ function projectConversationActionPath(pathname: string): { matched: true; key: 
 }
 
 function resolveConversationRouteKind(endpoint: AgentEndpoint): { kind: ConversationRouteKind; status: ConversationPairingStatus } {
-  if (endpoint.id === 'workbuddy' && endpoint.capabilities.canExecute) {
-    return { kind: 'workbuddy-execution', status: 'ready' };
-  }
-  if (endpoint.transport === 'command' && endpoint.capabilities.canReview) {
-    return { kind: 'review-command', status: 'ready' };
-  }
-  if (endpoint.transport === 'managed-pty' && endpoint.capabilities.canAcceptPrompt && endpoint.capabilities.canReturnOutput) {
-    return { kind: 'managed-pty', status: 'not-implemented' };
-  }
-  if (endpoint.transport === 'web-dom' && endpoint.capabilities.canAcceptPrompt && endpoint.capabilities.canReturnOutput) {
-    return { kind: 'web-relay', status: 'needs-manual-confirmation' };
-  }
-  return { kind: 'unavailable', status: 'not-implemented' };
+  const route = resolveConversationRouteAdapter(endpoint);
+  return { kind: route.kind, status: route.status };
 }
 
 function validateConversationSource(endpoint: AgentEndpoint | undefined): string | null {
@@ -3408,6 +3398,11 @@ export async function handleBridgeRequest(
       const pairing = runtime.conversationPairingStore.get(key);
       if (!pairing) return error(409, 'Conversation pairing is not configured');
 
+      const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
+      if (!targetEndpoint) return error(409, 'Conversation target endpoint is unavailable');
+
+      const route = resolveConversationRouteAdapter(targetEndpoint);
+
       const userEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
         pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
@@ -3419,28 +3414,16 @@ export async function handleBridgeRequest(
 
       let bridgeText = '';
       let bridgeStatus: ConversationTranscriptEvent['status'] = 'queued';
-      let previewedReview: ReturnType<typeof runtime.pendingReviewStore.get> | undefined;
 
       if (pairing.targetRouteKind === 'managed-pty') {
         bridgeStatus = 'not-implemented';
-        bridgeText = 'Codex CLI is registered, but general managed-pty conversation dispatch is not implemented in this phase.';
-      } else if (pairing.targetRouteKind === 'review-command') {
-        const review = runtime.pendingReviewStore.createDraft({
-          sessionId: `conversation:${key}`,
-          sourceEndpointId: pairing.sourceEndpointId,
-          targetEndpointId: pairing.targetEndpointId,
-          prompt: text,
-          projectId: key,
-        });
-        previewedReview = runtime.pendingReviewStore.preview(review.id) ?? review;
-        bridgeStatus = 'awaiting-manual-confirmation';
-        bridgeText = `Review preview created. Confirm and dispatch review ${previewedReview.id}.`;
+        bridgeText = 'Managed PTY conversation dispatch is not implemented in this phase.';
       } else if (pairing.targetRouteKind === 'web-relay') {
         bridgeStatus = 'awaiting-manual-confirmation';
         bridgeText = 'Web relay requires the existing manual confirmation flow.';
-      } else if (pairing.targetRouteKind === 'workbuddy-execution') {
+      } else if (route.adapter) {
         bridgeStatus = 'awaiting-manual-confirmation';
-        bridgeText = 'WorkBuddy execution preview created. Confirm to queue a WorkBuddy task.';
+        bridgeText = route.adapter.bridgeText(targetEndpoint.label || targetEndpoint.id);
       }
 
       const bridgeEvent = runtime.conversationTranscriptStore.append({
@@ -3453,30 +3436,17 @@ export async function handleBridgeRequest(
       });
 
       const actions: import('../storage/conversation-action-store.ts').ConversationAction[] = [];
-      if (pairing.targetRouteKind === 'review-command' && previewedReview) {
-        actions.push(runtime.conversationActionStore.createPreview({
+      if (route.adapter) {
+        const action = route.adapter.createAction({
+          runtime,
           projectId: key,
           sourceEndpointId: pairing.sourceEndpointId,
-          targetEndpointId: pairing.targetEndpointId,
-          routeKind: pairing.targetRouteKind,
+          targetEndpoint,
           userEventId: userEvent.id,
           bridgeEventId: bridgeEvent.id,
           text,
-          preview: `Review command preview for ${pairing.targetEndpointId}`,
-          linkedReviewId: previewedReview.id,
-        }));
-      }
-      if (pairing.targetRouteKind === 'workbuddy-execution') {
-        actions.push(runtime.conversationActionStore.createPreview({
-          projectId: key,
-          sourceEndpointId: pairing.sourceEndpointId,
-          targetEndpointId: pairing.targetEndpointId,
-          routeKind: pairing.targetRouteKind,
-          userEventId: userEvent.id,
-          bridgeEventId: bridgeEvent.id,
-          text,
-          preview: `WorkBuddy task preview for ${pairing.targetEndpointId}`,
-        }));
+        });
+        if (action) actions.push(action);
       }
 
       runtime.persist();
@@ -3501,53 +3471,19 @@ export async function handleBridgeRequest(
     if (project.archivedAt) return error(409, 'Cannot modify conversation action in archived project');
     if (method !== 'POST') return error(405, 'Method not allowed');
 
+    const targetEndpoint = runtime.endpointRegistry.get(action.targetEndpointId);
+    if (!targetEndpoint) return error(409, 'Conversation action target endpoint is unavailable');
+    const route = resolveConversationRouteAdapter(targetEndpoint);
+    if (!route.adapter || route.adapter.id !== action.routeKind) {
+      return error(409, `Conversation action route ${action.routeKind} is not dispatchable`);
+    }
+
     if (conversationActionPath.sub === 'confirm') {
-      if (action.routeKind === 'review-command') {
-        if (!action.linkedReviewId) return error(409, 'Conversation action has no linked review');
-        const confirmedReview = runtime.pendingReviewStore.confirm(action.linkedReviewId);
-        if (!confirmedReview) return error(409, 'Linked review cannot be confirmed');
-        const confirmedAction = runtime.conversationActionStore.confirm(action.id);
-        runtime.persist();
-        return ok({ action: confirmedAction, review: confirmedReview });
-      }
-      const confirmedAction = runtime.conversationActionStore.confirm(action.id);
-      if (!confirmedAction) return error(409, 'Conversation action cannot be confirmed');
-      runtime.persist();
-      return ok({ action: confirmedAction });
+      return route.adapter.confirm({ runtime, action });
     }
 
     if (conversationActionPath.sub === 'dispatch') {
-      if (action.status !== 'confirmed') return error(409, 'Conversation action must be confirmed before dispatch');
-      const dispatching = runtime.conversationActionStore.markDispatching(action.id);
-      if (!dispatching) return error(409, 'Conversation action cannot dispatch');
-      if (action.routeKind === 'workbuddy-execution') {
-        const task = runtime.workbuddyExecution.enqueue({
-          endpointId: action.targetEndpointId,
-          proposalId: action.id,
-          planId: `conversation:${action.projectId}`,
-          goalId: `conversation:${action.projectId}`,
-          bindingHash: action.textHash,
-          prompt: action.preview,
-          workingDirectory: process.cwd(),
-          timeoutMs: 120_000,
-        });
-        const queued = runtime.conversationActionStore.markQueued(action.id, task.taskId);
-        runtime.persist();
-        return ok({ action: queued, task });
-      }
-      if (action.routeKind === 'review-command') {
-        if (!action.linkedReviewId) return error(409, 'Conversation action has no linked review');
-        const review = runtime.pendingReviewStore.get(action.linkedReviewId);
-        if (!review || review.status !== 'confirmed') return error(409, 'Linked review must be confirmed');
-        runtime.conversationActionStore.markQueued(action.id, action.linkedReviewId);
-        runtime.persist();
-        return ok({
-          action: runtime.conversationActionStore.get(action.id),
-          review,
-          message: 'Review action is confirmed. Use /bridge/reviews/dispatch for the governed CLI run.',
-        });
-      }
-      return error(409, `Conversation action route ${action.routeKind} cannot dispatch yet`);
+      return await route.adapter.dispatch({ runtime, action, request });
     }
 
     return error(405, 'Method not allowed');

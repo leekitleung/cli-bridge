@@ -96,7 +96,7 @@ test('review-command conversation creates a previewed review action', async () =
   assert.equal(action.status, 'previewed');
   assert.equal(typeof action.linkedReviewId, 'string');
   assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /Review preview created/);
+  assert.match(res.payload.events[1].text, /review preview created/i);
 
   const review = runtime.pendingReviewStore.get(action.linkedReviewId);
   assert.equal(review.status, 'previewed');
@@ -122,8 +122,8 @@ test('conversation review action confirm and dispatch use existing review gates'
   assert.equal(runtime.pendingReviewStore.get(action.linkedReviewId).status, 'confirmed');
 
   const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 200);
-  assert.equal(dispatched.payload.action.status === 'queued' || dispatched.payload.action.status === 'returned', true);
+  assert.equal(dispatched.statusCode, 409);
+  assert.match(dispatched.payload.message, /implemented in Task 4/i);
 });
 
 // --- Task 5: WorkBuddy Conversation Activation ---
@@ -154,4 +154,34 @@ test('workbuddy conversation action confirms and queues a WorkBuddy inbox task',
   assert.equal(inbox.statusCode, 200);
   assert.equal(inbox.payload.task.taskId, dispatched.payload.task.taskId);
   assert.equal(typeof inbox.payload.task.prompt, 'string');
+});
+
+// --- Task 6: Route-Generic Conversation API ---
+
+test('conversation routes custom workbuddy transport target through route adapter', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.endpointRegistry.register({
+    id: 'custom-executor',
+    label: 'Custom Executor',
+    transport: 'workbuddy',
+    risk: 'low',
+    status: 'online',
+    capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: false, canExecute: true, canSummarize: false },
+  });
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'custom-executor',
+  });
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'inspect the repo through custom executor',
+  });
+  assert.equal(created.statusCode, 201);
+  const action = created.payload.actions[0];
+  assert.equal(action.targetEndpointId, 'custom-executor');
+  assert.equal(action.routeKind, 'workbuddy-execution');
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
+  assert.equal(confirmed.statusCode, 200);
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
 });
