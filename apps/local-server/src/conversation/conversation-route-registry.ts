@@ -1,5 +1,7 @@
 import type { AgentEndpoint } from '../../../../packages/shared/src/types.ts';
 import type { ConversationRouteResolution, ConversationRouteAdapter } from './conversation-route-adapter.ts';
+import { runCommandReview } from '../review/command-review-runner.ts';
+import { buildClaudeReviewPrompt } from '../review/claude-review-prompt.ts';
 
 function bridgeOk(payload: unknown) {
   return { statusCode: 200, payload };
@@ -102,7 +104,34 @@ const reviewCommandAdapter: ConversationRouteAdapter = {
     return bridgeOk({ action: confirmedAction, review: confirmedReview });
   },
   async dispatch(input) {
-    return bridgeError(409, 'Review command auto-dispatch is implemented in Task 4');
+    if (input.action.status !== 'confirmed') return bridgeError(409, 'Conversation action must be confirmed before dispatch');
+    if (!input.action.linkedReviewId) return bridgeError(409, 'Conversation action has no linked review');
+    const review = input.runtime.pendingReviewStore.get(input.action.linkedReviewId);
+    if (!review || review.status !== 'confirmed') return bridgeError(409, 'Linked review must be confirmed');
+    const adapter = input.runtime.reviewAdapterFor(review.targetEndpointId);
+    if (!adapter) return bridgeError(409, 'Review target is not a runnable command endpoint');
+    const sent = input.runtime.pendingReviewStore.sendConfirmed(review.id);
+    if (!sent.ok) return bridgeError(409, sent.failureReason ?? 'Review cannot be sent');
+    const dispatching = input.runtime.conversationActionStore.markDispatching(input.action.id);
+    if (!dispatching) return bridgeError(409, 'Conversation action cannot dispatch');
+    const runResult = await runCommandReview(
+      input.runtime.pendingReviewStore,
+      input.runtime.auditLog,
+      adapter,
+      {
+        reviewId: review.id,
+        prompt: buildClaudeReviewPrompt({ codexOutput: review.prompt }),
+      },
+    );
+    if (!runResult.ok) return bridgeError(500, runResult.failureReason ?? 'review-run-failed');
+    const returnedAction = input.runtime.conversationActionStore.markReturned(input.action.id, review.id);
+    input.runtime.persist();
+    return bridgeOk({
+      action: returnedAction,
+      review: runResult.returned?.review,
+      result: runResult.returned?.result,
+      nextPrompt: runResult.returned?.nextPrompt,
+    });
   },
 };
 

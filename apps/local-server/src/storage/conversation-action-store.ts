@@ -101,6 +101,16 @@ export class InMemoryConversationActionStore {
     return clone(action);
   }
 
+  markReturned(actionId: string, linkedReviewId: string, now: number = Date.now()): ConversationAction | undefined {
+    const action = this.actions.get(actionId);
+    if (!action || action.status !== 'dispatching') return undefined;
+    action.status = 'returned';
+    action.linkedReviewId = linkedReviewId;
+    action.updatedAt = now;
+    this.actions.set(action.id, clone(action));
+    return clone(action);
+  }
+
   fail(actionId: string, failureReason: string, now: number = Date.now()): ConversationAction | undefined {
     const action = this.actions.get(actionId);
     if (!action) return undefined;

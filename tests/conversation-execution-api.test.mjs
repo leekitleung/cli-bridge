@@ -106,7 +106,9 @@ test('review-command conversation creates a previewed review action', async () =
 // --- Task 4: Conversation Action Confirm And Dispatch Routes ---
 
 test('conversation review action confirm and dispatch use existing review gates', async () => {
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({
+    reviewAdapterFor: () => fakeReviewAdapter('{"summary":"gate check ok","findings":["looks safe"]}'),
+  });
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
     sourceEndpointId: 'chatgpt-web',
     targetEndpointId: 'claude-code-command',
@@ -122,8 +124,8 @@ test('conversation review action confirm and dispatch use existing review gates'
   assert.equal(runtime.pendingReviewStore.get(action.linkedReviewId).status, 'confirmed');
 
   const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 409);
-  assert.match(dispatched.payload.message, /implemented in Task 4/i);
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.action.status, 'returned');
 });
 
 // --- Task 5: WorkBuddy Conversation Activation ---
@@ -184,4 +186,48 @@ test('conversation routes custom workbuddy transport target through route adapte
   const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
+});
+
+// --- Task 7: Review-Command Auto-Dispatch ---
+
+function fakeReviewAdapter(reviewResultJson) {
+  return {
+    name: 'fake-review',
+    async review(input) {
+      const parsed = JSON.parse(reviewResultJson);
+      return {
+        ok: true,
+        adapterName: 'fake-review',
+        result: {
+          id: input.resultId ?? 'res-fake',
+          reviewRequestId: input.reviewRequestId,
+          summary: parsed.summary,
+          findings: parsed.findings,
+          nextReviewPrompt: parsed.nextPromptDraft,
+          createdAt: input.now ?? Date.now(),
+        },
+        meta: { command: 'claude', argv: [], exitCode: 0, durationMs: 1, timedOut: false, truncated: false },
+      };
+    },
+  };
+}
+
+test('conversation review-command target dispatches through review adapter', async () => {
+  const runtime = createBridgeRuntime({
+    reviewAdapterFor: () => fakeReviewAdapter('{"summary":"review ok","findings":["no issues"]}'),
+  });
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'claude-code-command',
+  });
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'review this plan',
+  });
+  const action = created.payload.actions[0];
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
+  assert.equal(confirmed.statusCode, 200);
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.action.status, 'returned');
+  assert.match(dispatched.payload.result.summary, /review ok/);
 });
