@@ -1063,7 +1063,7 @@ function canBeConversationSource(endpoint) {
 
 function conversationRouteKindLabel(endpoint) {
   const caps = endpoint.capabilities || {};
-  if (endpoint.id === 'workbuddy' && caps.canExecute) return { kind: 'workbuddy-execution', status: 'ready' };
+  if (endpoint.transport === 'workbuddy' && caps.canExecute) return { kind: 'workbuddy-execution', status: 'ready' };
   if (endpoint.transport === 'command' && caps.canReview) return { kind: 'review-command', status: 'ready for review route' };
   if (endpoint.transport === 'managed-pty' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'managed-pty', status: 'not implemented' };
   if (endpoint.transport === 'web-dom' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'web-relay', status: 'manual confirmation' };
