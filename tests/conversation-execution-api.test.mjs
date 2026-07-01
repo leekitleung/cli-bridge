@@ -123,3 +123,33 @@ test('conversation review action confirm and dispatch use existing review gates'
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.action.status === 'queued' || dispatched.payload.action.status === 'returned', true);
 });
+
+// --- Task 5: WorkBuddy Conversation Activation ---
+
+test('workbuddy conversation action confirms and queues a WorkBuddy inbox task', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+  });
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'inspect the repo and propose the smallest fix',
+  });
+  const action = created.payload.actions[0];
+  assert.equal(action.routeKind, 'workbuddy-execution');
+  assert.equal(action.status, 'previewed');
+
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {});
+  assert.equal(confirmed.statusCode, 200);
+  assert.equal(confirmed.payload.action.status, 'confirmed');
+
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {});
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.action.status, 'queued');
+  assert.equal(typeof dispatched.payload.task.taskId, 'string');
+
+  const inbox = await call(runtime, 'GET', '/bridge/endpoints/workbuddy/inbox/next');
+  assert.equal(inbox.statusCode, 200);
+  assert.equal(inbox.payload.task.taskId, dispatched.payload.task.taskId);
+  assert.equal(typeof inbox.payload.task.prompt, 'string');
+});

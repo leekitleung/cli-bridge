@@ -3432,8 +3432,8 @@ export async function handleBridgeRequest(
         bridgeStatus = 'awaiting-manual-confirmation';
         bridgeText = 'Web relay requires the existing manual confirmation flow.';
       } else if (pairing.targetRouteKind === 'workbuddy-execution') {
-        bridgeStatus = 'queued';
-        bridgeText = 'Queued for WorkBuddy execution flow.';
+        bridgeStatus = 'awaiting-manual-confirmation';
+        bridgeText = 'WorkBuddy execution preview created. Confirm to queue a WorkBuddy task.';
       }
 
       const bridgeEvent = runtime.conversationTranscriptStore.append({
@@ -3457,6 +3457,18 @@ export async function handleBridgeRequest(
           text,
           preview: `Review command preview for ${pairing.targetEndpointId}`,
           linkedReviewId: previewedReview.id,
+        }));
+      }
+      if (pairing.targetRouteKind === 'workbuddy-execution') {
+        actions.push(runtime.conversationActionStore.createPreview({
+          projectId: key,
+          sourceEndpointId: pairing.sourceEndpointId,
+          targetEndpointId: pairing.targetEndpointId,
+          routeKind: pairing.targetRouteKind,
+          userEventId: userEvent.id,
+          bridgeEventId: bridgeEvent.id,
+          text,
+          preview: `WorkBuddy task preview for ${pairing.targetEndpointId}`,
         }));
       }
 
@@ -3498,6 +3510,21 @@ export async function handleBridgeRequest(
       if (action.status !== 'confirmed') return error(409, 'Conversation action must be confirmed before dispatch');
       const dispatching = runtime.conversationActionStore.markDispatching(action.id);
       if (!dispatching) return error(409, 'Conversation action cannot dispatch');
+      if (action.routeKind === 'workbuddy-execution') {
+        const task = runtime.workbuddyExecution.enqueue({
+          endpointId: action.targetEndpointId,
+          proposalId: action.id,
+          planId: `conversation:${action.projectId}`,
+          goalId: `conversation:${action.projectId}`,
+          bindingHash: action.textHash,
+          prompt: action.preview,
+          workingDirectory: process.cwd(),
+          timeoutMs: 120_000,
+        });
+        const queued = runtime.conversationActionStore.markQueued(action.id, task.taskId);
+        runtime.persist();
+        return ok({ action: queued, task });
+      }
       if (action.routeKind === 'review-command') {
         if (!action.linkedReviewId) return error(409, 'Conversation action has no linked review');
         const review = runtime.pendingReviewStore.get(action.linkedReviewId);
