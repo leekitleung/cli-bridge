@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createBridgeRuntime } from '../apps/local-server/src/routes/bridge-api.ts';
-import { tickAutomationLoop, runAutomationLoop } from '../apps/local-server/src/automation/automation-loop-runner.ts';
+import { tickAutomationLoop, runAutomationLoop, recordAutomationLoopResult } from '../apps/local-server/src/automation/automation-loop-runner.ts';
 
 const now = 1793000000000;
 
@@ -105,8 +105,8 @@ test('runner tick dispatches one work cycle and returns waiting', () => {
   assert.equal(result.cycle.status, 'waiting-result');
 
   const updatedLoop = runtime.automationLoopStore.get(loop.id);
-  assert.equal(updatedLoop.status, 'running');
-  assert.equal(updatedLoop.cycleCount, 1);
+  assert.equal(updatedLoop.status, 'waiting');
+  assert.equal(updatedLoop.cycleCount, 0);
 });
 
 test('runner creates a conversation action for the tick', () => {
@@ -122,6 +122,39 @@ test('runner creates a conversation action for the tick', () => {
   assert.ok(actions.length >= 1, 'at least one action was created');
 });
 
+test('runner enqueues original input text, not preview text', () => {
+  const runtime = createRuntime();
+  const loop = createLoop(runtime);
+  const result = tickAutomationLoop(runtime, loop.id, {
+    input: 'inspect current project state',
+    authKind: 'console-cookie',
+    now: now + 1000,
+  });
+  assert.equal(result.type, 'dispatched');
+  const task = runtime.workbuddyExecution.claimNext('workbuddy');
+  assert.equal(task.prompt, 'inspect current project state');
+});
+
+test('runner retry does not duplicate dispatch while cycle is unresolved', () => {
+  const runtime = createRuntime();
+  const loop = createLoop(runtime);
+  const first = tickAutomationLoop(runtime, loop.id, {
+    input: 'idempotent cycle',
+    authKind: 'console-cookie',
+    now: now + 1000,
+    cycleIndex: 1,
+  });
+  const retry = tickAutomationLoop(runtime, loop.id, {
+    input: 'idempotent cycle retry',
+    authKind: 'console-cookie',
+    now: now + 2000,
+    cycleIndex: 1,
+  });
+  assert.equal(first.type, 'dispatched');
+  assert.equal(retry.type, 'waiting');
+  assert.equal(runtime.workbuddyExecution.listPendingTasks('workbuddy').length, 1);
+});
+
 // --- Stop condition: max-cycles ---
 
 test('runner stops at max cycles', () => {
@@ -133,6 +166,14 @@ test('runner stops at max cycles', () => {
     now: now + 1000,
   });
   assert.equal(result1.type, 'dispatched');
+  const task = runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.recordResult(task.taskId, {
+    ok: true,
+    proposalId: task.proposalId,
+    output: { nextInput: 'unused' },
+    durationMs: 1,
+  });
+  recordAutomationLoopResult(runtime, loop.id, result1.cycle.id, { workBuddyTaskId: task.taskId, now: now + 1500 });
 
   const result2 = tickAutomationLoop(runtime, loop.id, {
     input: 'second tick should stop',
@@ -156,10 +197,10 @@ test('run runs until stop condition', () => {
   });
   assert.equal(result.trace.length, 2);
   assert.equal(result.trace[0].type, 'dispatched');
-  assert.equal(result.trace[1].type, 'stopped');
+  assert.equal(result.trace[1].type, 'waiting');
 });
 
-test('run respects maxTicksPerRun', () => {
+test('run stops at waiting instead of dispatching unresolved cycles', () => {
   const runtime = createRuntime();
   const loop = createLoop(runtime, { maxCycles: 10 });
   const result = runAutomationLoop(runtime, loop.id, {
@@ -169,7 +210,9 @@ test('run respects maxTicksPerRun', () => {
     now: now + 1000,
   });
   assert.equal(result.trace.length, 2);
-  result.trace.forEach(t => assert.equal(t.type, 'dispatched'));
+  assert.equal(result.trace[0].type, 'dispatched');
+  assert.equal(result.trace[1].type, 'waiting');
+  assert.equal(runtime.workbuddyExecution.listPendingTasks('workbuddy').length, 1);
 });
 
 test('run hard caps at 10 ticks per run', () => {
@@ -196,7 +239,7 @@ test('runner errors on non-existent loop', () => {
   assert.equal(result.reason, 'loop-not-found');
 });
 
-test('runner errors on endpoint-not-found', () => {
+test('runner stops on endpoint-not-found', () => {
   const runtime = createRuntime();
   const loop = runtime.automationLoopStore.create({
     projectId: 'cli-bridge',
@@ -212,8 +255,8 @@ test('runner errors on endpoint-not-found', () => {
     authKind: 'console-cookie',
     now: now + 1000,
   });
-  assert.equal(result.type, 'error');
-  assert.equal(result.reason, 'endpoint-not-found');
+  assert.equal(result.type, 'stopped');
+  assert.equal(result.reason, 'endpoint-unavailable');
 });
 
 test('runner auto-starts draft loops', () => {
@@ -228,5 +271,5 @@ test('runner auto-starts draft loops', () => {
   });
 
   const updated = runtime.automationLoopStore.get(loop.id);
-  assert.equal(updated.status, 'running');
+  assert.equal(updated.status, 'waiting');
 });

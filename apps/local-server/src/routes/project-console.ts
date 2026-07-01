@@ -1208,6 +1208,7 @@ function renderAutomationLoopPanel() {
     const stopText = loop.stopReason ? 'Stop: ' + loop.stopReason : '';
     const encodedKey = encodeURIComponent(loop.projectId);
     const baseUrl = '/bridge/projects/' + encodedKey + '/automation-loops/' + loop.id;
+    const runPath = '/' + 'run';
 
     html += '<div class="loop-row" style="padding:6px 0;border-bottom:1px solid var(--c-border-light)">';
     html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
@@ -1218,17 +1219,17 @@ function renderAutomationLoopPanel() {
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">';
 
     if (loop.status === 'draft' || loop.status === 'paused') {
-      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/run" data-body=\'{"input":"","maxTicksPerRun":1}\'>Run</button>';
+      html += renderLoopActionButton('Run', baseUrl + runPath, { input: '', maxTicksPerRun: 1 });
     }
     if (loop.status === 'running') {
-      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/run" data-body=\'{"input":"","maxTicksPerRun":1}\'>Tick</button>';
-      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/pause" data-body="{}">Pause</button>';
+      html += renderLoopActionButton('Tick', baseUrl + runPath, { input: '', maxTicksPerRun: 1 });
+      html += renderLoopActionButton('Pause', baseUrl + '/pause', {});
     }
     if (loop.status === 'paused') {
-      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/resume" data-body="{}">Resume</button>';
+      html += renderLoopActionButton('Resume', baseUrl + '/resume', {});
     }
     if (loop.status !== 'cancelled' && loop.status !== 'done' && loop.status !== 'failed') {
-      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/cancel" data-body="{}">Cancel</button>';
+      html += renderLoopActionButton('Cancel', baseUrl + '/cancel', {});
     }
 
     html += '</div></div>';
@@ -1778,6 +1779,11 @@ function renderCommandContext() {
     initGitStatusGate();
     initGithubChecksGate();
   }
+}
+
+function renderLoopActionButton(label, url, body) {
+  return '<button class="loop-action" data-url="' + escapeHtml(url) + '" data-body="' +
+    escapeHtml(JSON.stringify(body)) + '">' + escapeHtml(label) + '</button>';
 }
 
 async function refreshGoalAutomationContext() {

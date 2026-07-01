@@ -723,7 +723,7 @@ export function validateAutomationLoopRun(value: unknown): SchemaValidationResul
     requireNumber(value, key, errors);
   }
 
-  for (const key of ['goalId', 'pairingId']) {
+  for (const key of ['goalId', 'pairingId', 'pendingInput', 'lastError']) {
     if (value[key] !== undefined && typeof value[key] !== 'string') {
       errors.push(`${key} must be a string when present`);
     }
@@ -762,7 +762,7 @@ export function validateAutomationLoopCycle(value: unknown): SchemaValidationRes
     return { ok: false, errors: ['automation loop cycle must be an object'] };
   }
 
-  for (const key of ['id', 'loopId', 'promptHash']) {
+  for (const key of ['id', 'loopId', 'promptHash', 'dispatchKey']) {
     if (typeof value[key] !== 'string' || (value[key] as string).trim().length === 0) {
       errors.push(`${key} must be a non-empty string`);
     }
@@ -776,10 +776,30 @@ export function validateAutomationLoopCycle(value: unknown): SchemaValidationRes
     requireNumber(value, key, errors);
   }
 
-  for (const key of ['conversationActionId', 'workBuddyTaskId', 'reviewId', 'progressHash']) {
+  for (const key of [
+    'conversationActionId',
+    'workBuddyTaskId',
+    'reviewId',
+    'progressHash',
+    'resultHash',
+    'nextInputHash',
+    'dispatchRouteId',
+    'targetEndpointStatus',
+    'gateReason',
+    'failureReason',
+  ]) {
     if (value[key] !== undefined && typeof value[key] !== 'string') {
       errors.push(`${key} must be a string when present`);
     }
+  }
+  if (
+    value.resultStatus !== undefined &&
+    !['returned', 'failed', 'timeout', 'cancelled'].includes(value.resultStatus as string)
+  ) {
+    errors.push('resultStatus is invalid');
+  }
+  if (value.evidenceIds !== undefined && !isStringArray(value.evidenceIds)) {
+    errors.push('evidenceIds must be a string array when present');
   }
 
   if (value.stopReason !== undefined && !isOneOf(value.stopReason, AUTOMATION_LOOP_STOP_REASONS)) {

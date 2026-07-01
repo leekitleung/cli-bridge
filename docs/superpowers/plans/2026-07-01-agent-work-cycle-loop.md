@@ -36,9 +36,9 @@ observe -> evaluate stop conditions -> plan next cycle -> dispatch one governed 
         -> wait for result / external return -> record evidence -> repeat
 ```
 
-Each tick performs at most one dispatch. `run` is only a bounded wrapper around repeated `tick` calls and must stop at `maxTicksPerRun`.
+Each tick performs at most one dispatch. `run` is only a bounded wrapper around repeated `tick` calls and must stop at `maxTicksPerRun`. If the latest cycle is `dispatching` or `waiting-result`, `tick` must return `{ type: 'waiting' }` and must not dispatch another action.
 
-### Stop Conditions
+### Stop Conditions And Inputs
 
 The loop stops before dispatching the next cycle if any condition is true:
 
@@ -49,15 +49,49 @@ The loop stops before dispatching the next cycle if any condition is true:
 - `deadline`: wall-clock deadline reached.
 - `no-progress`: progress hash did not change for N consecutive returned cycles.
 - `awaiting-gate`: next action needs human approval.
+- `awaiting-input`: no next-cycle input is available after a returned cycle.
 - `action-failed`: last action failed.
 - `endpoint-unavailable`: selected target endpoint is offline or missing.
 - `manual-pause`: operator paused the loop.
 - `cancelled`: operator cancelled the loop.
 
+Stop inputs come from existing stores and adapters:
+
+| Stop condition | Source of truth | Required test |
+|---|---|---|
+| `goal-done` / `goal-cancelled` / `goal-failed` | `runtime.goalStore.getGoal(loop.goalId)?.status` | each terminal goal status stops before dispatch |
+| `max-cycles` | `AutomationLoopRun.cycleCount >= maxCycles` | no next task is created after max |
+| `deadline` | `Date.now() >= loop.deadlineAt` | deadline stops before dispatch |
+| `no-progress` | returned cycles only; compare `progressHash` against `lastProgressHash` | waiting/skipped ticks do not increment no-progress |
+| `awaiting-gate` | route adapter returns a planned action that cannot be auto-confirmed, or runner observes an unconfirmed action requiring manual gate | no WorkBuddy task is enqueued |
+| `awaiting-input` | no `input`, loop `pendingInput`, or returned result `nextInput` exists | tick stops before dispatch |
+| `action-failed` | conversation action `failed`, adapter dispatch error, or WorkBuddy result `ok: false` | loop stops and records `failureReason` |
+| `endpoint-unavailable` | `endpointRegistry.get(targetEndpointId)` missing, offline, or route adapter unavailable | missing and offline endpoints are tested separately |
+| `manual-pause` | loop status is `paused` | tick returns paused without dispatch |
+| `cancelled` | loop status is `cancelled` | tick/run return cancelled without dispatch |
+
+### Duplicate Dispatch Defense
+
+Each cycle has a stable idempotency key:
+
+```text
+dispatchKey = `${loopId}:${cycleIndex}`
+```
+
+Before creating a Conversation action or WorkBuddy task, the runner must check whether a cycle with the same `loopId` and `index` already has `conversationActionId`, `workBuddyTaskId`, or `reviewId`. Retrying the same tick must return the existing cycle state and must not enqueue a duplicate task.
+
+### Execution Notes
+
+- `cycleCount` means completed returned or failed cycles, not merely begun or dispatched cycles.
+- `nextCycleIndex` is derived from existing cycles and `dispatchKey` uniqueness.
+- `pendingInput` may store next-cycle instruction text, but must never store pairing tokens, auth headers, cookies, or credential material.
+- `awaiting-gate` is determined by route adapter capability/readiness, not by a hard-coded endpoint id.
+- Full Playwright acceptance is a release gate; normal `npm test` should keep browser E2E optional unless the repository already has a stable browser test harness for that scenario.
+
 ### Security Boundary
 
-- Creating a loop may use existing local bridge auth.
-- Starting, ticking, running, pausing, cancelling, and dispatching loop work require `console-cookie`.
+- `GET /automation-loops` may use existing bridge auth.
+- All mutation routes, including create, start, tick, run, pause, resume, cancel, and dispatching loop work, require `console-cookie`.
 - Extension session and ChatGPT content scripts may observe or submit returns where already allowed, but cannot start/tick/run/dispatch a loop.
 - All loop evidence stores hashes, route ids, action ids, task ids, and status; it must not store raw pairing tokens.
 
@@ -104,6 +138,7 @@ export type AutomationLoopStopReason =
   | 'deadline'
   | 'no-progress'
   | 'awaiting-gate'
+  | 'awaiting-input'
   | 'action-failed'
   | 'endpoint-unavailable'
   | 'manual-pause'
@@ -122,8 +157,10 @@ export interface AutomationLoopRun {
   noProgressLimit: number;
   noProgressCount: number;
   lastProgressHash?: string;
+  pendingInput?: string;
   deadlineAt: number;
   stopReason?: AutomationLoopStopReason;
+  lastError?: string;
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
@@ -137,12 +174,21 @@ export interface AutomationLoopCycle {
   id: string;
   loopId: string;
   index: number;
+  dispatchKey: string;
   status: 'planned' | 'dispatching' | 'waiting-result' | 'returned' | 'failed' | 'skipped';
   promptHash: string;
   progressHash?: string;
+  resultHash?: string;
+  resultStatus?: 'returned' | 'failed' | 'timeout' | 'cancelled';
+  nextInputHash?: string;
+  dispatchRouteId?: string;
+  targetEndpointStatus?: 'online' | 'offline' | 'missing';
+  gateReason?: string;
+  failureReason?: string;
   conversationActionId?: string;
   workBuddyTaskId?: string;
   reviewId?: string;
+  evidenceIds?: string[];
   stopReason?: AutomationLoopStopReason;
   createdAt: number;
   updatedAt: number;
@@ -186,11 +232,19 @@ stop condition is met.
   inbox/result primitives.
 - No generic shell, run, exec, Git, PR, or workspace mutation endpoint is added.
 - Stop conditions are evaluated before every dispatch.
+- If the latest cycle is `waiting-result` or `dispatching`, tick returns
+  `waiting` and must not dispatch another action.
+- Loop mutation routes, including create, require local Console cookie authority.
+- Duplicate dispatch is prevented with `dispatchKey = loopId:cycleIndex`.
 
 ## Acceptance Conditions
 
 - A loop with `maxCycles: 2` dispatches exactly two cycles and then stops.
+- A run cannot dispatch a second cycle before the previous cycle returns.
+- Retrying the same tick cannot enqueue a duplicate WorkBuddy task.
 - A loop stops on no-progress without creating another task.
+- Missing and offline endpoints stop with `endpoint-unavailable`.
+- Adapter dispatch failure or returned failed task stops with `action-failed`.
 - A cancelled loop cannot tick or run.
 - Extension session auth receives 403 on tick/run routes.
 ```
@@ -203,6 +257,61 @@ git commit -m "docs: propose agent work-cycle loop boundary"
 ```
 
 Expected: ADR remains `Proposed` until human acceptance.
+
+---
+
+## Task 0.5: Loop State Transition Spec
+
+**Files:**
+- Create: `docs/planning/ADR-0028-loop-state-transitions.md`
+
+- [ ] **Step 1: Write the transition spec**
+
+```md
+# ADR-0028 Loop State Transition Spec
+
+## Loop Statuses
+
+- `draft`: created but not started.
+- `running`: allowed to dispatch if stop conditions are false and no unresolved cycle exists.
+- `waiting`: latest cycle is `dispatching` or `waiting-result`; no new dispatch allowed.
+- `paused`: operator paused; no dispatch until explicit resume.
+- `done`: terminal success.
+- `failed`: terminal failure.
+- `cancelled`: terminal operator stop.
+
+## Legal Transitions
+
+| From | Event | To |
+|---|---|---|
+| `draft` | start | `running` |
+| `running` | dispatch cycle | `waiting` |
+| `waiting` | cycle returned with progress | `running` |
+| `waiting` | cycle failed | `failed` |
+| `running` | stop condition met | `done` or `failed` |
+| `running` | pause | `paused` |
+| `paused` | resume | `running` |
+| `draft` / `running` / `waiting` / `paused` | cancel | `cancelled` |
+
+## Dispatch Rules
+
+- `tick` may dispatch only from `running`.
+- `tick` must return `waiting` when latest cycle is `dispatching` or `waiting-result`.
+- `run` must stop when `tick` returns `waiting`.
+- A returned cycle is the only event that makes the next cycle dispatchable.
+- Returned result payloads may provide `nextInput`. If absent and the caller does
+  not provide input on the next tick, the loop stops with `awaiting-input`.
+- Retrying a tick for an existing `dispatchKey` returns the existing cycle and does not enqueue a duplicate task.
+```
+
+- [ ] **Step 2: Commit spec**
+
+```bash
+git add docs/planning/ADR-0028-loop-state-transitions.md
+git commit -m "docs: specify automation loop state transitions"
+```
+
+Expected: state transition rules are documented before store/runner implementation begins.
 
 ---
 
@@ -230,8 +339,10 @@ test('automation loop stops at max cycles before another dispatch', () => {
     deadlineAt: 1793000600000,
     now: 1793000000000,
   });
-  store.markCycleReturned(loop.id, 'cycle-1', { progressHash: 'sha256:a', now: 1793000001000 });
-  store.markCycleReturned(loop.id, 'cycle-2', { progressHash: 'sha256:b', now: 1793000002000 });
+  const first = store.beginCycle(loop.id, { prompt: 'cycle one', now: 1793000000500 });
+  store.markCycleReturned(loop.id, first.id, { progressHash: 'sha256:a', now: 1793000001000 });
+  const second = store.beginCycle(loop.id, { prompt: 'cycle two', now: 1793000001500 });
+  store.markCycleReturned(loop.id, second.id, { progressHash: 'sha256:b', now: 1793000002000 });
   const stopped = store.evaluateStop(loop.id, { now: 1793000003000 });
   assert.equal(stopped.stop, true);
   assert.equal(stopped.reason, 'max-cycles');
@@ -244,15 +355,64 @@ test('automation loop stops on repeated no-progress', () => {
     sourceEndpointId: 'chatgpt-web',
     targetEndpointId: 'workbuddy',
     maxCycles: 5,
+    noProgressLimit: 1,
+    deadlineAt: 1793000600000,
+    now: 1793000000000,
+  });
+  const first = store.beginCycle(loop.id, { prompt: 'cycle one', now: 1793000000500 });
+  store.markCycleReturned(loop.id, first.id, { progressHash: 'sha256:same', now: 1793000001000 });
+  const second = store.beginCycle(loop.id, { prompt: 'cycle two', now: 1793000001500 });
+  store.markCycleReturned(loop.id, second.id, { progressHash: 'sha256:same', now: 1793000002000 });
+  const stopped = store.evaluateStop(loop.id, { now: 1793000003000 });
+  assert.equal(stopped.stop, true);
+  assert.equal(stopped.reason, 'no-progress');
+});
+
+test('store reports unresolved latest cycle as waiting', () => {
+  const store = new InMemoryAutomationLoopStore();
+  const loop = store.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 3,
     noProgressLimit: 2,
     deadlineAt: 1793000600000,
     now: 1793000000000,
   });
-  store.markProgress(loop.id, 'sha256:same', 1793000001000);
-  store.markProgress(loop.id, 'sha256:same', 1793000002000);
-  const stopped = store.evaluateStop(loop.id, { now: 1793000003000 });
-  assert.equal(stopped.stop, true);
-  assert.equal(stopped.reason, 'no-progress');
+  const cycle = store.beginCycle(loop.id, {
+    prompt: 'inspect project',
+    now: 1793000001000,
+  });
+  store.markCycleWaiting(loop.id, cycle.id, {
+    conversationActionId: 'act-1',
+    workBuddyTaskId: 'task-1',
+    now: 1793000002000,
+  });
+  assert.equal(store.latestUnresolvedCycle(loop.id).id, cycle.id);
+});
+
+test('store preserves stop reason and no-progress count after hydrate', () => {
+  const store = new InMemoryAutomationLoopStore();
+  const loop = store.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 3,
+    noProgressLimit: 1,
+    deadlineAt: 1793000600000,
+    now: 1793000000000,
+  });
+  const first = store.beginCycle(loop.id, { prompt: 'cycle one', now: 1793000000500 });
+  store.markCycleReturned(loop.id, first.id, { progressHash: 'sha256:same', now: 1793000001000 });
+  const second = store.beginCycle(loop.id, { prompt: 'cycle two', now: 1793000001500 });
+  store.markCycleReturned(loop.id, second.id, { progressHash: 'sha256:same', now: 1793000002000 });
+  store.evaluateStop(loop.id, { now: 1793000003000 });
+  const exported = store.exportLoops()[0];
+  const reloaded = new InMemoryAutomationLoopStore();
+  reloaded.hydrateLoop(exported);
+  const hydrated = reloaded.get(loop.id);
+  assert.equal(hydrated.stopReason, 'no-progress');
+  assert.equal(hydrated.noProgressCount, 1);
 });
 ```
 
@@ -266,7 +426,7 @@ Expected: FAIL because `automation-loop-store.ts` does not exist.
 
 - [ ] **Step 3: Implement minimal store**
 
-Implement `create`, `get`, `listByProject`, `start`, `pause`, `resume`, `cancel`, `beginCycle`, `markCycleWaiting`, `markCycleReturned`, `markCycleFailed`, `markProgress`, `evaluateStop`, `exportLoops`, `exportCycles`, `hydrateLoop`, and `hydrateCycle`.
+Implement `create`, `get`, `listByProject`, `start`, `pause`, `resume`, `cancel`, `beginCycle`, `markCycleDispatching`, `markCycleWaiting`, `markCycleReturned`, `markCycleFailed`, `markProgress`, `latestUnresolvedCycle`, `findCycleByDispatchKey`, `evaluateStop`, `exportLoops`, `exportCycles`, `hydrateLoop`, and `hydrateCycle`.
 
 Key behavior:
 
@@ -279,6 +439,9 @@ evaluateStop(loopId, input) {
   if (input.goalStatus === 'done') return this.stop(loop, 'goal-done', input.now);
   if (input.goalStatus === 'cancelled') return this.stop(loop, 'goal-cancelled', input.now);
   if (input.goalStatus === 'failed') return this.fail(loop, 'goal-failed', input.now);
+  if (input.endpointStatus === 'missing' || input.endpointStatus === 'offline') return this.fail(loop, 'endpoint-unavailable', input.now);
+  if (input.awaitingGate) return this.stop(loop, 'awaiting-gate', input.now);
+  if (input.actionFailed) return this.fail(loop, 'action-failed', input.now);
   if (input.now >= loop.deadlineAt) return this.fail(loop, 'deadline', input.now);
   if (loop.cycleCount >= loop.maxCycles) return this.stop(loop, 'max-cycles', input.now);
   if (loop.noProgressCount >= loop.noProgressLimit) return this.stop(loop, 'no-progress', input.now);
@@ -331,6 +494,41 @@ test('automation loops persist across runtime reload', async () => {
 
     const second = createBridgeRuntime({ dataDir: dir });
     assert.equal(second.automationLoopStore.get(loop.id).id, loop.id);
+  });
+});
+
+test('automation loop snapshot preserves stop metadata and cycle index', async () => {
+  await usingTempDir(async (dir) => {
+    const first = createBridgeRuntime({ dataDir: dir });
+    const loop = first.automationLoopStore.create({
+      projectId: 'cli-bridge',
+      sourceEndpointId: 'chatgpt-web',
+      targetEndpointId: 'workbuddy',
+      maxCycles: 1,
+      noProgressLimit: 1,
+      deadlineAt: 1793000600000,
+      now: 1793000000000,
+    });
+    const cycle = first.automationLoopStore.beginCycle(loop.id, {
+      prompt: 'persisted cycle',
+      now: 1793000001000,
+    });
+    first.automationLoopStore.markCycleReturned(loop.id, cycle.id, {
+      progressHash: 'sha256:progress',
+      resultHash: 'sha256:result',
+      now: 1793000002000,
+    });
+    first.automationLoopStore.evaluateStop(loop.id, { now: 1793000003000 });
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const hydrated = second.automationLoopStore.get(loop.id);
+    const cycles = second.automationLoopStore.listCycles(loop.id);
+    assert.equal(hydrated.stopReason, 'max-cycles');
+    assert.equal(hydrated.noProgressCount, 0);
+    assert.equal(hydrated.lastProgressHash, 'sha256:progress');
+    assert.equal(cycles[0].index, 1);
+    assert.equal(cycles[0].resultHash, 'sha256:result');
   });
 });
 ```
@@ -411,6 +609,164 @@ test('runner tick dispatches one work cycle and then waits', async () => {
   assert.equal(task.prompt, 'inspect current project state');
 });
 
+test('runner tick returns waiting when latest cycle is unresolved', async () => {
+  const runtime = createBridgeRuntime();
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 2,
+    noProgressLimit: 2,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const first = await tickAutomationLoop(runtime, loop.id, {
+    input: 'first cycle',
+    authKind: 'console-cookie',
+  });
+  assert.equal(first.type, 'dispatched');
+  const second = await tickAutomationLoop(runtime, loop.id, {
+    input: 'must not dispatch',
+    authKind: 'console-cookie',
+  });
+  assert.equal(second.type, 'waiting');
+  assert.equal(runtime.workbuddyExecution.listPendingTasks('workbuddy').length, 1);
+});
+
+test('runner retry does not duplicate dispatch for same cycle index', async () => {
+  const runtime = createBridgeRuntime();
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 2,
+    noProgressLimit: 2,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const first = await tickAutomationLoop(runtime, loop.id, {
+    input: 'idempotent cycle',
+    authKind: 'console-cookie',
+    cycleIndex: 1,
+  });
+  const retry = await tickAutomationLoop(runtime, loop.id, {
+    input: 'idempotent cycle',
+    authKind: 'console-cookie',
+    cycleIndex: 1,
+  });
+  assert.equal(first.type, 'dispatched');
+  assert.equal(retry.type, 'waiting');
+  assert.equal(runtime.workbuddyExecution.listPendingTasks('workbuddy').length, 1);
+});
+
+test('runner stops on missing target endpoint', async () => {
+  const runtime = createBridgeRuntime();
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'missing-executor',
+    maxCycles: 1,
+    noProgressLimit: 1,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const result = await tickAutomationLoop(runtime, loop.id, {
+    input: 'blocked',
+    authKind: 'console-cookie',
+  });
+  assert.equal(result.type, 'stopped');
+  assert.equal(result.reason, 'endpoint-unavailable');
+});
+
+test('runner stops on offline target endpoint', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.endpointRegistry.offline('workbuddy');
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 1,
+    noProgressLimit: 1,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const result = await tickAutomationLoop(runtime, loop.id, {
+    input: 'blocked',
+    authKind: 'console-cookie',
+  });
+  assert.equal(result.type, 'stopped');
+  assert.equal(result.reason, 'endpoint-unavailable');
+});
+
+test('runner stops when adapter dispatch fails', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.workbuddyExecution.enqueue = () => {
+    throw new Error('enqueue failed');
+  };
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 1,
+    noProgressLimit: 1,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const result = await tickAutomationLoop(runtime, loop.id, {
+    input: 'adapter failure',
+    authKind: 'console-cookie',
+  });
+  assert.equal(result.type, 'stopped');
+  assert.equal(result.reason, 'action-failed');
+});
+
+test('runner stops at awaiting gate before dispatch', async () => {
+  const runtime = createBridgeRuntime();
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'chatgpt-web',
+    maxCycles: 1,
+    noProgressLimit: 1,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const result = await tickAutomationLoop(runtime, loop.id, {
+    input: 'web relay requires gate',
+    authKind: 'console-cookie',
+  });
+  assert.equal(result.type, 'stopped');
+  assert.equal(result.reason, 'awaiting-gate');
+});
+
+test('runner records returned result and uses nextInput for the next cycle', async () => {
+  const runtime = createBridgeRuntime();
+  const loop = runtime.automationLoopStore.create({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 2,
+    noProgressLimit: 2,
+    deadlineAt: Date.now() + 60_000,
+  });
+  const first = await tickAutomationLoop(runtime, loop.id, {
+    input: 'cycle one',
+    authKind: 'console-cookie',
+  });
+  const task = runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.recordResult(task.taskId, {
+    ok: true,
+    proposalId: task.proposalId,
+    output: { nextInput: 'cycle two' },
+    durationMs: 10,
+  });
+  const recorded = recordAutomationLoopResult(runtime, loop.id, first.cycle.id, {
+    workBuddyTaskId: task.taskId,
+    now: Date.now(),
+  });
+  assert.equal(recorded.status, 'returned');
+  const second = await tickAutomationLoop(runtime, loop.id, {
+    authKind: 'console-cookie',
+  });
+  assert.equal(second.type, 'dispatched');
+  const nextTask = runtime.workbuddyExecution.claimNext('workbuddy');
+  assert.equal(nextTask.prompt, 'cycle two');
+});
+
 test('runner refuses extension-session authority', async () => {
   const runtime = createBridgeRuntime();
   const loop = runtime.automationLoopStore.create({
@@ -444,12 +800,28 @@ Implementation rules:
 
 - Require `authKind === 'console-cookie'`.
 - Load loop; reject paused/cancelled/terminal.
+- If `latestUnresolvedCycle(loop.id)` exists, observe whether the linked task/review has returned. If not returned, return `{ type: 'waiting', cycle }`.
+- If the linked result returned, call `recordAutomationLoopResult()` before evaluating the next dispatch.
+- Compute `dispatchKey = `${loop.id}:${nextCycleIndex}``; if it already exists, return existing cycle state.
 - Evaluate stop conditions before dispatch.
+- Resolve next input from `tick.input`, then `loop.pendingInput`. If neither exists, stop with `awaiting-input`.
+- Read goal status from `runtime.goalStore` when `loop.goalId` is present.
+- Read endpoint status from `runtime.endpointRegistry`; missing or offline target stops with `endpoint-unavailable`.
 - Resolve target endpoint through `resolveConversationRouteAdapter`.
+- If the route is not auto-dispatchable and needs a gate, stop with `awaiting-gate`.
 - Create a Conversation message/action with the tick input.
 - Confirm and dispatch the action through the adapter.
+- If confirm/dispatch fails, mark cycle failed and stop with `action-failed`.
 - Create a cycle record linked to the action/task.
-- Return `waiting` after dispatch; never immediately dispatch a second cycle.
+- Return `dispatched` with a `waiting-result` cycle; the next tick must return `waiting` until `recordAutomationLoopResult()` marks the cycle returned.
+
+Implement `recordAutomationLoopResult()`:
+
+- find the cycle and linked WorkBuddy task/review result;
+- set `resultStatus`, `resultHash`, `progressHash`, and `failureReason`;
+- increment no-progress only for returned cycles;
+- if result contains `output.nextInput` as a string, store it as `loop.pendingInput`;
+- if result failed, stop loop with `action-failed`.
 
 - [ ] **Step 4: Verify**
 
@@ -478,7 +850,7 @@ git commit -m "feat: add automation loop runner"
 - [ ] **Step 1: Write failing API tests**
 
 ```js
-test('automation loop API runs until max cycles and stops', async () => {
+test('automation loop API run stops at waiting after one unresolved dispatch', async () => {
   const runtime = createBridgeRuntime();
   const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', {
     sourceEndpointId: 'chatgpt-web',
@@ -493,7 +865,36 @@ test('automation loop API runs until max cycles and stops', async () => {
   }, CONSOLE_AUTH);
   assert.equal(run.statusCode, 200);
   assert.equal(run.payload.trace[0].type, 'dispatched');
-  assert.equal(run.payload.trace.at(-1).reason, 'max-cycles');
+  assert.equal(run.payload.trace[1].type, 'waiting');
+  assert.equal(runtime.workbuddyExecution.listPendingTasks('workbuddy').length, 1);
+});
+
+test('automation loop API can continue after result return and then stop at max cycles', async () => {
+  const runtime = createBridgeRuntime();
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 2,
+    noProgressLimit: 2,
+    deadlineAt: Date.now() + 60_000,
+  }, CONSOLE_AUTH);
+  const firstRun = await call(runtime, 'POST', `/bridge/projects/cli-bridge/automation-loops/${created.payload.loop.id}/run`, {
+    input: 'cycle one',
+    maxTicksPerRun: 3,
+  }, CONSOLE_AUTH);
+  const firstTask = runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.recordResult(firstTask.taskId, {
+    ok: true,
+    proposalId: firstTask.proposalId,
+    output: { nextInput: 'cycle two' },
+    durationMs: 10,
+  });
+  const secondRun = await call(runtime, 'POST', `/bridge/projects/cli-bridge/automation-loops/${created.payload.loop.id}/run`, {
+    maxTicksPerRun: 3,
+  }, CONSOLE_AUTH);
+  assert.equal(firstRun.statusCode, 200);
+  assert.equal(secondRun.payload.trace[0].type, 'dispatched');
+  assert.equal(secondRun.payload.trace.at(-1).reason, 'max-cycles');
 });
 
 test('extension session cannot tick automation loops', async () => {
@@ -509,6 +910,18 @@ test('extension session cannot tick automation loops', async () => {
     input: 'blocked',
   }, { kind: 'extension-session' });
   assert.equal(tick.statusCode, 403);
+});
+
+test('extension session cannot create automation loops', async () => {
+  const runtime = createBridgeRuntime();
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'workbuddy',
+    maxCycles: 1,
+    noProgressLimit: 1,
+    deadlineAt: Date.now() + 60_000,
+  }, { kind: 'extension-session' });
+  assert.equal(created.statusCode, 403);
 });
 ```
 
@@ -537,20 +950,25 @@ POST /bridge/projects/:key/automation-loops/:id/cancel
 Auth:
 
 - `GET` can use existing bridge auth.
-- all `POST` routes require `authContext.kind === 'console-cookie'`.
+- all `POST` routes, including create, require `authContext.kind === 'console-cookie'`.
 
 `run` behavior:
 
 ```ts
 const maxTicksPerRun = Math.min(body.maxTicksPerRun ?? 1, 10);
+let input = typeof body.input === 'string' ? body.input : undefined;
 const trace = [];
 for (let i = 0; i < maxTicksPerRun; i += 1) {
   const result = await tickAutomationLoop(runtime, loopId, { input, authKind: authContext.kind });
   trace.push(result);
+  if (result.type === 'waiting') break;
   if (result.type !== 'dispatched') break;
+  input = undefined;
 }
 return ok({ loop: runtime.automationLoopStore.get(loopId), trace });
 ```
+
+`run` must not call `tick` again with the same input after a dispatch. Further progress requires the unresolved cycle to return and either provide `nextInput` or receive a fresh input from a later `tick/run` call.
 
 - [ ] **Step 4: Verify**
 
@@ -599,6 +1017,14 @@ Add a compact loop panel in Conversation mode:
 - loop status
 - cycle count
 - stop reason
+
+Control states:
+
+- `Start loop` enabled only for no loop or `draft`.
+- `Run one tick` enabled only for `running`; disabled for `waiting`, `paused`, `done`, `failed`, and `cancelled`.
+- `Pause` enabled only for `running` or `waiting`.
+- `Cancel` enabled for non-terminal loops.
+- `Resume` enabled only for `paused`.
 
 Visible copy:
 
@@ -654,11 +1080,15 @@ Script checks:
 3. verify cookie auto-pair;
 4. create loop with `maxCycles: 2`;
 5. run loop;
-6. claim WorkBuddy inbox tasks;
-7. return progress for each cycle;
-8. verify third cycle is not created;
-9. verify extension token cannot tick/run;
-10. verify no raw token in DOM/localStorage/output.
+6. verify run stops at `waiting` after one unresolved dispatch;
+7. retry run and verify no duplicate WorkBuddy task is created;
+8. claim WorkBuddy inbox task and return progress with `nextInput`;
+9. run the second cycle;
+10. verify third cycle is not created after `max-cycles`;
+11. verify missing/offline endpoints stop with `endpoint-unavailable`;
+12. verify failed WorkBuddy result stops with `action-failed`;
+13. verify extension token cannot tick/run;
+14. verify no raw token in DOM/localStorage/output/snapshot/API response traces.
 
 - [ ] **Step 2: Add script test**
 
@@ -711,6 +1141,13 @@ Expected:
 - no new shell/run/exec endpoints
 - extension session cannot tick/run loops
 - loops stop on max cycles, no progress, deadline, cancel, failure, and gate
+- `run` does not dispatch a new cycle while latest cycle is `waiting-result`
+- retrying `tick` for the same loop state does not create a duplicate WorkBuddy task
+- missing and offline endpoints stop separately with `endpoint-unavailable`
+- adapter dispatch failure and returned failed task stop with `action-failed`
+- no-progress increments only on returned cycles
+- snapshot hydrate preserves loop status, cycle index, stopReason, noProgressCount, and lastProgressHash
+- raw pairing tokens are absent from snapshots, DOM, localStorage, API responses, and acceptance traces
 
 ---
 
@@ -719,10 +1156,11 @@ Expected:
 Use subagent-driven execution after ADR-0028 is accepted:
 
 1. Task 0 inline review/planning.
-2. Task 1 and Task 2 sequential execution.
-3. Task 3 runner implementation with focused review.
-4. Task 4 API implementation with auth review.
-5. Task 5 UI controls.
-6. Task 6 acceptance automation.
+2. Task 0.5 inline state-transition spec.
+3. Task 1 and Task 2 sequential execution.
+4. Task 3 runner implementation with focused review.
+5. Task 4 API implementation with auth review.
+6. Task 5 UI controls.
+7. Task 6 acceptance automation.
 
 Do not start Task 1 before ADR-0028 is explicitly accepted.

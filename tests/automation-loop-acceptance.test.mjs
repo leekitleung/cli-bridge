@@ -15,7 +15,7 @@ function getSource() {
 test('automation loop acceptance script is wired', () => {
   const source = getSource();
   assert.match(source, /maxCycles:\s*2/);
-  assert.match(source, /extension session cannot tick/i);
+  assert.match(source, /Extension session cannot create\/tick\/run/i);
   assert.doesNotMatch(source, /localStorage\.setItem\(['"]cli-bridge-pairing-token/);
 });
 

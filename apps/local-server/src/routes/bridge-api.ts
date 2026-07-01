@@ -4589,6 +4589,7 @@ export async function handleBridgeRequest(
       }
 
       if (method === 'POST') {
+        if (authContext?.kind !== 'console-cookie') return error(403, 'Console cookie auth required');
         const parsed = await readJsonBody(request);
         if (!parsed.ok) return error(400, parsed.message);
         const body = parsed.body as Record<string, unknown>;

@@ -365,6 +365,7 @@ export const AUTOMATION_LOOP_STOP_REASONS = [
   'deadline',
   'no-progress',
   'awaiting-gate',
+  'awaiting-input',
   'action-failed',
   'endpoint-unavailable',
   'manual-pause',
@@ -397,8 +398,10 @@ export interface AutomationLoopRun {
   noProgressLimit: number;
   noProgressCount: number;
   lastProgressHash?: string;
+  pendingInput?: string;
   deadlineAt: number;
   stopReason?: AutomationLoopStopReason;
+  lastError?: string;
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
@@ -424,12 +427,21 @@ export interface AutomationLoopCycle {
   id: string;
   loopId: string;
   index: number;
+  dispatchKey: string;
   status: AutomationLoopCycleStatus;
   promptHash: string;
   progressHash?: string;
+  resultHash?: string;
+  resultStatus?: 'returned' | 'failed' | 'timeout' | 'cancelled';
+  nextInputHash?: string;
+  dispatchRouteId?: string;
+  targetEndpointStatus?: 'online' | 'offline' | 'missing';
+  gateReason?: string;
+  failureReason?: string;
   conversationActionId?: string;
   workBuddyTaskId?: string;
   reviewId?: string;
+  evidenceIds?: string[];
   stopReason?: AutomationLoopStopReason;
   createdAt: number;
   updatedAt: number;

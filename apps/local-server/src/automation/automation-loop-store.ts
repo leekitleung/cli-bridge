@@ -21,16 +21,29 @@ export interface AutomationLoopStopResult {
 export interface EvaluateStopInput {
   now?: number;
   goalStatus?: string;
+  endpointStatus?: 'online' | 'offline' | 'missing';
   endpointAvailable?: boolean;
+  awaitingGate?: boolean;
+  actionFailed?: boolean;
 }
 
 export interface BeginCycleInput {
   promptHash: string;
+  dispatchKey?: string;
   now?: number;
 }
 
 export interface MarkCycleResultInput {
   progressHash?: string;
+  resultHash?: string;
+  resultStatus?: 'returned' | 'failed' | 'timeout' | 'cancelled';
+  nextInput?: string;
+  nextInputHash?: string;
+  dispatchRouteId?: string;
+  targetEndpointStatus?: 'online' | 'offline' | 'missing';
+  gateReason?: string;
+  failureReason?: string;
+  evidenceIds?: string[];
   conversationActionId?: string;
   workBuddyTaskId?: string;
   reviewId?: string;
@@ -39,6 +52,10 @@ export interface MarkCycleResultInput {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function hashText(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
 function inTerminalState(status: AutomationLoopStatus): boolean {
@@ -65,6 +82,7 @@ export class InMemoryAutomationLoopStore {
       noProgressLimit: input.noProgressLimit,
       noProgressCount: 0,
       lastProgressHash: undefined,
+      pendingInput: undefined,
       deadlineAt: input.deadlineAt,
       stopReason: undefined,
       createdAt: now,
@@ -107,7 +125,7 @@ export class InMemoryAutomationLoopStore {
 
   pause(id: string, now?: number): AutomationLoopRun | undefined {
     const loop = this.loops.get(id);
-    if (!loop || loop.status !== 'running') return undefined;
+    if (!loop || (loop.status !== 'running' && loop.status !== 'waiting')) return undefined;
     const ts = now ?? Date.now();
     loop.status = 'paused';
     loop.pausedAt = ts;
@@ -142,10 +160,12 @@ export class InMemoryAutomationLoopStore {
     const loop = this.loops.get(id);
     if (!loop || loop.status !== 'running') return undefined;
     const now = input.now ?? Date.now();
+    const index = (this.cyclesByLoop.get(loop.id) ?? []).length + 1;
     const cycle: AutomationLoopCycle = {
       id: randomUUID(),
       loopId: loop.id,
-      index: loop.cycleCount + 1,
+      index,
+      dispatchKey: input.dispatchKey ?? `${loop.id}:${index}`,
       status: 'planned',
       promptHash: input.promptHash,
       createdAt: now,
@@ -158,35 +178,47 @@ export class InMemoryAutomationLoopStore {
     ids.push(cycle.id);
     this.cyclesByLoop.set(loop.id, ids);
 
-    loop.cycleCount = cycle.index;
     loop.updatedAt = now;
     this.loops.set(loop.id, clone(loop));
 
     return clone(cycle);
   }
 
-  markCycleWaiting(id: string, cycleId: string, now?: number): AutomationLoopCycle | undefined {
-    return this.updateCycleStatus(cycleId, 'waiting-result', now);
+  markCycleDispatching(id: string, cycleId: string, input: MarkCycleResultInput = {}): AutomationLoopCycle | undefined {
+    return this.updateCycle(cycleId, 'dispatching', input);
+  }
+
+  markCycleWaiting(id: string, cycleId: string, inputOrNow?: MarkCycleResultInput | number): AutomationLoopCycle | undefined {
+    const input = typeof inputOrNow === 'number' ? { now: inputOrNow } : (inputOrNow ?? {});
+    const updated = this.updateCycle(cycleId, 'waiting-result', input);
+    const loop = this.loops.get(id);
+    if (updated && loop && loop.status === 'running') {
+      const now = input.now ?? Date.now();
+      loop.status = 'waiting';
+      loop.updatedAt = now;
+      this.loops.set(loop.id, clone(loop));
+    }
+    return updated;
   }
 
   markCycleReturned(id: string, cycleId: string, input: MarkCycleResultInput): AutomationLoopCycle | undefined {
-    const updated = this.updateCycleStatus(cycleId, 'returned', input.now);
+    const previousStatus = this.cycles.get(cycleId)?.status;
+    const updated = this.updateCycle(cycleId, 'returned', { ...input, resultStatus: input.resultStatus ?? 'returned' });
     if (!updated) return undefined;
-    if (input.progressHash !== undefined) {
-      updated.progressHash = input.progressHash;
-    }
-    if (input.conversationActionId !== undefined) {
-      updated.conversationActionId = input.conversationActionId;
-      updated.progressHash = updated.progressHash ?? `action:${input.conversationActionId}`;
-    }
-    if (input.workBuddyTaskId !== undefined) {
-      updated.workBuddyTaskId = input.workBuddyTaskId;
-    }
-    if (input.reviewId !== undefined) {
-      updated.reviewId = input.reviewId;
-    }
-    this.cycles.set(updated.id, clone(updated));
 
+    const loop = this.loops.get(id);
+    if (loop) {
+      const now = input.now ?? Date.now();
+      if (previousStatus !== 'returned' && previousStatus !== 'failed') {
+        loop.cycleCount += 1;
+      }
+      loop.status = 'running';
+      if (input.nextInput !== undefined) {
+        loop.pendingInput = input.nextInput;
+      }
+      loop.updatedAt = now;
+      this.loops.set(loop.id, clone(loop));
+    }
     if (updated.progressHash) {
       this.markProgress(id, updated.progressHash, input.now);
     }
@@ -194,21 +226,23 @@ export class InMemoryAutomationLoopStore {
   }
 
   markCycleFailed(id: string, cycleId: string, input: MarkCycleResultInput): AutomationLoopCycle | undefined {
-    const updated = this.updateCycleStatus(cycleId, 'failed', input.now);
+    const previousStatus = this.cycles.get(cycleId)?.status;
+    const updated = this.updateCycle(cycleId, 'failed', { ...input, resultStatus: input.resultStatus ?? 'failed' });
     if (!updated) return undefined;
-    if (input.progressHash !== undefined) {
-      updated.progressHash = input.progressHash;
+
+    const loop = this.loops.get(id);
+    if (loop) {
+      const now = input.now ?? Date.now();
+      if (previousStatus !== 'returned' && previousStatus !== 'failed') {
+        loop.cycleCount += 1;
+      }
+      loop.status = 'failed';
+      loop.stopReason = 'action-failed';
+      loop.lastError = input.failureReason;
+      loop.failedAt = now;
+      loop.updatedAt = now;
+      this.loops.set(loop.id, clone(loop));
     }
-    if (input.conversationActionId !== undefined) {
-      updated.conversationActionId = input.conversationActionId;
-    }
-    if (input.workBuddyTaskId !== undefined) {
-      updated.workBuddyTaskId = input.workBuddyTaskId;
-    }
-    if (input.reviewId !== undefined) {
-      updated.reviewId = input.reviewId;
-    }
-    this.cycles.set(updated.id, clone(updated));
     return clone(updated);
   }
 
@@ -223,12 +257,12 @@ export class InMemoryAutomationLoopStore {
 
     if (loop.lastProgressHash === undefined) {
       loop.lastProgressHash = progressHash;
-      loop.noProgressCount = 1;
+      loop.noProgressCount = 0;
     } else if (loop.lastProgressHash === progressHash) {
       loop.noProgressCount += 1;
     } else {
       loop.lastProgressHash = progressHash;
-      loop.noProgressCount = 1;
+      loop.noProgressCount = 0;
     }
     loop.updatedAt = ts;
     this.loops.set(loop.id, clone(loop));
@@ -253,7 +287,11 @@ export class InMemoryAutomationLoopStore {
     if (input.goalStatus === 'failed') return this.failWithReason(loop, 'goal-failed', now);
 
     // Endpoint availability
-    if (input.endpointAvailable === false) return this.failWithReason(loop, 'endpoint-unavailable', now);
+    if (input.endpointStatus === 'missing' || input.endpointStatus === 'offline' || input.endpointAvailable === false) {
+      return this.failWithReason(loop, 'endpoint-unavailable', now);
+    }
+    if (input.awaitingGate) return this.stopWithReason(loop, 'awaiting-gate', now);
+    if (input.actionFailed) return this.failWithReason(loop, 'action-failed', now);
 
     // Deadline
     if (now >= loop.deadlineAt) return this.failWithReason(loop, 'deadline', now);
@@ -270,6 +308,22 @@ export class InMemoryAutomationLoopStore {
   getCycles(id: string): AutomationLoopCycle[] {
     const ids = this.cyclesByLoop.get(id) ?? [];
     return ids.map(cid => this.cycles.get(cid)).filter(Boolean) as AutomationLoopCycle[];
+  }
+
+  listCycles(id: string): AutomationLoopCycle[] {
+    return this.getCycles(id);
+  }
+
+  latestUnresolvedCycle(id: string): AutomationLoopCycle | undefined {
+    const cycles = this.getCycles(id);
+    return cycles.slice().reverse().find(cycle => cycle.status === 'dispatching' || cycle.status === 'waiting-result');
+  }
+
+  findCycleByDispatchKey(dispatchKey: string): AutomationLoopCycle | undefined {
+    for (const cycle of this.cycles.values()) {
+      if (cycle.dispatchKey === dispatchKey) return clone(cycle);
+    }
+    return undefined;
   }
 
   getCycle(cycleId: string): AutomationLoopCycle | undefined {
@@ -314,11 +368,27 @@ export class InMemoryAutomationLoopStore {
 
   // --- Private helpers ---
 
-  private updateCycleStatus(cycleId: string, status: AutomationLoopCycleStatus, now?: number): AutomationLoopCycle | undefined {
+  private updateCycle(cycleId: string, status: AutomationLoopCycleStatus, input: MarkCycleResultInput = {}): AutomationLoopCycle | undefined {
     const cycle = this.cycles.get(cycleId);
     if (!cycle) return undefined;
-    const ts = now ?? Date.now();
+    const ts = input.now ?? Date.now();
     cycle.status = status;
+    if (input.progressHash !== undefined) cycle.progressHash = input.progressHash;
+    if (input.resultHash !== undefined) cycle.resultHash = input.resultHash;
+    if (input.resultStatus !== undefined) cycle.resultStatus = input.resultStatus;
+    if (input.nextInput !== undefined) cycle.nextInputHash = input.nextInputHash ?? hashText(input.nextInput);
+    if (input.nextInputHash !== undefined) cycle.nextInputHash = input.nextInputHash;
+    if (input.dispatchRouteId !== undefined) cycle.dispatchRouteId = input.dispatchRouteId;
+    if (input.targetEndpointStatus !== undefined) cycle.targetEndpointStatus = input.targetEndpointStatus;
+    if (input.gateReason !== undefined) cycle.gateReason = input.gateReason;
+    if (input.failureReason !== undefined) cycle.failureReason = input.failureReason;
+    if (input.evidenceIds !== undefined) cycle.evidenceIds = input.evidenceIds;
+    if (input.conversationActionId !== undefined) {
+      cycle.conversationActionId = input.conversationActionId;
+      cycle.progressHash = cycle.progressHash ?? `action:${input.conversationActionId}`;
+    }
+    if (input.workBuddyTaskId !== undefined) cycle.workBuddyTaskId = input.workBuddyTaskId;
+    if (input.reviewId !== undefined) cycle.reviewId = input.reviewId;
     cycle.updatedAt = ts;
     this.cycles.set(cycle.id, clone(cycle));
     return cycle;

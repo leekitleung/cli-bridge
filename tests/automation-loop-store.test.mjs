@@ -124,7 +124,7 @@ test('cancel is idempotent on terminal states', () => {
 
 // --- Cycles ---
 
-test('beginCycle creates a planned cycle and increments count', () => {
+test('beginCycle creates a planned cycle without incrementing completed count', () => {
   const store = setup();
   const loop = createLoop(store);
   store.start(loop.id);
@@ -134,7 +134,7 @@ test('beginCycle creates a planned cycle and increments count', () => {
   assert.equal(cycle.loopId, loop.id);
 
   const updated = store.get(loop.id);
-  assert.equal(updated.cycleCount, 1);
+  assert.equal(updated.cycleCount, 0);
 });
 
 test('beginCycle refuses non-running loops', () => {
@@ -158,7 +158,8 @@ test('markCycleReturned updates cycle and progress', () => {
 
   const loopAfter = store.get(loop.id);
   assert.equal(loopAfter.lastProgressHash, 'sha256:result1');
-  assert.equal(loopAfter.noProgressCount, 1);
+  assert.equal(loopAfter.noProgressCount, 0);
+  assert.equal(loopAfter.cycleCount, 1);
 });
 
 test('markCycleFailed updates cycle', () => {
@@ -210,7 +211,7 @@ test('evaluateStop returns max-cycles when cycleCount reaches maxCycles', () => 
 
 test('evaluateStop returns no-progress after repeated same hash', () => {
   const store = setup();
-  const loop = createLoop(store, { noProgressLimit: 2 });
+  const loop = createLoop(store, { noProgressLimit: 1 });
   store.start(loop.id);
 
   const c1 = store.beginCycle(loop.id, { promptHash: 'sha256:a' });
@@ -234,7 +235,7 @@ test('no-progress resets when hash changes', () => {
   store.markCycleReturned(loop.id, c2.id, { progressHash: 'sha256:different' });
 
   const pre = store.get(loop.id);
-  assert.equal(pre.noProgressCount, 1);
+  assert.equal(pre.noProgressCount, 0);
 
   const result = store.evaluateStop(loop.id, { now: now + 3000 });
   assert.equal(result.stop, false);
@@ -360,6 +361,7 @@ test('hydrateLoop and hydrateCycle restore state', () => {
     id: 'cycle-1',
     loopId: loop.id,
     index: 1,
+    dispatchKey: `${loop.id}:1`,
     status: 'returned',
     promptHash: 'sha256:abc',
     createdAt: now,

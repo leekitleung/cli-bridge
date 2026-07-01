@@ -45,7 +45,7 @@ test('POST /bridge/projects/:key/automation-loops creates loop', async () => {
   const runtime = createRuntime();
   const body = JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' });
   const req = mockRequest(body);
-  const result = await handleBridgeRequest(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', req);
+  const result = await handleBridgeRequest(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', req, undefined, CONSOLE_AUTH);
   assert.equal(result.statusCode, 201);
   assert.ok(result.payload.loop.id);
   assert.equal(result.payload.loop.status, 'draft');
@@ -55,11 +55,19 @@ test('POST /bridge/projects/:key/automation-loops requires sourceEndpointId', as
   const runtime = createRuntime();
   const body = JSON.stringify({ targetEndpointId: 'workbuddy' });
   const req = mockRequest(body);
-  const result = await handleBridgeRequest(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', req);
+  const result = await handleBridgeRequest(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', req, undefined, CONSOLE_AUTH);
   assert.equal(result.statusCode, 400);
 });
 
 // --- Auth boundary ---
+
+test('POST /bridge/projects/:key/automation-loops requires console-cookie', async () => {
+  const runtime = createRuntime();
+  const body = JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' });
+  const req = mockRequest(body);
+  const result = await handleBridgeRequest(runtime, 'POST', '/bridge/projects/cli-bridge/automation-loops', req, undefined, EXT_AUTH);
+  assert.equal(result.statusCode, 403);
+});
 
 test('POST /bridge/projects/:key/automation-loops/:id/tick requires console-cookie', async () => {
   const runtime = createRuntime();
