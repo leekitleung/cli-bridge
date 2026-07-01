@@ -74,3 +74,29 @@ test('conversation actions are returned with conversation messages and survive r
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- Task 3: Review-Command Conversation Activation ---
+
+test('review-command conversation creates a previewed review action', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'claude-code-command',
+  });
+
+  const res = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'review the current README plan',
+  });
+
+  assert.equal(res.statusCode, 201);
+  const action = res.payload.actions[0];
+  assert.equal(action.routeKind, 'review-command');
+  assert.equal(action.status, 'previewed');
+  assert.equal(typeof action.linkedReviewId, 'string');
+  assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
+  assert.match(res.payload.events[1].text, /Review preview created/);
+
+  const review = runtime.pendingReviewStore.get(action.linkedReviewId);
+  assert.equal(review.status, 'previewed');
+  assert.equal(review.prompt, 'review the current README plan');
+});

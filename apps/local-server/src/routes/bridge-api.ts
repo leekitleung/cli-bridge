@@ -3391,12 +3391,22 @@ export async function handleBridgeRequest(
 
       let bridgeText = '';
       let bridgeStatus: ConversationTranscriptEvent['status'] = 'queued';
+      let previewedReview: ReturnType<typeof runtime.pendingReviewStore.get> | undefined;
+
       if (pairing.targetRouteKind === 'managed-pty') {
         bridgeStatus = 'not-implemented';
         bridgeText = 'Codex CLI is registered, but general managed-pty conversation dispatch is not implemented in this phase.';
       } else if (pairing.targetRouteKind === 'review-command') {
-        bridgeStatus = 'not-implemented';
-        bridgeText = 'Claude/Codex command transport is review-only. Use review <text> for the governed review route.';
+        const review = runtime.pendingReviewStore.createDraft({
+          sessionId: `conversation:${key}`,
+          sourceEndpointId: pairing.sourceEndpointId,
+          targetEndpointId: pairing.targetEndpointId,
+          prompt: text,
+          projectId: key,
+        });
+        previewedReview = runtime.pendingReviewStore.preview(review.id) ?? review;
+        bridgeStatus = 'awaiting-manual-confirmation';
+        bridgeText = `Review preview created. Confirm and dispatch review ${previewedReview.id}.`;
       } else if (pairing.targetRouteKind === 'web-relay') {
         bridgeStatus = 'awaiting-manual-confirmation';
         bridgeText = 'Web relay requires the existing manual confirmation flow.';
@@ -3414,8 +3424,23 @@ export async function handleBridgeRequest(
         routeKind: pairing.targetRouteKind,
       });
 
+      const actions: import('../storage/conversation-action-store.ts').ConversationAction[] = [];
+      if (pairing.targetRouteKind === 'review-command' && previewedReview) {
+        actions.push(runtime.conversationActionStore.createPreview({
+          projectId: key,
+          sourceEndpointId: pairing.sourceEndpointId,
+          targetEndpointId: pairing.targetEndpointId,
+          routeKind: pairing.targetRouteKind,
+          userEventId: userEvent.id,
+          bridgeEventId: bridgeEvent.id,
+          text,
+          preview: `Review command preview for ${pairing.targetEndpointId}`,
+          linkedReviewId: previewedReview.id,
+        }));
+      }
+
       runtime.persist();
-      return created({ events: [userEvent, bridgeEvent] });
+      return created({ events: [userEvent, bridgeEvent], actions });
     }
 
     return error(405, 'Method not allowed');
