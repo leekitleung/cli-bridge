@@ -2138,6 +2138,36 @@ test('pairing UI saves conversation pairing to new endpoint', async () => {
   });
   assert.match(document.getElementById('fact-pairing').textContent, /chatgpt-web/);
   assert.match(document.getElementById('fact-pairing').textContent, /workbuddy/);
+  assert.equal(document.getElementById('composer-mode-toggle').textContent, 'Conversation');
+  assert.equal(document.getElementById('conversation-pairing-context'), null);
+  assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
+});
+
+test('clicking active project exits pairing context back to conversation main view', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/endpoints', {
+    ok: true,
+    payload: { endpoints: [] },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation-pairing', {
+    ok: true,
+    payload: { pairing: null },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await waitFor(() => document.getElementById('conn-dot').classList.contains('ok'));
+
+  document.getElementById('composer-pairing').click();
+  await waitFor(() => document.getElementById('conversation-pairing-context'));
+
+  document.querySelector('[data-key="cli-bridge"]').click();
+
+  await waitFor(() => document.getElementById('conversation-pairing-context') === null);
+  assert.equal(document.getElementById('composer-mode-toggle').textContent, 'Conversation');
+  assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
 });
 
 // ── ADR-0025 Task 3: auto-pair token discipline ──

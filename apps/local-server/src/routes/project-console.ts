@@ -832,7 +832,14 @@ function renderProjectList() {
   // Bind project switching
   list.querySelectorAll('.project-item').forEach(li => {
     li.addEventListener('click', async (e) => {
-      if (li.dataset.key === store.activeProjectKey) return;
+      if (li.dataset.key === store.activeProjectKey) {
+        store.contextView = '';
+        store.composerMode = 'conversation';
+        localStorage.setItem('cli-bridge-composer-mode', store.composerMode);
+        renderComposerMode();
+        renderWorkspace();
+        return;
+      }
       store.activeProjectKey = li.dataset.key;
       localStorage.setItem('cli-bridge-active-project', store.activeProjectKey);
       // Show loading indicator before the async fetch.
@@ -1855,8 +1862,10 @@ function bindPairingContext() {
     store.cache.pairing.pairing = res.data?.pairing || null;
     appendCommandMessage('pairing save', 'Project pairing saved: ' + getPairingSummaryHtml());
     setCommandStatus('pairing saved');
+    store.contextView = '';
+    store.composerMode = 'conversation';
+    localStorage.setItem('cli-bridge-composer-mode', store.composerMode);
     renderAll();
-    store.contextView = 'pairing';
     renderWorkspace();
   });
   $('pairing-reset')?.addEventListener('click', async () => {
