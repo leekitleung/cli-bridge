@@ -84,6 +84,7 @@ export interface BridgeSnapshot {
   bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   conversationPairings?: import('./conversation-pairing-store.ts').ConversationPairing[];
   conversationTranscriptEvents?: import('./conversation-transcript-store.ts').ConversationTranscriptEvent[];
+  conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
@@ -145,6 +146,7 @@ function parseSnapshot(text: string): SnapshotReadResult {
       bindingSnapshots: Array.isArray(parsed.bindingSnapshots) ? parsed.bindingSnapshots : undefined,
       conversationPairings: Array.isArray(parsed.conversationPairings) ? parsed.conversationPairings : undefined,
       conversationTranscriptEvents: Array.isArray(parsed.conversationTranscriptEvents) ? parsed.conversationTranscriptEvents : undefined,
+      conversationActions: Array.isArray(parsed.conversationActions) ? parsed.conversationActions : undefined,
       workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
     };
@@ -311,6 +313,7 @@ export interface BuildSnapshotInput {
   bindingSnapshots?: import('../../../../packages/shared/src/types.ts').GoalBindingSnapshot[];
   conversationPairings?: import('./conversation-pairing-store.ts').ConversationPairing[];
   conversationTranscriptEvents?: import('./conversation-transcript-store.ts').ConversationTranscriptEvent[];
+  conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
 }
@@ -340,6 +343,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     bindingSnapshots: input.bindingSnapshots ?? [],
     conversationPairings: input.conversationPairings ?? [],
     conversationTranscriptEvents: input.conversationTranscriptEvents ?? [],
+    conversationActions: input.conversationActions ?? [],
     workbuddyTasks: input.workbuddyTasks ?? [],
     verificationRunRecords: input.verificationRunRecords ?? [],
   };

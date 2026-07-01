@@ -37,6 +37,7 @@ import { InMemoryConversationPairingStore } from '../storage/conversation-pairin
 import type { ConversationPairing, ConversationRouteKind, ConversationPairingStatus } from '../storage/conversation-pairing-store.ts';
 import { InMemoryConversationTranscriptStore } from '../storage/conversation-transcript-store.ts';
 import type { ConversationTranscriptEvent } from '../storage/conversation-transcript-store.ts';
+import { InMemoryConversationActionStore } from '../storage/conversation-action-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
@@ -161,6 +162,7 @@ export interface BridgeRuntime {
   bindingSnapshotStore: InMemoryGoalBindingSnapshotStore;
   conversationPairingStore: InMemoryConversationPairingStore;
   conversationTranscriptStore: InMemoryConversationTranscriptStore;
+  conversationActionStore: InMemoryConversationActionStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
@@ -1458,6 +1460,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const bindingSnapshotStore = new InMemoryGoalBindingSnapshotStore();
   const conversationPairingStore = new InMemoryConversationPairingStore();
   const conversationTranscriptStore = new InMemoryConversationTranscriptStore();
+  const conversationActionStore = new InMemoryConversationActionStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
@@ -1531,6 +1534,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const e of read.snapshot.conversationTranscriptEvents ?? []) {
         try { conversationTranscriptStore.hydrateEvent(e); } catch { }
       }
+      for (const a of read.snapshot.conversationActions ?? []) {
+        try { conversationActionStore.hydrateAction(a); } catch { }
+      }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
@@ -1576,6 +1582,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       bindingSnapshots: bindingSnapshotStore.exportSnapshots(),
       conversationPairings: conversationPairingStore.exportPairings(),
       conversationTranscriptEvents: conversationTranscriptStore.exportEvents(),
+      conversationActions: conversationActionStore.exportActions(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
     }));
@@ -1617,6 +1624,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     bindingSnapshotStore,
     conversationPairingStore,
     conversationTranscriptStore,
+    conversationActionStore,
     workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -3356,7 +3364,10 @@ export async function handleBridgeRequest(
     if (!proj) return error(404, 'Project not found');
 
     if (method === 'GET') {
-      return ok({ messages: runtime.conversationTranscriptStore.listByProject(key) });
+      return ok({
+        messages: runtime.conversationTranscriptStore.listByProject(key),
+        actions: runtime.conversationActionStore.listByProject(key),
+      });
     }
 
     if (method === 'POST') {
