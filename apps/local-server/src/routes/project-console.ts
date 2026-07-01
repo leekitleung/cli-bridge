@@ -562,6 +562,10 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <div class="loading">Connect to load project activity.</div>
     </div>
   </div>
+  <div class="card" id="automation-loop-card" style="display:none">
+    <h3>Automation Loop</h3>
+    <div id="automation-loop-list"></div>
+  </div>
   <div id="command-log" class="command-log" aria-live="polite"></div>
   <div id="context-container" aria-live="polite"></div>
 </main>
@@ -785,8 +789,9 @@ async function refreshAll() {
     api(base + '/verification'),
     api(base + '/workbuddy'),
     api(base + '/teams'),
+    api(base + '/automation-loops'),
   ]);
-  const [prR, deR, tiR, auR, meR, veR, wbR, tsR] = results;
+  const [prR, deR, tiR, auR, meR, veR, wbR, tsR, alR] = results;
   if (prR.status === 'fulfilled' && prR.value.ok) store.cache.projects = prR.value.data.projects || [];
   if (deR.status === 'fulfilled' && deR.value.ok) store.cache.detail = deR.value.data;
   if (tiR.status === 'fulfilled' && tiR.value.ok) store.cache.timeline = tiR.value.data;
@@ -795,6 +800,7 @@ async function refreshAll() {
   if (veR.status === 'fulfilled' && veR.value.ok) store.cache.verification = veR.value.data;
   if (wbR.status === 'fulfilled' && wbR.value.ok) store.cache.workbuddy = wbR.value.data;
   if (tsR.status === 'fulfilled' && tsR.value.ok) store.cache.teams = tsR.value.data;
+  if (alR.status === 'fulfilled' && alR.value.ok) store.cache.automationLoops = alR.value.data.loops || [];
   renderAll();
 }
 
@@ -806,6 +812,7 @@ function renderAll() {
   renderStatusPanel();
   renderWorkspace();
   renderFactsRail();
+  renderAutomationLoopPanel();
   syncMobileFacts();
   renderComposerMode();
 }
@@ -1178,6 +1185,73 @@ function renderFactsRail() {
     $('fact-last-event').innerHTML = escapeHtml(String(label).slice(0, 96));
   } else {
     $('fact-last-event').innerHTML = '<span class="unavailable">none</span>';
+  }
+}
+
+function renderAutomationLoopPanel() {
+  const card = document.getElementById('automation-loop-card');
+  if (!card) return;
+  const list = $('automation-loop-list');
+  if (!list) return;
+
+  const loops = store.cache.automationLoops || [];
+  if (!loops.length) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = '';
+  let html = '';
+  for (const loop of loops) {
+    const statusLabel = loop.status;
+    const cycleInfo = loop.cycleCount + '/' + loop.maxCycles;
+    const stopText = loop.stopReason ? 'Stop: ' + loop.stopReason : '';
+    const encodedKey = encodeURIComponent(loop.projectId);
+    const baseUrl = '/bridge/projects/' + encodedKey + '/automation-loops/' + loop.id;
+
+    html += '<div class="loop-row" style="padding:6px 0;border-bottom:1px solid var(--c-border-light)">';
+    html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+    html += '<span class="pill" style="font-size:0.85rem">Loop: <strong>' + escapeHtml(String(statusLabel)) + '</strong></span>';
+    html += '<span style="font-size:0.85rem;opacity:0.7">cycles ' + escapeHtml(cycleInfo) + '</span>';
+    if (stopText) html += '<span style="font-size:0.85rem;opacity:0.6">' + escapeHtml(stopText) + '</span>';
+    html += '</div>';
+    html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">';
+
+    if (loop.status === 'draft' || loop.status === 'paused') {
+      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/run" data-body=\'{"input":"","maxTicksPerRun":1}\'>Run</button>';
+    }
+    if (loop.status === 'running') {
+      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/run" data-body=\'{"input":"","maxTicksPerRun":1}\'>Tick</button>';
+      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/pause" data-body="{}">Pause</button>';
+    }
+    if (loop.status === 'paused') {
+      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/resume" data-body="{}">Resume</button>';
+    }
+    if (loop.status !== 'cancelled' && loop.status !== 'done' && loop.status !== 'failed') {
+      html += '<button class="loop-action" data-url="' + escapeHtml(baseUrl) + '/cancel" data-body="{}">Cancel</button>';
+    }
+
+    html += '</div></div>';
+  }
+  list.innerHTML = html;
+
+  // Wire up loop action buttons
+  for (const btn of list.querySelectorAll('.loop-action')) {
+    btn.addEventListener('click', async () => {
+      const url = btn.dataset.url;
+      const body = btn.dataset.body || '{}';
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        const res = await api(url, 'POST', JSON.parse(body));
+        if (!res.ok) {
+          appendCommandOutput('Loop action failed: ' + (res.data?.message || res.status), 'error');
+        }
+      } catch (err) {
+        appendCommandOutput('Loop action error: ' + (err?.message || err), 'error');
+      }
+      await refreshAll();
+    });
   }
 }
 
