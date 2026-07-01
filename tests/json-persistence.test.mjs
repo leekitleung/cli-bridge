@@ -854,3 +854,80 @@ test('snapshot roundtrip preserves execution packets', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// EX-4: route persistence roundtrip
+test('conversation routes persist across runtime restarts', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({ dataDir: dir });
+
+    // Setup project and pairing.
+    first.projectStore.upsert({ key: 'alpha' });
+    first.endpointRegistry.register({
+      id: 'workbuddy', label: 'WorkBuddy', transport: 'workbuddy',
+      risk: 'medium',
+      capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: true, canExecute: true, canSummarize: false },
+    });
+
+    // Create a route directly.
+    const route = first.conversationRouteStore.create({
+      projectId: 'alpha',
+      pairingId: 'chatgpt-web→workbuddy',
+      mode: 'single',
+      instructionPacketId: 'inst-1',
+      actionId: 'action-1',
+    });
+    first.conversationRouteStore.markDispatched(route.id, 'task-abc');
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const routes = second.conversationRouteStore.exportRoutes();
+    assert.equal(routes.length, 1);
+    assert.equal(routes[0].id, route.id);
+    assert.equal(routes[0].status, 'dispatched');
+    assert.equal(routes[0].taskId, 'task-abc');
+    assert.equal(routes[0].actionId, 'action-1');
+    assert.equal(routes[0].instructionPacketId, 'inst-1');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot roundtrip preserves routes', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const snapshot = buildSnapshot({
+      packets: [], auditEvents: [], pendingPrompts: [],
+      goals: [], plans: [], projects: [],
+      automationBindings: [], workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [], workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [], teams: [], teamArtifacts: [],
+      conversationRoutes: [{
+        id: 'route-1',
+        projectId: 'alpha',
+        pairingId: 'a→b',
+        mode: 'single',
+        instructionPacketId: 'inst-1',
+        actionId: 'action-1',
+        taskId: 'task-123',
+        status: 'completed',
+        createdAt: 1793000000000,
+        updatedAt: 1793000001000,
+      }],
+    });
+    store.write(snapshot);
+    const read = store.read().snapshot;
+    assert.ok(read, 'snapshot exists');
+    assert.equal(Array.isArray(read.conversationRoutes), true);
+    assert.equal(read.conversationRoutes.length, 1);
+    assert.equal(read.conversationRoutes[0].id, 'route-1');
+    assert.equal(read.conversationRoutes[0].mode, 'single');
+    assert.equal(read.conversationRoutes[0].status, 'completed');
+    assert.equal(read.conversationRoutes[0].taskId, 'task-123');
+    assert.equal(read.conversationRoutes[0].instructionPacketId, 'inst-1');
+    assert.equal(read.conversationRoutes[0].actionId, 'action-1');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,7 @@ import { InMemoryConversationActionStore } from '../storage/conversation-action-
 import { InMemoryConversationInstructionStore } from '../storage/conversation-instruction-store.ts';
 import type { ConversationInstructionPacket } from '../storage/conversation-instruction-store.ts';
 import { InMemoryConversationExecutionStore } from '../storage/conversation-execution-store.ts';
+import { InMemoryConversationRouteStore } from '../storage/conversation-route-store.ts';
 import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
@@ -181,6 +182,7 @@ export interface BridgeRuntime {
   conversationActionStore: InMemoryConversationActionStore;
   conversationInstructionStore: InMemoryConversationInstructionStore;
   conversationExecutionStore: InMemoryConversationExecutionStore;
+  conversationRouteStore: InMemoryConversationRouteStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
@@ -1482,6 +1484,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const conversationActionStore = new InMemoryConversationActionStore();
   const conversationInstructionStore = new InMemoryConversationInstructionStore();
   const conversationExecutionStore = new InMemoryConversationExecutionStore();
+  const conversationRouteStore = new InMemoryConversationRouteStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
@@ -1570,6 +1573,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const p of read.snapshot.conversationExecutionPackets ?? []) {
         try { conversationExecutionStore.hydratePacket(p); } catch { }
       }
+      for (const r of read.snapshot.conversationRoutes ?? []) {
+        try { conversationRouteStore.hydrateRoute(r); } catch { }
+      }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
@@ -1618,6 +1624,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       conversationActions: conversationActionStore.exportActions(),
       conversationInstructionPackets: conversationInstructionStore.exportPackets(),
       conversationExecutionPackets: conversationExecutionStore.exportPackets(),
+      conversationRoutes: conversationRouteStore.exportRoutes(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
       automationLoopRuns: automationLoopStore.exportLoops(),
@@ -1665,6 +1672,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     conversationActionStore,
     conversationInstructionStore,
     conversationExecutionStore,
+    conversationRouteStore,
     workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -3228,6 +3236,15 @@ export async function handleBridgeRequest(
         ? runtime.conversationActionStore.markWorkBuddyReturned(conversationAction.id)
         : runtime.conversationActionStore.fail(conversationAction.id, result.failureReason ?? 'workbuddy-execution-failed');
 
+      // EX-4: Mark the linked route as completed or failed.
+      if (conversationAction.routeId) {
+        if (outcomeOk) {
+          runtime.conversationRouteStore.markCompleted(conversationAction.routeId);
+        } else {
+          runtime.conversationRouteStore.markFailed(conversationAction.routeId);
+        }
+      }
+
       // Find linked instruction packet via userEventId.
       const instructionPacket = runtime.conversationInstructionStore.findByUserEventId(conversationAction.userEventId);
 
@@ -3261,6 +3278,13 @@ export async function handleBridgeRequest(
         status: outcomeOk ? 'returned' : 'failed',
         routeKind: conversationAction.routeKind,
       });
+      // EX-4: Strip internal routeId from the action before API response.
+      if (updatedAction) {
+        const sanitized = { ...updatedAction };
+        delete (sanitized as Record<string, unknown>).routeId;
+        runtime.persist();
+        return ok({ result, action: sanitized, event });
+      }
       runtime.persist();
       return ok({ result, action: updatedAction, event });
     }
@@ -3547,6 +3571,8 @@ export async function handleBridgeRequest(
         text,
       });
 
+      const instructionPacket = runtime.conversationInstructionStore.findByUserEventId(userEvent.id);
+
       let bridgeText = '';
       let bridgeStatus: ConversationTranscriptEvent['status'] = 'queued';
 
@@ -3581,7 +3607,19 @@ export async function handleBridgeRequest(
           bridgeEventId: bridgeEvent.id,
           text,
         });
-        if (action) actions.push(action);
+        if (action) {
+          // EX-4: Create internal route linking instruction → route → action.
+          const taskRoute = runtime.conversationRouteStore.create({
+            projectId: key,
+            pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+            instructionPacketId: instructionPacket!.id,
+            actionId: action.id,
+            mode: 'single',
+          });
+          // Link route id back to the action.
+          runtime.conversationActionStore.linkRoute(action.id, taskRoute.id);
+          actions.push(action);
+        }
       }
 
       runtime.persist();

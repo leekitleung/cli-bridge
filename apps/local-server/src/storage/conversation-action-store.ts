@@ -23,6 +23,7 @@ export interface ConversationAction {
   status: ConversationActionStatus;
   linkedReviewId?: string;
   linkedWorkBuddyTaskId?: string;
+  routeId?: string;
   failureReason?: string;
   createdAt: number;
   updatedAt: number;
@@ -135,6 +136,15 @@ export class InMemoryConversationActionStore {
       if (action.linkedWorkBuddyTaskId === taskId) return clone(action);
     }
     return undefined;
+  }
+
+  linkRoute(actionId: string, routeId: string): ConversationAction | undefined {
+    const action = this.actions.get(actionId);
+    if (!action) return undefined;
+    action.routeId = routeId;
+    action.updatedAt = Date.now();
+    this.actions.set(action.id, clone(action));
+    return clone(action);
   }
 
   hydrateAction(action: ConversationAction): void {

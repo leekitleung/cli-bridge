@@ -58,6 +58,10 @@ const workbuddyExecutionAdapter: ConversationRouteAdapter = {
       timeoutMs: 120_000,
     });
     const queued = input.runtime.conversationActionStore.markQueued(input.action.id, task.taskId);
+    // EX-4: Mark route as dispatched if linked.
+    if (input.action.routeId) {
+      input.runtime.conversationRouteStore.markDispatched(input.action.routeId, task.taskId);
+    }
     input.runtime.persist();
     return bridgeOk({ action: queued, task });
   },
