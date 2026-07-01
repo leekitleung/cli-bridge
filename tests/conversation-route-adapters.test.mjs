@@ -9,6 +9,7 @@ function endpoint(overrides) {
     id: 'endpoint',
     label: 'Endpoint',
     transport: 'web-dom',
+    risk: 'low',
     status: 'online',
     capabilities: {
       canAcceptPrompt: false,
@@ -66,4 +67,36 @@ test('route adapter leaves managed pty non-auto-dispatchable', () => {
   assert.equal(route.kind, 'managed-pty');
   assert.equal(route.status, 'not-implemented');
   assert.equal(route.adapter, null);
+});
+
+// ── Task 2: Real Adapter Methods ──
+
+import { createBridgeRuntime } from '../apps/local-server/src/routes/bridge-api.ts';
+
+test('workbuddy adapter creates and dispatches a target-specific task', async () => {
+  const runtime = createBridgeRuntime();
+  const target = endpoint({
+    id: 'custom-executor',
+    label: 'Custom Executor',
+    transport: 'workbuddy',
+    capabilities: { canExecute: true, canAcceptPrompt: true, canReturnOutput: true },
+  });
+  runtime.endpointRegistry.register(target);
+  const route = resolveConversationRouteAdapter(target);
+  const action = route.adapter.createAction({
+    runtime,
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpoint: target,
+    userEventId: 'u1',
+    bridgeEventId: 'b1',
+    text: 'inspect this repository',
+  });
+  assert.equal(action.targetEndpointId, 'custom-executor');
+  assert.equal(action.routeKind, 'workbuddy-execution');
+  const confirmed = route.adapter.confirm({ runtime, action });
+  assert.equal(confirmed.statusCode, 200);
+  const dispatched = await route.adapter.dispatch({ runtime, action: confirmed.payload.action, request: {} });
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
 });
