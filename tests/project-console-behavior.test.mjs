@@ -2170,6 +2170,86 @@ test('clicking active project exits pairing context back to conversation main vi
   assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
 });
 
+test('conversation mode auto-dispatches previewed workbuddy actions after pairing save', async () => {
+  const { document, fetchCalls, setFixture } = setupConsole();
+  setFixture('/bridge/endpoints', {
+    ok: true,
+    payload: {
+      endpoints: [
+        {
+          id: 'chatgpt-web',
+          label: 'ChatGPT Web',
+          transport: 'web-dom',
+          status: 'online',
+          capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: false, canExecute: false, canSummarize: false },
+        },
+        {
+          id: 'workbuddy',
+          label: 'WorkBuddy Executor',
+          transport: 'workbuddy',
+          status: 'online',
+          capabilities: { canReview: true, canExecute: true, canAcceptPrompt: true, canReturnOutput: true, canSummarize: false },
+        },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation-pairing', {
+    ok: true,
+    payload: {
+      pairing: {
+        projectId: 'cli-bridge',
+        sourceEndpointId: 'chatgpt-web',
+        targetEndpointId: 'workbuddy',
+        targetRouteKind: 'workbuddy-execution',
+        status: 'ready',
+        scope: 'project',
+        updatedAt: 1,
+      },
+    },
+  });
+
+  document.getElementById('token').value = 'test';
+  document.getElementById('connect').click();
+  await waitFor(() => document.getElementById('conn-dot').classList.contains('ok'));
+
+  document.getElementById('composer-pairing').click();
+  await waitFor(() => document.getElementById('pairing-save'));
+  document.getElementById('conversation-source').value = 'chatgpt-web';
+  document.getElementById('conversation-target').value = 'workbuddy';
+  document.getElementById('pairing-save').click();
+  await waitFor(() => document.getElementById('composer-mode-toggle').textContent === 'Conversation');
+
+  setFixture('/bridge/projects/cli-bridge/conversation/messages', {
+    ok: true,
+    status: 201,
+    payload: {
+      events: [
+        { id: 'u1', role: 'user', text: 'inspect this', status: 'queued', routeKind: 'workbuddy-execution' },
+        { id: 'b1', role: 'bridge', text: 'WorkBuddy preview created', status: 'awaiting-manual-confirmation', routeKind: 'workbuddy-execution' },
+      ],
+      actions: [
+        { id: 'act-1', status: 'previewed', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation/actions/act-1/confirm', {
+    ok: true,
+    payload: { action: { id: 'act-1', status: 'confirmed', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' } },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation/actions/act-1/dispatch', {
+    ok: true,
+    payload: { action: { id: 'act-1', status: 'queued', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' } },
+  });
+
+  document.getElementById('command-input').value = 'inspect this';
+  document.getElementById('command-send').click();
+
+  await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/confirm')));
+  await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/dispatch')));
+  assert.equal(document.getElementById('command-status').textContent, 'conversation auto-dispatched');
+  assert.match(document.getElementById('conversation-transcript').textContent, /queued/);
+});
+
 // ── ADR-0025 Task 3: auto-pair token discipline ──
 
 test('local auto-pair bootstrap does not expose raw token in URL, visible DOM, or localStorage', () => {

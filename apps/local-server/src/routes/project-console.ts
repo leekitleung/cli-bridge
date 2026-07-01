@@ -12,8 +12,8 @@
 // Like the review and goal consoles, this is a THIN CLIENT: it holds NO
 // business logic. Every action calls a /bridge/* endpoint that already enforces
 // redaction, capability gating, plan-level approval, per-step state-mutating
-// gate, step ceiling, and tier permission. The page never calls a CLI directly,
-// never auto-executes a step, and never bypasses a gate.
+// gate, step ceiling, and tier permission. The page never calls a CLI directly
+// and never bypasses a gate.
 //
 // Served at GET /console/project as a single self-contained HTML document.
 // The pairing token is entered by the user (manual Connect), kept in memory
@@ -614,6 +614,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <span class="composer-pill pending" id="access-pill" title="Local bridge access. Commands route through governed project endpoints."><span class="shield" aria-hidden="true"></span><span id="access-pill-label">未连接</span></span>
       <span class="composer-spacer"></span>
       <button type="button" class="composer-mode" id="composer-mode-toggle" aria-label="Toggle composer mode" title="Click to switch between Project and Conversation mode">Project</button>
+      <button type="button" class="composer-pairing" id="conversation-auto-dispatch" aria-label="Toggle conversation auto dispatch">Manual</button>
       <button type="button" class="composer-pairing" id="composer-pairing" aria-label="Open pairing controls">Pairing</button>
       <button id="command-send" aria-label="Send project command">↑</button>
     </div>
@@ -640,6 +641,7 @@ const store = {
   composerMode: (localStorage.getItem('cli-bridge-composer-mode') || 'project'),
   conversationEvents: [],
   conversationActions: [],
+  conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') === '1',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1865,6 +1867,7 @@ function bindPairingContext() {
     store.contextView = '';
     store.composerMode = 'conversation';
     localStorage.setItem('cli-bridge-composer-mode', store.composerMode);
+    setConversationAutoDispatch(true);
     renderAll();
     renderWorkspace();
   });
@@ -2633,6 +2636,7 @@ $('composer-pairing').addEventListener('click', openPairingContext);
 $('command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCommand(); });
 $('command-send').addEventListener('click', handleCommand);
 $('composer-mode-toggle')?.addEventListener('click', toggleComposerMode);
+$('conversation-auto-dispatch')?.addEventListener('click', toggleConversationAutoDispatch);
 
 function toggleComposerMode() {
   store.composerMode = store.composerMode === 'project' ? 'conversation' : 'project';
@@ -2644,6 +2648,13 @@ function renderComposerMode() {
   const btn = $('composer-mode-toggle');
   if (btn) {
     btn.textContent = store.composerMode === 'project' ? 'Project' : 'Conversation';
+  }
+  const autoBtn = $('conversation-auto-dispatch');
+  if (autoBtn) {
+    autoBtn.textContent = store.conversationAutoDispatch ? 'Auto dispatch' : 'Manual';
+    autoBtn.title = store.conversationAutoDispatch
+      ? 'Conversation actions auto-confirm and dispatch from this local Console session.'
+      : 'Conversation actions wait for manual Confirm and Dispatch.';
   }
   const hints = document.querySelector('.command-hints');
   if (hints) {
@@ -2659,6 +2670,21 @@ function renderComposerMode() {
     transcript.style.display = store.composerMode === 'conversation' ? '' : 'none';
   }
   renderConversationTranscript();
+}
+
+function setConversationAutoDispatch(enabled) {
+  store.conversationAutoDispatch = !!enabled;
+  if (store.conversationAutoDispatch) {
+    sessionStorage.setItem('cli-bridge-conversation-auto-dispatch', '1');
+  } else {
+    sessionStorage.removeItem('cli-bridge-conversation-auto-dispatch');
+  }
+  renderComposerMode();
+}
+
+function toggleConversationAutoDispatch() {
+  setConversationAutoDispatch(!store.conversationAutoDispatch);
+  setCommandStatus(store.conversationAutoDispatch ? 'conversation auto-dispatch enabled' : 'conversation manual dispatch');
 }
 
 function renderConversationTranscript() {
@@ -2724,11 +2750,23 @@ async function runConversationAction(actionId, action) {
   if (!res.ok) {
     appendCommandMessage(action + ' conversation action', 'Conversation action failed: ' + escapeHtml(res.data?.message || res.status), true);
     setCommandStatus('conversation action failed', true);
-    return;
+    return null;
   }
   store.conversationActions = mergeConversationActions(store.conversationActions || [], [res.data.action]);
   renderConversationTranscript();
   setCommandStatus('conversation action ' + action + 'ed');
+  return res.data.action || null;
+}
+
+async function autoDispatchConversationActions(actions) {
+  if (!store.conversationAutoDispatch) return;
+  const previewed = (actions || []).filter(action => action && action.status === 'previewed');
+  for (const action of previewed) {
+    const confirmed = await runConversationAction(action.id, 'confirm');
+    if (!confirmed || confirmed.status !== 'confirmed') return;
+    await runConversationAction(action.id, 'dispatch');
+  }
+  if (previewed.length) setCommandStatus('conversation auto-dispatched');
 }
 
 async function sendConversationMessage(input) {
@@ -2744,9 +2782,11 @@ async function sendConversationMessage(input) {
     return;
   }
   store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
-  store.conversationActions = mergeConversationActions(store.conversationActions || [], res.data?.actions || []);
+  const newActions = res.data?.actions || [];
+  store.conversationActions = mergeConversationActions(store.conversationActions || [], newActions);
   renderConversationTranscript();
   setCommandStatus('conversation routed');
+  await autoDispatchConversationActions(newActions);
 }
 
 async function handleCommand() {
