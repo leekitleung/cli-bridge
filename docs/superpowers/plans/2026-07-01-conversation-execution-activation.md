@@ -20,6 +20,7 @@ Allowed in this plan:
 - `review-command` routes may create a pending review in `previewed` state.
 - `workbuddy-execution` routes may create a confirmable WorkBuddy conversation execution request.
 - UI may expose explicit Confirm / Dispatch controls for those server-owned actions.
+- Confirm / Dispatch action routes must require the local Console cookie credential.
 - Revoke, pairing, token discipline, and existing route auth remain unchanged.
 
 Still forbidden:
@@ -27,6 +28,7 @@ Still forbidden:
 - No generic `/exec`, `/run`, `/shell`, terminal, Git, PR, workspace write, or command argv endpoint.
 - No automatic dispatch of model/user text without an existing gate.
 - No extension-side route selection or permission expansion.
+- No extension-session-token Confirm / Dispatch, even when the extension is paired.
 - No managed PTY conversation dispatch in this phase.
 - No auto-confirm of pending prompts, reviews, proposals, or WorkBuddy tasks.
 
@@ -72,6 +74,10 @@ Modify:
   - Make `POST /bridge/projects/:key/conversation/messages` create action previews for supported route kinds.
   - Add `POST /bridge/projects/:key/conversation/actions/:actionId/confirm`.
   - Add `POST /bridge/projects/:key/conversation/actions/:actionId/dispatch`.
+
+- `apps/local-server/src/server.ts`
+  - Pass bridge auth context into bridge route handling.
+  - Ensure Conversation action confirm/dispatch routes accept only Console cookie auth, not extension session auth.
 
 - `apps/local-server/src/storage/json-snapshot-store.ts`
   - Persist conversation actions.
@@ -256,8 +262,9 @@ queued only after explicit confirmation.
 - No generic shell, run, exec, Git, PR, or workspace mutation endpoint.
 - Managed PTY conversation dispatch remains blocked.
 - All mutating actions require server-owned confirmation state.
+- Conversation action confirm/dispatch requires local Console cookie auth.
 - Returned model or ChatGPT content remains untrusted data.
-- Extension code may not choose target routes or confirm actions.
+- Extension code may not choose target routes or confirm/dispatch actions.
 - Existing route authentication and pairing boundaries remain unchanged.
 
 ## Acceptance Conditions
@@ -601,8 +608,10 @@ git commit -m "feat: create review actions from conversation"
 ## Task 4: Conversation Action Confirm And Dispatch Routes
 
 **Files:**
+- Modify: `apps/local-server/src/server.ts`
 - Modify: `apps/local-server/src/routes/bridge-api.ts`
 - Test: `tests/conversation-execution-api.test.mjs`
+- Test: `tests/local-launcher.test.mjs`
 
 - [ ] **Step 1: Add failing confirm/dispatch test for review actions**
 
@@ -631,15 +640,49 @@ test('conversation review action confirm and dispatch use existing review gates'
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Add failing auth-source boundary test**
 
-```bash
-node --experimental-strip-types --test tests/conversation-execution-api.test.mjs
+Append a focused integration test that obtains an extension session token through
+the local auto-pair claim flow and then attempts:
+
+```http
+POST /bridge/projects/cli-bridge/conversation/actions/:actionId/confirm
+POST /bridge/projects/cli-bridge/conversation/actions/:actionId/dispatch
 ```
 
-Expected: FAIL with 404/405 because action routes do not exist.
+Expected result: both return `403` when authenticated only by extension session
+token. The same action must still confirm and dispatch when authenticated by the
+Console cookie created by `GET /console/project`.
 
-- [ ] **Step 3: Add route matcher**
+This test is required because normal bridge authentication accepts both Console
+cookies and extension session tokens. Conversation action confirmation is a
+local operator decision, so the route needs a narrower auth-source gate.
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+```bash
+node --experimental-strip-types --test tests/conversation-execution-api.test.mjs tests/local-launcher.test.mjs
+```
+
+Expected: FAIL with 404/405 for missing action routes and/or FAIL because
+extension session auth can still reach the new confirm/dispatch route.
+
+- [ ] **Step 4: Thread bridge auth context into route handling**
+
+In `apps/local-server/src/server.ts`, make bridge authentication return an auth
+context such as:
+
+```ts
+type BridgeAuthKind = 'console-cookie' | 'pairing-token' | 'extension-session';
+```
+
+Pass that context into `handleBridgeRequest(...)`.
+
+In `apps/local-server/src/routes/bridge-api.ts`, accept the context as a narrow
+optional parameter used only by routes that need source-specific authorization.
+Do not change broad bridge route behavior.
+
+- [ ] **Step 5: Add route matcher**
 
 In `apps/local-server/src/routes/bridge-api.ts`, add:
 
@@ -665,13 +708,14 @@ function projectConversationActionPath(pathname: string): { matched: true; key: 
 }
 ```
 
-- [ ] **Step 4: Implement confirm route**
+- [ ] **Step 6: Implement confirm route**
 
 Before the final `return error(404, ...)`, add:
 
 ```ts
 const conversationActionPath = projectConversationActionPath(pathname);
 if (conversationActionPath.matched) {
+  if (authContext?.kind !== 'console-cookie') return error(403, 'Conversation action confirmation requires local Console session');
   if (!conversationActionPath.key || !conversationActionPath.actionId) return error(400, 'Invalid conversation action path');
   const project = runtime.projectStore.get(conversationActionPath.key);
   if (!project) return error(404, 'Project not found');
@@ -696,7 +740,7 @@ if (conversationActionPath.matched) {
   }
 ```
 
-- [ ] **Step 5: Implement review dispatch route**
+- [ ] **Step 7: Implement review dispatch route**
 
 Continue inside the same route:
 
@@ -724,19 +768,19 @@ Continue inside the same route:
 
 This keeps the real CLI review dispatch in the existing `/bridge/reviews/dispatch` path. Conversation dispatch marks the action queued and points the UI to the governed review dispatch route.
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 8: Run tests**
 
 ```bash
-node --experimental-strip-types --test tests/conversation-execution-api.test.mjs tests/bridge-reviews-api.test.mjs
+node --experimental-strip-types --test tests/conversation-execution-api.test.mjs tests/bridge-reviews-api.test.mjs tests/local-launcher.test.mjs
 npm run typecheck
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add apps/local-server/src/routes/bridge-api.ts tests/conversation-execution-api.test.mjs
+git add apps/local-server/src/server.ts apps/local-server/src/routes/bridge-api.ts tests/conversation-execution-api.test.mjs tests/local-launcher.test.mjs
 git commit -m "feat: confirm conversation review actions"
 ```
 
@@ -1115,6 +1159,7 @@ Do not commit screenshots or token-bearing artifacts.
 - No conversation action dispatches without explicit confirmation.
 - Managed PTY remains blocked.
 - Extension and ChatGPT content scripts cannot confirm or dispatch actions.
+- Conversation action confirm/dispatch succeeds only with local Console cookie auth.
 - All new routes require existing bridge authentication.
 - No new shell/run/exec/Git/PR endpoint is introduced.
 - Full tests and real browser acceptance pass.
@@ -1123,6 +1168,7 @@ Do not commit screenshots or token-bearing artifacts.
 
 - Does any raw conversation text become execution without a server-owned preview?
 - Can a non-confirmed action dispatch?
+- Can an extension session token confirm or dispatch a conversation action?
 - Can archived projects mutate conversation actions?
 - Does WorkBuddy receive only server-owned endpoint, working directory, timeout, and prompt?
 - Do UI buttons call only `/conversation/actions/:id/confirm` and `/dispatch`?

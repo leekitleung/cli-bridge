@@ -24,8 +24,9 @@ queued only after explicit confirmation.
 - No generic shell, run, exec, Git, PR, or workspace mutation endpoint.
 - Managed PTY conversation dispatch remains blocked.
 - All mutating actions require server-owned confirmation state.
+- Conversation action confirm/dispatch requires local Console cookie auth.
 - Returned model or ChatGPT content remains untrusted data.
-- Extension code may not choose target routes or confirm actions.
+- Extension code may not choose target routes or confirm/dispatch actions.
 - Existing route authentication and pairing boundaries remain unchanged.
 
 ## Acceptance Conditions
