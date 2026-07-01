@@ -1,6 +1,6 @@
 # ADR-0029: Passthrough Route Plane
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-02
 
