@@ -1848,6 +1848,27 @@ function projectActionPathKey(
   return { matched: true, key: decoded ? (validateProjectKey(decoded) ?? undefined) : undefined };
 }
 
+/** Matches /bridge/projects/:key/conversation/actions/:actionId/{confirm|dispatch} */
+function projectConversationActionPath(pathname: string): { matched: true; key: string; actionId: string; sub: 'confirm' | 'dispatch' } | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  const parts = rest.split('/');
+  if (parts.length !== 5 || parts[1] !== 'conversation' || parts[2] !== 'actions') return { matched: false };
+  const sub = parts[4];
+  if (sub !== 'confirm' && sub !== 'dispatch') return { matched: false };
+  try {
+    return {
+      matched: true,
+      key: decodeURIComponent(parts[0]).trim(),
+      actionId: decodeURIComponent(parts[3]).trim(),
+      sub,
+    };
+  } catch {
+    return { matched: true, key: '', actionId: '', sub: sub as 'confirm' | 'dispatch' };
+  }
+}
+
 function resolveConversationRouteKind(endpoint: AgentEndpoint): { kind: ConversationRouteKind; status: ConversationPairingStatus } {
   if (endpoint.id === 'workbuddy' && endpoint.capabilities.canExecute) {
     return { kind: 'workbuddy-execution', status: 'ready' };
@@ -3441,6 +3462,55 @@ export async function handleBridgeRequest(
 
       runtime.persist();
       return created({ events: [userEvent, bridgeEvent], actions });
+    }
+
+    return error(405, 'Method not allowed');
+  }
+
+  // ── Conversation Actions ──
+
+  const conversationActionPath = projectConversationActionPath(pathname);
+  if (conversationActionPath.matched) {
+    if (!conversationActionPath.key || !conversationActionPath.actionId) return error(400, 'Invalid conversation action path');
+    const project = runtime.projectStore.get(conversationActionPath.key);
+    if (!project) return error(404, 'Project not found');
+    const action = runtime.conversationActionStore.get(conversationActionPath.actionId);
+    if (!action || action.projectId !== conversationActionPath.key) return error(404, 'Conversation action not found');
+    if (project.archivedAt) return error(409, 'Cannot modify conversation action in archived project');
+    if (method !== 'POST') return error(405, 'Method not allowed');
+
+    if (conversationActionPath.sub === 'confirm') {
+      if (action.routeKind === 'review-command') {
+        if (!action.linkedReviewId) return error(409, 'Conversation action has no linked review');
+        const confirmedReview = runtime.pendingReviewStore.confirm(action.linkedReviewId);
+        if (!confirmedReview) return error(409, 'Linked review cannot be confirmed');
+        const confirmedAction = runtime.conversationActionStore.confirm(action.id);
+        runtime.persist();
+        return ok({ action: confirmedAction, review: confirmedReview });
+      }
+      const confirmedAction = runtime.conversationActionStore.confirm(action.id);
+      if (!confirmedAction) return error(409, 'Conversation action cannot be confirmed');
+      runtime.persist();
+      return ok({ action: confirmedAction });
+    }
+
+    if (conversationActionPath.sub === 'dispatch') {
+      if (action.status !== 'confirmed') return error(409, 'Conversation action must be confirmed before dispatch');
+      const dispatching = runtime.conversationActionStore.markDispatching(action.id);
+      if (!dispatching) return error(409, 'Conversation action cannot dispatch');
+      if (action.routeKind === 'review-command') {
+        if (!action.linkedReviewId) return error(409, 'Conversation action has no linked review');
+        const review = runtime.pendingReviewStore.get(action.linkedReviewId);
+        if (!review || review.status !== 'confirmed') return error(409, 'Linked review must be confirmed');
+        runtime.conversationActionStore.markQueued(action.id, action.linkedReviewId);
+        runtime.persist();
+        return ok({
+          action: runtime.conversationActionStore.get(action.id),
+          review,
+          message: 'Review action is confirmed. Use /bridge/reviews/dispatch for the governed CLI run.',
+        });
+      }
+      return error(409, `Conversation action route ${action.routeKind} cannot dispatch yet`);
     }
 
     return error(405, 'Method not allowed');

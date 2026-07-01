@@ -100,3 +100,26 @@ test('review-command conversation creates a previewed review action', async () =
   assert.equal(review.status, 'previewed');
   assert.equal(review.prompt, 'review the current README plan');
 });
+
+// --- Task 4: Conversation Action Confirm And Dispatch Routes ---
+
+test('conversation review action confirm and dispatch use existing review gates', async () => {
+  const runtime = createBridgeRuntime();
+  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
+    sourceEndpointId: 'chatgpt-web',
+    targetEndpointId: 'claude-code-command',
+  });
+  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
+    text: 'review this safely',
+  });
+  const action = created.payload.actions[0];
+
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {});
+  assert.equal(confirmed.statusCode, 200);
+  assert.equal(confirmed.payload.action.status, 'confirmed');
+  assert.equal(runtime.pendingReviewStore.get(action.linkedReviewId).status, 'confirmed');
+
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {});
+  assert.equal(dispatched.statusCode, 200);
+  assert.equal(dispatched.payload.action.status === 'queued' || dispatched.payload.action.status === 'returned', true);
+});
