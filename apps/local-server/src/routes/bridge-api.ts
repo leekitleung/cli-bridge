@@ -105,6 +105,12 @@ import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
+export type BridgeAuthKind = 'console-cookie' | 'pairing-token' | 'extension-session';
+
+export interface BridgeAuthContext {
+  kind: BridgeAuthKind;
+}
+
 // Maps a review target endpoint id to its command adapter factory. Only
 // review-only command endpoints are runnable; anything else is rejected by
 // capability gating before reaching here.
@@ -2291,6 +2297,7 @@ export async function handleBridgeRequest(
   pathname: string,
   request: IncomingMessage,
   query?: URLSearchParams,
+  authContext?: BridgeAuthContext,
 ): Promise<BridgeResult> {
   if (!query && pathname.includes('?')) {
     const parsedPath = new URL(`http://cli-bridge.local${pathname}`);
@@ -3483,6 +3490,9 @@ export async function handleBridgeRequest(
 
   const conversationActionPath = projectConversationActionPath(pathname);
   if (conversationActionPath.matched) {
+    if (authContext?.kind !== 'console-cookie') {
+      return error(403, 'Conversation action confirmation requires local Console session');
+    }
     if (!conversationActionPath.key || !conversationActionPath.actionId) return error(400, 'Invalid conversation action path');
     const project = runtime.projectStore.get(conversationActionPath.key);
     if (!project) return error(404, 'Project not found');

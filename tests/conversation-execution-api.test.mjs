@@ -44,9 +44,11 @@ function jsonRequest(body) {
   return gen();
 }
 
-async function call(runtime, method, path, body) {
-  return handleBridgeRequest(runtime, method, path, jsonRequest(body));
+async function call(runtime, method, path, body, authContext) {
+  return handleBridgeRequest(runtime, method, path, jsonRequest(body), undefined, authContext);
 }
+
+const CONSOLE_AUTH = { kind: 'console-cookie' };
 
 test('conversation actions are returned with conversation messages and survive reload', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'conversation-actions-'));
@@ -114,12 +116,12 @@ test('conversation review action confirm and dispatch use existing review gates'
   });
   const action = created.payload.actions[0];
 
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {});
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
   assert.equal(confirmed.statusCode, 200);
   assert.equal(confirmed.payload.action.status, 'confirmed');
   assert.equal(runtime.pendingReviewStore.get(action.linkedReviewId).status, 'confirmed');
 
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {});
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.action.status === 'queued' || dispatched.payload.action.status === 'returned', true);
 });
@@ -139,11 +141,11 @@ test('workbuddy conversation action confirms and queues a WorkBuddy inbox task',
   assert.equal(action.routeKind, 'workbuddy-execution');
   assert.equal(action.status, 'previewed');
 
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {});
+  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
   assert.equal(confirmed.statusCode, 200);
   assert.equal(confirmed.payload.action.status, 'confirmed');
 
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {});
+  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.action.status, 'queued');
   assert.equal(typeof dispatched.payload.task.taskId, 'string');

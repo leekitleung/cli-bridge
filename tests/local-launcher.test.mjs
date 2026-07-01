@@ -107,6 +107,82 @@ test('extension claim nonce can be used once to obtain extension session token',
   }
 });
 
+test('extension session token cannot confirm or dispatch conversation actions', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    const html = await consoleRes.text();
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce, 'expected extension claim nonce');
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+    const claimPayload = await claim.json();
+
+    const consoleHeaders = {
+      'content-type': 'application/json',
+      cookie,
+      origin: handle.url,
+    };
+    const extensionHeaders = {
+      'content-type': 'application/json',
+      [PAIRING_HEADER]: claimPayload.extensionSessionToken,
+    };
+
+    const pairing = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation-pairing`, {
+      method: 'PUT',
+      headers: consoleHeaders,
+      body: JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+    });
+    assert.equal(pairing.status, 200);
+
+    const message = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/messages`, {
+      method: 'POST',
+      headers: consoleHeaders,
+      body: JSON.stringify({ text: 'inspect the repo and propose the smallest fix' }),
+    });
+    assert.equal(message.status, 201);
+    const messagePayload = await message.json();
+    const actionId = messagePayload.actions?.[0]?.id;
+    assert.equal(typeof actionId, 'string');
+
+    const confirmByExtension = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/confirm`, {
+      method: 'POST',
+      headers: extensionHeaders,
+      body: JSON.stringify({}),
+    });
+    assert.equal(confirmByExtension.status, 403);
+
+    const dispatchByExtension = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/dispatch`, {
+      method: 'POST',
+      headers: extensionHeaders,
+      body: JSON.stringify({}),
+    });
+    assert.equal(dispatchByExtension.status, 403);
+
+    const confirmByConsole = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/confirm`, {
+      method: 'POST',
+      headers: consoleHeaders,
+      body: JSON.stringify({}),
+    });
+    assert.equal(confirmByConsole.status, 200);
+
+    const dispatchByConsole = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/dispatch`, {
+      method: 'POST',
+      headers: consoleHeaders,
+      body: JSON.stringify({}),
+    });
+    assert.equal(dispatchByConsole.status, 200);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
 test('local auto-pair revoke with extension token invalidates the local session', async () => {
   const handle = await startLocalServer(0);
   try {

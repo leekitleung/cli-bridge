@@ -28,6 +28,7 @@ import {
   handleBridgeRequest,
   isBridgePath,
   writeBridgeResult,
+  type BridgeAuthContext,
   type BridgeRuntime,
   type BridgeRuntimeOptions,
 } from './routes/bridge-api.ts';
@@ -103,7 +104,7 @@ export async function startLocalServer(
   function checkAuth(
     request: IncomingMessage,
     response: ServerResponse<IncomingMessage>,
-  ): boolean {
+  ): BridgeAuthContext | undefined {
     const origin = getRequestOrigin(request);
     const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
     if (!originCheck.ok) {
@@ -112,13 +113,13 @@ export async function startLocalServer(
         { status: 'error', message: originCheck.message },
         response,
       );
-      return false;
+      return undefined;
     }
 
     // 1. Console cookie auth (same-origin Console requests)
     const consoleSessionToken = parseConsoleSessionCookie(request);
     if (consoleSessionToken && autoPairStore.verifyConsoleSession(consoleSessionToken)) {
-      return true;
+      return { kind: 'console-cookie' };
     }
 
     // 2. Pairing token header auth (printed pairing token or extension session token)
@@ -129,15 +130,15 @@ export async function startLocalServer(
         { status: 'error', message: 'Missing pairing token' },
         response,
       );
-      return false;
+      return undefined;
     }
 
     if (verifyPairingToken(receivedToken, pairingToken)) {
-      return true;
+      return { kind: 'pairing-token' };
     }
 
     if (autoPairStore.verifyExtensionSession(receivedToken)) {
-      return true;
+      return { kind: 'extension-session' };
     }
 
     writeJson(
@@ -145,7 +146,7 @@ export async function startLocalServer(
       { status: 'error', message: 'Invalid pairing token' },
       response,
     );
-    return false;
+    return undefined;
   }
 
   const requestHandler: RequestListener = (request, response) => {
@@ -192,11 +193,12 @@ export async function startLocalServer(
     }
 
     if (isBridgePath(url.pathname)) {
-      if (!checkAuth(request, response)) {
+      const authContext = checkAuth(request, response);
+      if (!authContext) {
         return;
       }
 
-      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams)
+      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams, authContext)
         .then((result) => {
           writeBridgeResult(result, response);
         })
