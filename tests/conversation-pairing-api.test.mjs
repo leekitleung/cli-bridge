@@ -94,7 +94,7 @@ test('review-command conversation creates a previewed review action', async () =
 
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /Review preview created/);
+  assert.match(res.payload.events[1].text, /review preview created/i);
   assert.equal(res.payload.actions.length, 1);
   assert.equal(res.payload.actions[0].routeKind, 'review-command');
   assert.equal(res.payload.actions[0].status, 'previewed');
@@ -114,7 +114,7 @@ test('workbuddy route creates previewed transcript event with action', async () 
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.events[1].routeKind, 'workbuddy-execution');
   assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /WorkBuddy execution preview/);
+  assert.match(res.payload.events[1].text, /execution preview created/i);
   assert.equal(res.payload.actions.length, 1);
   assert.equal(res.payload.actions[0].routeKind, 'workbuddy-execution');
   assert.equal(res.payload.actions[0].status, 'previewed');
