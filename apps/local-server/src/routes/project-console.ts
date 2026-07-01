@@ -639,6 +639,7 @@ const store = {
   switchingProject: false,
   composerMode: (localStorage.getItem('cli-bridge-composer-mode') || 'project'),
   conversationEvents: [],
+  conversationActions: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2655,19 +2656,70 @@ function renderConversationTranscript() {
   const el = document.getElementById('conversation-transcript');
   if (!el) return;
   const events = store.conversationEvents || [];
-  if (!events.length) {
+  const actions = store.conversationActions || [];
+  if (!events.length && !actions.length) {
     el.innerHTML = store.composerMode === 'conversation'
       ? '<span class="unavailable">No conversation messages yet. Type a message and send.</span>'
       : '';
     return;
   }
-  el.innerHTML = events.map(event =>
+  const eventsHtml = events.map(event =>
     '<div class="timeline-entry"><div class="origin ' + (event.role === 'user' ? 'user' : 'system') + '">'
     + escapeHtml(event.role)
     + '</div><div class="body">' + escapeHtml(event.text)
     + '<div class="time"><span class="pill">' + escapeHtml(event.status) + '</span> '
     + escapeHtml(event.routeKind || '') + '</div></div></div>'
   ).join('');
+  const actionsHtml = actions.map(renderConversationAction).join('');
+  el.innerHTML = eventsHtml + actionsHtml;
+  bindConversationActionButtons();
+}
+
+function mergeConversationActions(existing, incoming) {
+  const byId = {};
+  existing.forEach(action => { byId[action.id] = action; });
+  incoming.forEach(action => { byId[action.id] = action; });
+  return Object.values(byId);
+}
+
+function renderConversationAction(action) {
+  const canConfirm = action.status === 'previewed';
+  const canDispatch = action.status === 'confirmed';
+  return '<div class="timeline-entry" data-conversation-action="' + escapeHtml(action.id) + '">'
+    + '<div class="origin system">action</div>'
+    + '<div class="body">' + escapeHtml(action.preview || action.routeKind)
+    + '<div class="time"><span class="pill">' + escapeHtml(action.status) + '</span> ' + escapeHtml(action.routeKind || '') + '</div>'
+    + '<div class="context-actions">'
+    + '<button data-conversation-action-confirm="' + escapeHtml(action.id) + '"' + (canConfirm ? '' : ' disabled') + '>Confirm</button>'
+    + '<button data-conversation-action-dispatch="' + escapeHtml(action.id) + '"' + (canDispatch ? '' : ' disabled') + '>Dispatch</button>'
+    + '</div></div>';
+}
+
+function bindConversationActionButtons() {
+  document.querySelectorAll('[data-conversation-action-confirm]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const actionId = button.getAttribute('data-conversation-action-confirm');
+      await runConversationAction(actionId, 'confirm');
+    });
+  });
+  document.querySelectorAll('[data-conversation-action-dispatch]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const actionId = button.getAttribute('data-conversation-action-dispatch');
+      await runConversationAction(actionId, 'dispatch');
+    });
+  });
+}
+
+async function runConversationAction(actionId, action) {
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/actions/' + encodeURIComponent(actionId) + '/' + action, 'POST', {});
+  if (!res.ok) {
+    appendCommandMessage(action + ' conversation action', 'Conversation action failed: ' + escapeHtml(res.data?.message || res.status), true);
+    setCommandStatus('conversation action failed', true);
+    return;
+  }
+  store.conversationActions = mergeConversationActions(store.conversationActions || [], [res.data.action]);
+  renderConversationTranscript();
+  setCommandStatus('conversation action ' + action + 'ed');
 }
 
 async function sendConversationMessage(input) {
@@ -2683,6 +2735,7 @@ async function sendConversationMessage(input) {
     return;
   }
   store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
+  store.conversationActions = mergeConversationActions(store.conversationActions || [], res.data?.actions || []);
   renderConversationTranscript();
   setCommandStatus('conversation routed');
 }
