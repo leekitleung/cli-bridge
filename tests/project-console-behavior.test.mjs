@@ -2225,8 +2225,8 @@ test('conversation mode auto-dispatches previewed workbuddy actions after pairin
     status: 201,
     payload: {
       events: [
-        { id: 'u1', role: 'user', text: 'inspect this', status: 'queued', routeKind: 'workbuddy-execution' },
-        { id: 'b1', role: 'bridge', text: 'WorkBuddy preview created', status: 'awaiting-manual-confirmation', routeKind: 'workbuddy-execution' },
+        { id: 'u1', role: 'user', text: 'inspect this', status: 'queued', routeKind: 'workbuddy-execution', kind: 'user_message', visibility: 'user' },
+        { id: 'b1', role: 'bridge', text: 'WorkBuddy preview created', status: 'awaiting-manual-confirmation', routeKind: 'workbuddy-execution', kind: 'status', visibility: 'user' },
       ],
       actions: [
         { id: 'act-1', status: 'previewed', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' },
@@ -2329,4 +2329,85 @@ test('local auto-pairing does not add URL token parsing or localStorage token st
   // using it as a localStorage key).
   assert.equal(consoleSource.includes("localStorage.setItem('cli-bridge-pairing-token'"), false);
   assert.equal(consoleSource.includes("localStorage.getItem('cli-bridge-pairing-token'"), false);
+});
+
+// ── EX-1 Conversation Transcript Visibility ──
+
+/** Replicates the combined transcript visibility filter from project-console.ts. */
+function isConversationBridgeAdminEvent(event) {
+  return event
+    && event.role === 'bridge'
+    && event.status === 'awaiting-manual-confirmation'
+    && /preview created|auto-dispatch/i.test(String(event.text || ''));
+}
+
+function isTranscriptVisible(event) {
+  return event.visibility === 'user' && !isConversationBridgeAdminEvent(event);
+}
+
+test('visibility filter: user_message with visibility user passes through', () => {
+  const event = { role: 'user', kind: 'user_message', visibility: 'user', text: 'hello', status: 'queued' };
+  assert.equal(isTranscriptVisible(event), true);
+});
+
+test('visibility filter: executor_output with visibility user passes through', () => {
+  const event = { role: 'target', kind: 'executor_output', visibility: 'user', text: 'output', status: 'returned' };
+  assert.equal(isTranscriptVisible(event), true);
+});
+
+test('visibility filter: internal events are excluded from user transcript', () => {
+  const instruction = { role: 'bridge', kind: 'instruction', visibility: 'internal', text: 'system instruction', status: 'queued' };
+  const statusInternal = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'internal status', status: 'queued' };
+  assert.equal(isTranscriptVisible(instruction), false);
+  assert.equal(isTranscriptVisible(statusInternal), false);
+});
+
+test('visibility filter: legacy admin events are still hidden', () => {
+  const legacyAdmin = { role: 'bridge', status: 'awaiting-manual-confirmation', text: 'preview created', visibility: 'user' };
+  assert.equal(isTranscriptVisible(legacyAdmin), false);
+
+  const legacyAutoDispatch = { role: 'bridge', status: 'awaiting-manual-confirmation', text: 'auto-dispatch', visibility: 'user' };
+  assert.equal(isTranscriptVisible(legacyAutoDispatch), false);
+});
+
+test('visibility filter: non-admin bridge user-visible event passes through', () => {
+  const statusMsg = { role: 'bridge', kind: 'status', visibility: 'user', text: 'connected', status: 'queued' };
+  assert.equal(isTranscriptVisible(statusMsg), true);
+});
+
+test('visibility filter: event without visibility field defaults are handled at store level', () => {
+  // Events without visibility field get defaults in store hydrateEvent/append.
+  // The project console should still filter safely — an event without a visibility
+  // field would be undefined !== 'user', so it would be excluded.
+  const eventWithoutVisibility = { role: 'target', kind: 'executor_output', text: 'output', status: 'returned' };
+  assert.equal(eventWithoutVisibility.visibility, undefined);
+  assert.equal(eventWithoutVisibility.visibility === 'user', false);
+  assert.equal(isTranscriptVisible(eventWithoutVisibility), false);
+});
+
+// ── Integration: visibility filter works for mock conversation transcript ──
+
+// ── EX-1: Source-level visibility filter checks ──
+
+test('renderConversationTranscript includes visibility filter', () => {
+  const consoleSource = readFileSync(
+    resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
+    'utf8',
+  );
+  // Verify the visibility filter is present alongside the legacy admin filter
+  assert.ok(
+    consoleSource.includes("event.visibility === 'user' && !isConversationBridgeAdminEvent(event)"),
+    'expected visibility + legacy admin filter expression',
+  );
+});
+
+test('renderConversationTranscript preserved legacy admin filter', () => {
+  const consoleSource = readFileSync(
+    resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
+    'utf8',
+  );
+  assert.ok(
+    consoleSource.includes('isConversationBridgeAdminEvent'),
+    'expected legacy admin event filter preserved',
+  );
 });

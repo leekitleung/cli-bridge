@@ -2840,7 +2840,7 @@ function renderConversationTranscript() {
       : '';
     return;
   }
-  const visibleEvents = events.filter(event => !isConversationBridgeAdminEvent(event));
+  const visibleEvents = events.filter(event => event.visibility === 'user' && !isConversationBridgeAdminEvent(event));
   const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
   const pendingHtml = renderConversationPendingState(actions);
   el.innerHTML = eventsHtml + pendingHtml;

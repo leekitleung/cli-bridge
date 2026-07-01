@@ -113,6 +113,12 @@ function snapshotPath(dataDir: string): string {
   return resolve(dataDir, SNAPSHOT_FILENAME);
 }
 
+function hydrateTranscriptEventKind(role: unknown): 'user_message' | 'instruction' | 'executor_output' | 'status' {
+  if (role === 'user') return 'user_message';
+  if (role === 'target') return 'executor_output';
+  return 'status';
+}
+
 function parseSnapshot(text: string): SnapshotReadResult {
   let parsed: Record<string, unknown>;
   try {
@@ -152,7 +158,13 @@ function parseSnapshot(text: string): SnapshotReadResult {
       teamPresets: Array.isArray(parsed.teamPresets) ? parsed.teamPresets : undefined,
       bindingSnapshots: Array.isArray(parsed.bindingSnapshots) ? parsed.bindingSnapshots : undefined,
       conversationPairings: Array.isArray(parsed.conversationPairings) ? parsed.conversationPairings : undefined,
-      conversationTranscriptEvents: Array.isArray(parsed.conversationTranscriptEvents) ? parsed.conversationTranscriptEvents : undefined,
+      conversationTranscriptEvents: Array.isArray(parsed.conversationTranscriptEvents)
+        ? (parsed.conversationTranscriptEvents as any[]).map((e: any) => ({
+            ...e,
+            kind: e.kind ?? hydrateTranscriptEventKind(e.role),
+            visibility: e.visibility ?? 'user',
+          }))
+        : undefined,
       conversationActions: Array.isArray(parsed.conversationActions) ? parsed.conversationActions : undefined,
       workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],

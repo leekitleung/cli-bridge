@@ -9,6 +9,17 @@ export interface ConversationTranscriptEvent {
   status: 'draft' | 'queued' | 'awaiting-manual-confirmation' | 'returned' | 'failed' | 'not-implemented';
   routeKind: ConversationRouteKind;
   createdAt: number;
+  kind: 'user_message' | 'instruction' | 'executor_output' | 'status';
+  visibility: 'user' | 'internal';
+}
+
+function deriveKind(role: string): ConversationTranscriptEvent['kind'] {
+  switch (role) {
+    case 'user': return 'user_message';
+    case 'target': return 'executor_output';
+    case 'bridge': return 'status';
+    default: return 'status';
+  }
 }
 
 function clone<T>(value: T): T {
@@ -18,9 +29,13 @@ function clone<T>(value: T): T {
 export class InMemoryConversationTranscriptStore {
   private readonly events = new Map<string, ConversationTranscriptEvent>();
 
-  append(event: Omit<ConversationTranscriptEvent, 'id' | 'createdAt'> & { id?: string; createdAt?: number }): ConversationTranscriptEvent {
+  append(event: Omit<ConversationTranscriptEvent, 'id' | 'createdAt' | 'kind' | 'visibility'> & { id?: string; createdAt?: number; kind?: ConversationTranscriptEvent['kind']; visibility?: ConversationTranscriptEvent['visibility'] }): ConversationTranscriptEvent {
+    const resolvedKind = event.kind ?? deriveKind(event.role);
+    const resolvedVisibility = event.visibility ?? (resolvedKind === 'instruction' ? 'internal' : 'user');
     const stored: ConversationTranscriptEvent = {
       ...event,
+      kind: resolvedKind,
+      visibility: resolvedVisibility,
       id: event.id ?? `conv-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       createdAt: event.createdAt ?? Date.now(),
     };
@@ -46,6 +61,8 @@ export class InMemoryConversationTranscriptStore {
 
   hydrateEvent(event: ConversationTranscriptEvent): void {
     if (!event || typeof event.id !== 'string' || typeof event.projectId !== 'string') return;
-    this.events.set(event.id, clone(event));
+    const resolvedKind = event.kind ?? deriveKind(event.role);
+    const resolvedVisibility = event.visibility ?? 'user';
+    this.events.set(event.id, clone({ ...event, kind: resolvedKind, visibility: resolvedVisibility }));
   }
 }
