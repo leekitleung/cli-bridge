@@ -40,6 +40,7 @@ import type { ConversationTranscriptEvent } from '../storage/conversation-transc
 import { InMemoryConversationActionStore } from '../storage/conversation-action-store.ts';
 import { InMemoryConversationInstructionStore } from '../storage/conversation-instruction-store.ts';
 import type { ConversationInstructionPacket } from '../storage/conversation-instruction-store.ts';
+import { InMemoryConversationExecutionStore } from '../storage/conversation-execution-store.ts';
 import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
@@ -179,6 +180,7 @@ export interface BridgeRuntime {
   conversationTranscriptStore: InMemoryConversationTranscriptStore;
   conversationActionStore: InMemoryConversationActionStore;
   conversationInstructionStore: InMemoryConversationInstructionStore;
+  conversationExecutionStore: InMemoryConversationExecutionStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
@@ -1479,6 +1481,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const conversationTranscriptStore = new InMemoryConversationTranscriptStore();
   const conversationActionStore = new InMemoryConversationActionStore();
   const conversationInstructionStore = new InMemoryConversationInstructionStore();
+  const conversationExecutionStore = new InMemoryConversationExecutionStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
@@ -1564,6 +1567,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const p of read.snapshot.conversationInstructionPackets ?? []) {
         try { conversationInstructionStore.hydratePacket(p); } catch { }
       }
+      for (const p of read.snapshot.conversationExecutionPackets ?? []) {
+        try { conversationExecutionStore.hydratePacket(p); } catch { }
+      }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
@@ -1611,6 +1617,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       conversationTranscriptEvents: conversationTranscriptStore.exportEvents(),
       conversationActions: conversationActionStore.exportActions(),
       conversationInstructionPackets: conversationInstructionStore.exportPackets(),
+      conversationExecutionPackets: conversationExecutionStore.exportPackets(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
       automationLoopRuns: automationLoopStore.exportLoops(),
@@ -1657,6 +1664,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     conversationTranscriptStore,
     conversationActionStore,
     conversationInstructionStore,
+    conversationExecutionStore,
     workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -3219,14 +3227,37 @@ export async function handleBridgeRequest(
       const updatedAction = outcomeOk
         ? runtime.conversationActionStore.markWorkBuddyReturned(conversationAction.id)
         : runtime.conversationActionStore.fail(conversationAction.id, result.failureReason ?? 'workbuddy-execution-failed');
-      const resultText = outcomeOk
-        ? formatWorkBuddyConversationResult(result.output, result.stdout)
-        : (result.failureReason ?? result.stderr ?? 'WorkBuddy execution failed');
-      const event = runtime.conversationTranscriptStore.append({
+
+      // Find linked instruction packet via userEventId.
+      const instructionPacket = runtime.conversationInstructionStore.findByUserEventId(conversationAction.userEventId);
+
+      // Create internal execution packet BEFORE transcript event.
+      const executionPacket = runtime.conversationExecutionStore.create({
         projectId: conversationAction.projectId,
         pairingId: `${conversationAction.sourceEndpointId}→${conversationAction.targetEndpointId}`,
+        instructionPacketId: instructionPacket?.id,
+        taskId,
+        ok: outcomeOk,
+        output: result.output,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        failureReason: result.failureReason,
+        durationMs: result.durationMs ?? 0,
+      });
+
+      // Transcript event text derived from execution packet fields.
+      const transcriptText = executionPacket.ok
+        ? formatWorkBuddyConversationResult(executionPacket.output, executionPacket.stdout)
+        : (executionPacket.failureReason ?? executionPacket.stderr ?? 'WorkBuddy execution failed');
+
+      const event = runtime.conversationTranscriptStore.append({
+        projectId: conversationAction.projectId,
+        pairingId: executionPacket.pairingId,
         role: 'target',
-        text: resultText,
+        kind: 'executor_output',
+        visibility: 'user',
+        text: transcriptText,
         status: outcomeOk ? 'returned' : 'failed',
         routeKind: conversationAction.routeKind,
       });

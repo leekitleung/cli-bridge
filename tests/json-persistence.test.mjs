@@ -787,3 +787,70 @@ test('snapshot roundtrip preserves instruction packets', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('conversation execution packets persist across runtime restarts', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({ dataDir: dir });
+    const packet = first.conversationExecutionStore.create({
+      projectId: 'alpha',
+      pairingId: 'chatgpt-web→workbuddy',
+      taskId: 'task-abc',
+      ok: true,
+      output: { result: 'done' },
+      stdout: 'output here',
+      exitCode: 0,
+      durationMs: 1234,
+    });
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const packets = second.conversationExecutionStore.exportPackets();
+    assert.equal(packets.length, 1);
+    assert.equal(packets[0].id, packet.id);
+    assert.equal(packets[0].taskId, 'task-abc');
+    assert.equal(packets[0].ok, true);
+    assert.deepEqual(packets[0].output, { result: 'done' });
+    assert.equal(packets[0].durationMs, 1234);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot roundtrip preserves execution packets', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const snapshot = buildSnapshot({
+      packets: [], auditEvents: [], pendingPrompts: [],
+      goals: [], plans: [], projects: [],
+      automationBindings: [], workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [], workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [], teams: [], teamArtifacts: [],
+      conversationExecutionPackets: [{
+        id: 'exec-1',
+        projectId: 'alpha',
+        pairingId: 'a→b',
+        taskId: 'task-1',
+        ok: false,
+        failureReason: 'command not found',
+        stderr: 'error output',
+        exitCode: 127,
+        durationMs: 50,
+        createdAt: 1793000000000,
+      }],
+    });
+    store.write(snapshot);
+    const read = store.read().snapshot;
+    assert.ok(read, 'snapshot exists');
+    assert.equal(Array.isArray(read.conversationExecutionPackets), true);
+    assert.equal(read.conversationExecutionPackets.length, 1);
+    assert.equal(read.conversationExecutionPackets[0].id, 'exec-1');
+    assert.equal(read.conversationExecutionPackets[0].taskId, 'task-1');
+    assert.equal(read.conversationExecutionPackets[0].ok, false);
+    assert.equal(read.conversationExecutionPackets[0].failureReason, 'command not found');
+    assert.equal(read.conversationExecutionPackets[0].exitCode, 127);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

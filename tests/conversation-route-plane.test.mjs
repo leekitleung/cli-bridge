@@ -196,6 +196,199 @@ test('instruction packet is created internally when a conversation message is po
   assert.ok(packets[0].payloadHash.length > 0);
 });
 
+// ── EX-3: Execution Packets — internal execution packet store ──
+
+import { InMemoryConversationExecutionStore } from '../apps/local-server/src/storage/conversation-execution-store.ts';
+
+// ── Unit: execution store contract ──
+
+test('execution store creates a packet with all fields', () => {
+  const store = new InMemoryConversationExecutionStore();
+  const packet = store.create({
+    projectId: 'cli-bridge',
+    pairingId: 'chatgpt-web→workbuddy',
+    taskId: 'task-123',
+    ok: true,
+    output: { result: 'done' },
+    stdout: 'all tests passed',
+    stderr: '',
+    exitCode: 0,
+    failureReason: undefined,
+    durationMs: 1500,
+  });
+
+  assert.equal(typeof packet.id, 'string');
+  assert.ok(packet.id.length > 0);
+  assert.equal(packet.projectId, 'cli-bridge');
+  assert.equal(packet.pairingId, 'chatgpt-web→workbuddy');
+  assert.equal(packet.taskId, 'task-123');
+  assert.equal(packet.ok, true);
+  assert.deepEqual(packet.output, { result: 'done' });
+  assert.equal(packet.stdout, 'all tests passed');
+  assert.equal(packet.stderr, '');
+  assert.equal(packet.exitCode, 0);
+  assert.equal(packet.failureReason, undefined);
+  assert.equal(packet.durationMs, 1500);
+  assert.equal(typeof packet.createdAt, 'number');
+  assert.ok(packet.createdAt > 0);
+});
+
+test('execution store create with no durationMs defaults to 0', () => {
+  const store = new InMemoryConversationExecutionStore();
+  const packet = store.create({
+    projectId: 'proj',
+    pairingId: 'a→b',
+    taskId: 't1',
+    ok: false,
+    failureReason: 'timeout',
+    durationMs: 0,
+  });
+  assert.equal(packet.durationMs, 0);
+});
+
+test('get returns a single execution packet', () => {
+  const store = new InMemoryConversationExecutionStore();
+  const packet = store.create({
+    projectId: 'proj', pairingId: 'a→b', taskId: 't1', ok: true, durationMs: 100,
+  });
+
+  const found = store.get(packet.id);
+  assert.ok(found);
+  assert.equal(found.id, packet.id);
+  assert.equal(found.taskId, 't1');
+
+  assert.equal(store.get('nonexistent'), undefined);
+});
+
+test('findByTaskId returns correct packet', () => {
+  const store = new InMemoryConversationExecutionStore();
+  store.create({ projectId: 'proj', pairingId: 'a→b', taskId: 't1', ok: true, durationMs: 100 });
+  const p2 = store.create({ projectId: 'proj', pairingId: 'a→b', taskId: 't2', ok: false, failureReason: 'error', durationMs: 200 });
+
+  const found = store.findByTaskId('t2');
+  assert.ok(found);
+  assert.equal(found.id, p2.id);
+  assert.equal(found.failureReason, 'error');
+
+  assert.equal(store.findByTaskId('nonexistent'), undefined);
+});
+
+test('listByProject returns packets sorted by createdAt', async () => {
+  const store = new InMemoryConversationExecutionStore();
+  const a = store.create({ projectId: 'alpha', pairingId: 'p1→p2', taskId: 't1', ok: true, durationMs: 100 });
+  await new Promise(r => setTimeout(r, 5));
+  const b = store.create({ projectId: 'alpha', pairingId: 'p1→p2', taskId: 't2', ok: true, durationMs: 200 });
+
+  store.create({ projectId: 'beta', pairingId: 'p3→p4', taskId: 't3', ok: true, durationMs: 300 });
+
+  const list = store.listByProject('alpha');
+  assert.equal(list.length, 2);
+  assert.equal(list[0].id, a.id);
+  assert.equal(list[1].id, b.id);
+});
+
+test('exportPackets returns all execution packets', () => {
+  const store = new InMemoryConversationExecutionStore();
+  store.create({ projectId: 'alpha', pairingId: 'a→b', taskId: 't1', ok: true, durationMs: 100 });
+  store.create({ projectId: 'beta', pairingId: 'c→d', taskId: 't2', ok: false, failureReason: 'fail', durationMs: 200 });
+
+  const all = store.exportPackets();
+  assert.equal(all.length, 2);
+});
+
+test('persistence roundtrip: export → hydrate into new store → verify', () => {
+  const original = new InMemoryConversationExecutionStore();
+  const a = original.create({
+    projectId: 'alpha', pairingId: 'a→b', taskId: 't1', ok: true,
+    output: { result: 'ok' }, stdout: 'output', stderr: '', exitCode: 0, durationMs: 100,
+  });
+  const b = original.create({
+    projectId: 'beta', pairingId: 'c→d', taskId: 't2', ok: false,
+    failureReason: 'timeout', stderr: 'killed', exitCode: 1, durationMs: 5000,
+  });
+
+  const exported = original.exportPackets();
+
+  const restored = new InMemoryConversationExecutionStore();
+  for (const packet of exported) {
+    restored.hydratePacket(packet);
+  }
+
+  const ra = restored.get(a.id);
+  assert.equal(ra.taskId, 't1');
+  assert.equal(ra.ok, true);
+  assert.deepEqual(ra.output, { result: 'ok' });
+  assert.equal(ra.stdout, 'output');
+
+  const rb = restored.get(b.id);
+  assert.equal(rb.ok, false);
+  assert.equal(rb.failureReason, 'timeout');
+  assert.equal(rb.stderr, 'killed');
+  assert.equal(rb.exitCode, 1);
+});
+
+test('hydratePacket skips invalid packets silently', () => {
+  const store = new InMemoryConversationExecutionStore();
+
+  // Missing id
+  store.hydratePacket({ projectId: 'x', pairingId: 'p', taskId: 't', ok: true, durationMs: 0, createdAt: 1 });
+  // Missing projectId
+  store.hydratePacket({ id: 'id1', pairingId: 'p', taskId: 't', ok: true, durationMs: 0, createdAt: 1 });
+
+  assert.equal(store.exportPackets().length, 0);
+});
+
+// ── Unit: execution packet → transcript text derivation ──
+
+test('transcript text derived from ok execution packet uses stdout', () => {
+  // Simulates the derivation logic in bridge-api.ts
+  const packet = {
+    ok: true,
+    output: { result: 'done' },
+    stdout: 'formatted output here',
+  };
+  const text = packet.ok
+    ? (`WorkBuddy completed.\nstdout:\n${packet.stdout}`.trim() || JSON.stringify(packet.output))
+    : (packet.failureReason ?? packet.stderr ?? 'WorkBuddy execution failed');
+  assert.ok(text.includes('formatted output here'));
+});
+
+test('transcript text derived from failed execution packet uses failureReason', () => {
+  const packet = {
+    ok: false,
+    failureReason: 'command not found',
+    stderr: 'error details',
+  };
+  const text = packet.ok
+    ? ('dummy')
+    : (packet.failureReason ?? packet.stderr ?? 'WorkBuddy execution failed');
+  assert.equal(text, 'command not found');
+});
+
+test('transcript text derived from failed execution packet falls back to stderr', () => {
+  const packet = {
+    ok: false,
+    failureReason: undefined,
+    stderr: 'process killed by signal',
+  };
+  const text = packet.ok
+    ? ('dummy')
+    : (packet.failureReason ?? packet.stderr ?? 'WorkBuddy execution failed');
+  assert.equal(text, 'process killed by signal');
+});
+
+test('transcript text derived from failed execution packet falls back to default message', () => {
+  const packet = {
+    ok: false,
+    failureReason: undefined,
+    stderr: undefined,
+  };
+  const text = packet.ok
+    ? ('dummy')
+    : (packet.failureReason ?? packet.stderr ?? 'WorkBuddy execution failed');
+  assert.equal(text, 'WorkBuddy execution failed');
+});
+
 function jsonBody(body) {
   const text = body === undefined ? '' : JSON.stringify(body);
   async function* gen() {

@@ -59,6 +59,13 @@ export class InMemoryConversationInstructionStore {
     return packet ? clone(packet) : undefined;
   }
 
+  findByUserEventId(userEventId: string): ConversationInstructionPacket | undefined {
+    for (const packet of this.packets.values()) {
+      if (packet.userEventId === userEventId) return clone(packet);
+    }
+    return undefined;
+  }
+
   exportPackets(): ConversationInstructionPacket[] {
     return Array.from(this.packets.values(), clone);
   }

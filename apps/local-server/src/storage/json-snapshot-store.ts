@@ -90,6 +90,7 @@ export interface BridgeSnapshot {
   conversationTranscriptEvents?: import('./conversation-transcript-store.ts').ConversationTranscriptEvent[];
   conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   conversationInstructionPackets?: import('./conversation-instruction-store.ts').ConversationInstructionPacket[];
+  conversationExecutionPackets?: import('./conversation-execution-store.ts').ConversationExecutionPacket[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
   /** ADR-0028: bounded automation work-cycle loop runs and cycles. */
@@ -168,6 +169,7 @@ function parseSnapshot(text: string): SnapshotReadResult {
         : undefined,
       conversationActions: Array.isArray(parsed.conversationActions) ? parsed.conversationActions : undefined,
       conversationInstructionPackets: Array.isArray(parsed.conversationInstructionPackets) ? parsed.conversationInstructionPackets : undefined,
+      conversationExecutionPackets: Array.isArray(parsed.conversationExecutionPackets) ? parsed.conversationExecutionPackets : undefined,
       workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
       automationLoopRuns: Array.isArray(parsed.automationLoopRuns) ? parsed.automationLoopRuns : undefined,
@@ -338,6 +340,7 @@ export interface BuildSnapshotInput {
   conversationTranscriptEvents?: import('./conversation-transcript-store.ts').ConversationTranscriptEvent[];
   conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   conversationInstructionPackets?: import('./conversation-instruction-store.ts').ConversationInstructionPacket[];
+  conversationExecutionPackets?: import('./conversation-execution-store.ts').ConversationExecutionPacket[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
   automationLoopRuns?: AutomationLoopRun[];
@@ -371,6 +374,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     conversationTranscriptEvents: input.conversationTranscriptEvents ?? [],
     conversationActions: input.conversationActions ?? [],
     conversationInstructionPackets: input.conversationInstructionPackets ?? [],
+    conversationExecutionPackets: input.conversationExecutionPackets ?? [],
     workbuddyTasks: input.workbuddyTasks ?? [],
     verificationRunRecords: input.verificationRunRecords ?? [],
     automationLoopRuns: input.automationLoopRuns ?? [],

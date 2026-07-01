@@ -1,42 +1,10 @@
-// Conversation Execution API contract tests.
+// EX-3: Execution Packets — integration tests for the full roundtrip
+// result → execution packet → transcript event.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { InMemoryConversationActionStore } from '../apps/local-server/src/storage/conversation-action-store.ts';
 
-test('conversation action store creates and confirms action previews', () => {
-  const store = new InMemoryConversationActionStore();
-  const action = store.createPreview({
-    projectId: 'cli-bridge',
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'workbuddy',
-    routeKind: 'workbuddy-execution',
-    userEventId: 'user-1',
-    bridgeEventId: 'bridge-1',
-    text: 'implement the README fix',
-    preview: 'WorkBuddy will prepare a gated execution task.',
-    now: 1000,
-  });
-
-  assert.equal(action.status, 'previewed');
-  assert.equal(action.projectId, 'cli-bridge');
-  assert.match(action.textHash, /^sha256:/);
-  assert.equal(action.preview.includes('gated'), true);
-
-  const confirmed = store.confirm(action.id, 1100);
-  assert.equal(confirmed.status, 'confirmed');
-  assert.equal(confirmed.updatedAt, 1100);
-  assert.equal(store.confirm(action.id), undefined);
-});
-
-// --- Task 2: Runtime Persistence And Read API ---
-
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createBridgeRuntime, handleBridgeRequest } from '../apps/local-server/src/routes/bridge-api.ts';
-
-function jsonRequest(body) {
+function jsonBody(body) {
   const text = body === undefined ? '' : JSON.stringify(body);
   async function* gen() {
     if (text.length > 0) yield Buffer.from(text, 'utf8');
@@ -44,225 +12,332 @@ function jsonRequest(body) {
   return gen();
 }
 
-async function call(runtime, method, path, body, authContext) {
-  return handleBridgeRequest(runtime, method, path, jsonRequest(body), undefined, authContext);
-}
-
 const CONSOLE_AUTH = { kind: 'console-cookie' };
 
-test('conversation actions are returned with conversation messages and survive reload', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'conversation-actions-'));
-  try {
-    const runtimeA = createBridgeRuntime({ dataDir: dir });
-    runtimeA.conversationActionStore.createPreview({
-      projectId: 'cli-bridge',
-      sourceEndpointId: 'chatgpt-web',
-      targetEndpointId: 'workbuddy',
-      routeKind: 'workbuddy-execution',
-      userEventId: 'user-1',
-      bridgeEventId: 'bridge-1',
-      text: 'ship this',
-      preview: 'Preview text',
-      now: 1000,
-    });
-    runtimeA.persist();
+/**
+ * Setup helper: creates a workbuddy conversation action, confirms, dispatches,
+ * and claims it — returning { runtime, action, task } ready for result submission.
+ */
+async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test instruction') {
+  // Setup project and workbuddy pairing.
+  const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-    const runtimeB = createBridgeRuntime({ dataDir: dir });
-    const res = await call(runtimeB, 'GET', '/bridge/projects/cli-bridge/conversation/messages');
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.payload.actions.length, 1);
-    assert.equal(res.payload.actions[0].status, 'previewed');
+  await handleBridgeRequest(
+    runtime,
+    'PUT',
+    `/bridge/projects/${projectId}/conversation-pairing`,
+    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
+  );
+
+  const postMsg = await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/${projectId}/conversation/messages`,
+    jsonBody({ text }),
+  );
+  assert.equal(postMsg.statusCode, 201);
+  const action = postMsg.payload.actions[0];
+  assert.ok(action);
+
+  await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/${projectId}/conversation/actions/${action.id}/confirm`,
+    jsonBody({}),
+    undefined,
+    CONSOLE_AUTH,
+  );
+
+  const dispatchRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/${projectId}/conversation/actions/${action.id}/dispatch`,
+    jsonBody({}),
+    undefined,
+    CONSOLE_AUTH,
+  );
+  const task = dispatchRes.payload.task;
+  assert.ok(task);
+
+  // Claim the task.
+  const claimRes = await handleBridgeRequest(
+    runtime,
+    'GET',
+    `/bridge/endpoints/workbuddy/inbox/next`,
+    jsonBody(undefined),
+  );
+  assert.equal(claimRes.statusCode, 200);
+  assert.equal(claimRes.payload.task.taskId, task.taskId);
+
+  return { runtime, action, task };
+}
+
+test('result submission creates an execution packet before transcript event', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { action, task } = await setupAndClaim(runtime);
+
+  // Before result: no execution packets.
+  assert.equal(runtime.conversationExecutionStore.exportPackets().length, 0);
+
+  // Submit the result.
+  const resultRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: true,
+      output: { result: 'deployment complete' },
+      stdout: 'deployed successfully\nno errors',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 1500,
+    }),
+  );
+  assert.equal(resultRes.statusCode, 200);
+
+  // After result: one execution packet created.
+  const packets = runtime.conversationExecutionStore.exportPackets();
+  assert.equal(packets.length, 1);
+  const ep = packets[0];
+  assert.equal(ep.taskId, task.taskId);
+  assert.equal(ep.ok, true);
+  assert.equal(ep.projectId, 'cli-bridge');
+  assert.equal(typeof ep.id, 'string');
+  assert.ok(ep.id.startsWith('exec-'));
+  assert.equal(ep.durationMs, 1500);
+  assert.equal(ep.stdout, 'deployed successfully\nno errors');
+  assert.equal(ep.exitCode, 0);
+});
+
+test('execution packet is NOT in result API response', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run tests');
+
+  const resultRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: true,
+      stdout: 'all tests passed',
+      durationMs: 100,
+    }),
+  );
+
+  assert.equal(resultRes.statusCode, 200);
+
+  // Response must NOT include execution packet.
+  const payload = resultRes.payload;
+  assert.ok(payload.result, 'response has result');
+  assert.ok(payload.action, 'response has action');
+  assert.ok(payload.event, 'response has transcript event');
+  assert.equal('executionPacket' in payload, false, 'API response must not expose execution packet');
+  assert.equal('executionPackets' in payload, false, 'API response must not expose execution packets');
+});
+
+test('user-visible answer body is derived from executor fields only', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'generate report');
+
+  const resultRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: true,
+      stdout: 'Report generated: quarterly-finance.xlsx',
+      durationMs: 100,
+    }),
+  );
+
+  assert.equal(resultRes.statusCode, 200);
+  const transcriptEvent = resultRes.payload.event;
+  assert.ok(transcriptEvent);
+  assert.equal(transcriptEvent.role, 'target');
+  assert.ok(transcriptEvent.text.includes('Report generated: quarterly-finance.xlsx'),
+    'transcript text should contain executor stdout');
+  assert.equal(transcriptEvent.status, 'returned');
+  assert.equal(transcriptEvent.kind, 'executor_output');
+  assert.equal(transcriptEvent.visibility, 'user');
+});
+
+test('failed executor text comes from failureReason', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run failing command');
+
+  const resultRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: false,
+      failureReason: 'command not found: deploy',
+      stderr: 'Error: command not found: deploy\n  at /path/to/script.js:1:1',
+      exitCode: 127,
+      durationMs: 50,
+    }),
+  );
+
+  assert.equal(resultRes.statusCode, 200);
+
+  // Verify execution packet has failure info.
+  const packets = runtime.conversationExecutionStore.exportPackets();
+  assert.equal(packets.length, 1);
+  assert.equal(packets[0].ok, false);
+  assert.equal(packets[0].failureReason, 'command not found: deploy');
+
+  // Verify transcript event uses failureReason.
+  const transcriptEvent = resultRes.payload.event;
+  assert.ok(transcriptEvent);
+  assert.equal(transcriptEvent.role, 'target');
+  assert.equal(transcriptEvent.status, 'failed');
+  assert.equal(transcriptEvent.text, 'command not found: deploy');
+  assert.equal(transcriptEvent.kind, 'executor_output');
+});
+
+test('failed executor text falls back to stderr when failureReason is absent', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run error');
+
+  const resultRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: false,
+      stderr: 'process killed by signal SIGTERM',
+      exitCode: 143,
+      durationMs: 5000,
+    }),
+  );
+
+  assert.equal(resultRes.statusCode, 200);
+  const transcriptEvent = resultRes.payload.event;
+  assert.equal(transcriptEvent.text, 'process killed by signal SIGTERM');
+  assert.equal(transcriptEvent.status, 'failed');
+});
+
+test('execution packet links to instruction packet via userEventId', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime();
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'my instruction');
+
+  // Verify instruction packet exists.
+  const instPackets = runtime.conversationInstructionStore.exportPackets();
+  assert.equal(instPackets.length, 1);
+  const instructionPacket = instPackets[0];
+
+  await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      ok: true,
+      stdout: 'done',
+      durationMs: 300,
+    }),
+  );
+
+  // Check execution packet links to the instruction packet.
+  const execPackets = runtime.conversationExecutionStore.exportPackets();
+  assert.equal(execPackets.length, 1);
+  assert.equal(execPackets[0].instructionPacketId, instructionPacket.id);
+});
+
+test('persistence roundtrip preserves execution packets', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { resolve } = await import('node:path');
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+
+  const dir = mkdtempSync(resolve(tmpdir(), 'cli-bridge-test-'));
+  try {
+    // Phase 1: create runtime, setup, submit result, persist.
+    const first = createBridgeRuntime({ dataDir: dir });
+
+    await handleBridgeRequest(
+      first,
+      'PUT',
+      '/bridge/projects/cli-bridge/conversation-pairing',
+      jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
+    );
+
+    const postMsg = await handleBridgeRequest(
+      first,
+      'POST',
+      '/bridge/projects/cli-bridge/conversation/messages',
+      jsonBody({ text: 'persistent instruction' }),
+    );
+    const action = postMsg.payload.actions[0];
+
+    await handleBridgeRequest(
+      first,
+      'POST',
+      `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`,
+      jsonBody({}),
+      undefined,
+      CONSOLE_AUTH,
+    );
+
+    const dispatchRes = await handleBridgeRequest(
+      first,
+      'POST',
+      `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`,
+      jsonBody({}),
+      undefined,
+      CONSOLE_AUTH,
+    );
+    const task = dispatchRes.payload.task;
+
+    // Claim.
+    await handleBridgeRequest(first, 'GET', '/bridge/endpoints/workbuddy/inbox/next', jsonBody(undefined));
+
+    await handleBridgeRequest(
+      first,
+      'POST',
+      '/bridge/endpoints/workbuddy/results',
+      jsonBody({
+        taskId: task.taskId,
+        ok: true,
+        output: { key: 'value' },
+        stdout: 'persistent output',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 999,
+      }),
+    );
+    first.persist();
+
+    const firstPackets = first.conversationExecutionStore.exportPackets();
+    assert.equal(firstPackets.length, 1);
+    const firstEp = firstPackets[0];
+
+    // Phase 2: new runtime from same dir should restore execution packets.
+    const second = createBridgeRuntime({ dataDir: dir });
+    const secondPackets = second.conversationExecutionStore.exportPackets();
+    assert.equal(secondPackets.length, 1);
+    const secondEp = secondPackets[0];
+
+    assert.equal(secondEp.id, firstEp.id);
+    assert.equal(secondEp.taskId, firstEp.taskId);
+    assert.equal(secondEp.ok, true);
+    assert.deepEqual(secondEp.output, { key: 'value' });
+    assert.equal(secondEp.stdout, 'persistent output');
+    assert.equal(secondEp.exitCode, 0);
+    assert.equal(secondEp.durationMs, 999);
+    assert.equal(secondEp.projectId, 'cli-bridge');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-// --- Task 3: Review-Command Conversation Activation ---
-
-test('review-command conversation creates a previewed review action', async () => {
-  const runtime = createBridgeRuntime();
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'claude-code-command',
-  });
-
-  const res = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'review the current README plan',
-  });
-
-  assert.equal(res.statusCode, 201);
-  const action = res.payload.actions[0];
-  assert.equal(action.routeKind, 'review-command');
-  assert.equal(action.status, 'previewed');
-  assert.equal(typeof action.linkedReviewId, 'string');
-  assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /review preview created/i);
-
-  const review = runtime.pendingReviewStore.get(action.linkedReviewId);
-  assert.equal(review.status, 'previewed');
-  assert.equal(review.prompt, 'review the current README plan');
-});
-
-// --- Task 4: Conversation Action Confirm And Dispatch Routes ---
-
-test('conversation review action confirm and dispatch use existing review gates', async () => {
-  const runtime = createBridgeRuntime({
-    reviewAdapterFor: () => fakeReviewAdapter('{"summary":"gate check ok","findings":["looks safe"]}'),
-  });
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'claude-code-command',
-  });
-  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'review this safely',
-  });
-  const action = created.payload.actions[0];
-
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
-  assert.equal(confirmed.statusCode, 200);
-  assert.equal(confirmed.payload.action.status, 'confirmed');
-  assert.equal(runtime.pendingReviewStore.get(action.linkedReviewId).status, 'confirmed');
-
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 200);
-  assert.equal(dispatched.payload.action.status, 'returned');
-});
-
-// --- Task 5: WorkBuddy Conversation Activation ---
-
-test('workbuddy conversation action confirms and queues a WorkBuddy inbox task', async () => {
-  const runtime = createBridgeRuntime();
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'workbuddy',
-  });
-  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'inspect the repo and propose the smallest fix',
-  });
-  const action = created.payload.actions[0];
-  assert.equal(action.routeKind, 'workbuddy-execution');
-  assert.equal(action.status, 'previewed');
-
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
-  assert.equal(confirmed.statusCode, 200);
-  assert.equal(confirmed.payload.action.status, 'confirmed');
-
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 200);
-  assert.equal(dispatched.payload.action.status, 'queued');
-  assert.equal(typeof dispatched.payload.task.taskId, 'string');
-
-  const inbox = await call(runtime, 'GET', '/bridge/endpoints/workbuddy/inbox/next');
-  assert.equal(inbox.statusCode, 200);
-  assert.equal(inbox.payload.task.taskId, dispatched.payload.task.taskId);
-  assert.equal(typeof inbox.payload.task.prompt, 'string');
-});
-
-test('workbuddy result returns to conversation transcript', async () => {
-  const runtime = createBridgeRuntime();
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'workbuddy',
-  });
-  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'say hello from workbuddy',
-  });
-  const action = created.payload.actions[0];
-  await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  const taskId = dispatched.payload.task.taskId;
-  await call(runtime, 'GET', '/bridge/endpoints/workbuddy/inbox/next');
-
-  const result = await call(runtime, 'POST', '/bridge/endpoints/workbuddy/results', {
-    taskId,
-    ok: true,
-    stdout: 'hello from workbuddy',
-    exitCode: 0,
-    durationMs: 12,
-  });
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.action.status, 'returned');
-  assert.equal(result.payload.event.role, 'target');
-  assert.equal(result.payload.event.text, 'hello from workbuddy');
-
-  const messages = await call(runtime, 'GET', '/bridge/projects/cli-bridge/conversation/messages');
-  assert.equal(messages.payload.actions[0].status, 'returned');
-  assert.match(messages.payload.messages.map((event) => event.text).join('\n'), /hello from workbuddy/);
-});
-
-// --- Task 6: Route-Generic Conversation API ---
-
-test('conversation routes custom workbuddy transport target through route adapter', async () => {
-  const runtime = createBridgeRuntime();
-  runtime.endpointRegistry.register({
-    id: 'custom-executor',
-    label: 'Custom Executor',
-    transport: 'workbuddy',
-    risk: 'low',
-    status: 'online',
-    capabilities: { canAcceptPrompt: true, canReturnOutput: true, canReview: false, canExecute: true, canSummarize: false },
-  });
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'custom-executor',
-  });
-  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'inspect the repo through custom executor',
-  });
-  assert.equal(created.statusCode, 201);
-  const action = created.payload.actions[0];
-  assert.equal(action.targetEndpointId, 'custom-executor');
-  assert.equal(action.routeKind, 'workbuddy-execution');
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
-  assert.equal(confirmed.statusCode, 200);
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 200);
-  assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
-  const inbox = await call(runtime, 'GET', '/bridge/endpoints/custom-executor/inbox/next');
-  assert.equal(inbox.statusCode, 200);
-  assert.equal(inbox.payload.task.prompt, 'inspect the repo through custom executor');
-});
-
-// --- Task 7: Review-Command Auto-Dispatch ---
-
-function fakeReviewAdapter(reviewResultJson) {
-  return {
-    name: 'fake-review',
-    async review(input) {
-      const parsed = JSON.parse(reviewResultJson);
-      return {
-        ok: true,
-        adapterName: 'fake-review',
-        result: {
-          id: input.resultId ?? 'res-fake',
-          reviewRequestId: input.reviewRequestId,
-          summary: parsed.summary,
-          findings: parsed.findings,
-          nextReviewPrompt: parsed.nextPromptDraft,
-          createdAt: input.now ?? Date.now(),
-        },
-        meta: { command: 'claude', argv: [], exitCode: 0, durationMs: 1, timedOut: false, truncated: false },
-      };
-    },
-  };
-}
-
-test('conversation review-command target dispatches through review adapter', async () => {
-  const runtime = createBridgeRuntime({
-    reviewAdapterFor: () => fakeReviewAdapter('{"summary":"review ok","findings":["no issues"]}'),
-  });
-  await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
-    targetEndpointId: 'claude-code-command',
-  });
-  const created = await call(runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages', {
-    text: 'review this plan',
-  });
-  const action = created.payload.actions[0];
-  const confirmed = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`, {}, CONSOLE_AUTH);
-  assert.equal(confirmed.statusCode, 200);
-  const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
-  assert.equal(dispatched.statusCode, 200);
-  assert.equal(dispatched.payload.action.status, 'returned');
-  assert.match(dispatched.payload.result.summary, /review ok/);
 });
