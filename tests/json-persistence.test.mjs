@@ -689,3 +689,44 @@ test('malformed executionProposals in snapshot are rejected', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ADR-0028: automation loop runs and cycles persist across restarts
+test('automation loops and cycles persist across runtime reload', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({ dataDir: dir });
+    const loop = first.automationLoopStore.create({
+      projectId: 'cli-bridge',
+      sourceEndpointId: 'chatgpt-web',
+      targetEndpointId: 'workbuddy',
+      maxCycles: 3,
+      noProgressLimit: 2,
+      deadlineAt: 1793000600000,
+      now: 1793000000000,
+    });
+    first.automationLoopStore.start(loop.id, 1793000001000);
+    const cycle = first.automationLoopStore.beginCycle(loop.id, {
+      promptHash: 'sha256:abc',
+      now: 1793000002000,
+    });
+    first.automationLoopStore.markCycleReturned(loop.id, cycle.id, {
+      progressHash: 'sha256:result1',
+      now: 1793000003000,
+    });
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const restored = second.automationLoopStore.get(loop.id);
+    assert.ok(restored, 'loop must survive restart');
+    assert.equal(restored.status, 'running');
+    assert.equal(restored.cycleCount, 1);
+    assert.equal(restored.maxCycles, 3);
+    assert.equal(restored.lastProgressHash, 'sha256:result1');
+
+    const cycles = second.automationLoopStore.getCycles(loop.id);
+    assert.equal(cycles.length, 1);
+    assert.equal(cycles[0].status, 'returned');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -40,6 +40,7 @@ import type { ConversationTranscriptEvent } from '../storage/conversation-transc
 import { InMemoryConversationActionStore } from '../storage/conversation-action-store.ts';
 import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
+import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
 import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { GithubTokenStore } from '../verification/github-token-store.ts';
@@ -101,6 +102,8 @@ import type {
   AutomationExecutionTier,
   AutomationReasoningTier,
   ReasoningArtifactKind,
+  AutomationLoopRun,
+  AutomationLoopCycle,
 } from '../../../../packages/shared/src/types.ts';
 import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
 
@@ -139,6 +142,8 @@ export interface BridgeRuntime {
   reasoningArtifactStore: InMemoryReasoningArtifactStore;
   executionProposalStore: InMemoryExecutionProposalStore;
   webRelayLoopStore: InMemoryWebRelayLoopStore;
+  /** ADR-0028: bounded automation work-cycle loop store. */
+  automationLoopStore: InMemoryAutomationLoopStore;
   /** Phase 3 multi-executor relay (foundation): endpoint/session routing context. */
   relayContextStore: InMemoryRelayContextStore;
   /** Phase 3 multi-executor relay (inbound queue core): server-side return queue. */
@@ -1421,6 +1426,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const pendingPromptStore = new InMemoryPendingPromptStore(packetStore, auditLog);
   const outboundPromptStore = new InMemoryOutboundPromptStore(packetStore, auditLog);
   const webRelayLoopStore = new InMemoryWebRelayLoopStore(outboundPromptStore);
+  const automationLoopStore = new InMemoryAutomationLoopStore();
   const relayContextStore = new InMemoryRelayContextStore(auditLog);
   const inboundMessageStore = new InMemoryInboundMessageStore(packetStore, auditLog);
   const endpointRegistry = new InMemoryEndpointRegistry([
@@ -1498,6 +1504,12 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
       webRelayLoopStore.hydrateLoops(read.snapshot.webRelayLoops ?? []);
       webRelayLoopStore.recoverAfterRestart();
+      for (const loop of read.snapshot.automationLoopRuns ?? []) {
+        try { automationLoopStore.hydrateLoop(loop); } catch { }
+      }
+      for (const cycle of read.snapshot.automationLoopCycles ?? []) {
+        try { automationLoopStore.hydrateCycle(cycle); } catch { }
+      }
       inboundMessageStore.hydrateMessages(read.snapshot.inboundMessages ?? []);
       relayContextStore.hydrateContexts(read.snapshot.relayContexts ?? []);
       // Hydrate v2 goal/plan/project state (fail-open: skip invalid records).
@@ -1592,6 +1604,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       conversationActions: conversationActionStore.exportActions(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
+      automationLoopRuns: automationLoopStore.exportLoops(),
+      automationLoopCycles: automationLoopStore.exportCycles(),
     }));
     if (!result.ok) {
       persistenceFailure = `Snapshot write failed: ${result.error ?? 'unknown error'}`;
@@ -1608,6 +1622,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     reasoningArtifactStore,
     executionProposalStore,
     webRelayLoopStore,
+    automationLoopStore,
     relayContextStore,
     inboundMessageStore,
     endpointRegistry,

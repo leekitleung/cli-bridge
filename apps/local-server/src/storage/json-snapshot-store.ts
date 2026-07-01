@@ -33,6 +33,8 @@ import type {
   RelayContext,
   WebRelayLoop,
   ExecutionProposal,
+  AutomationLoopRun,
+  AutomationLoopCycle,
 } from '../../../../packages/shared/src/types.ts';
 import {
   assertAuditEvent,
@@ -45,6 +47,8 @@ import {
   assertRunEndpointBinding,
   assertWebRelayLoop,
   assertExecutionProposal,
+  assertAutomationLoopRun,
+  assertAutomationLoopCycle,
 } from '../../../../packages/shared/src/schemas.ts';
 
 export const SNAPSHOT_VERSION = 3;
@@ -87,6 +91,9 @@ export interface BridgeSnapshot {
   conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
+  /** ADR-0028: bounded automation work-cycle loop runs and cycles. */
+  automationLoopRuns?: AutomationLoopRun[];
+  automationLoopCycles?: AutomationLoopCycle[];
 }
 
 export interface SnapshotWriteResult {
@@ -149,6 +156,8 @@ function parseSnapshot(text: string): SnapshotReadResult {
       conversationActions: Array.isArray(parsed.conversationActions) ? parsed.conversationActions : undefined,
       workbuddyTasks: Array.isArray(parsed.workbuddyTasks) ? parsed.workbuddyTasks : undefined,
       verificationRunRecords: Array.isArray(parsed.verificationRunRecords) ? parsed.verificationRunRecords : [],
+      automationLoopRuns: Array.isArray(parsed.automationLoopRuns) ? parsed.automationLoopRuns : undefined,
+      automationLoopCycles: Array.isArray(parsed.automationLoopCycles) ? parsed.automationLoopCycles : undefined,
     };
     // v0-v2 snapshots retain their historical tolerant hydration contract.
     // v3+ snapshots are written by the hardened writer and fail closed.
@@ -316,6 +325,8 @@ export interface BuildSnapshotInput {
   conversationActions?: import('./conversation-action-store.ts').ConversationAction[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
+  automationLoopRuns?: AutomationLoopRun[];
+  automationLoopCycles?: AutomationLoopCycle[];
 }
 
 export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
@@ -346,5 +357,7 @@ export function buildSnapshot(input: BuildSnapshotInput): BridgeSnapshot {
     conversationActions: input.conversationActions ?? [],
     workbuddyTasks: input.workbuddyTasks ?? [],
     verificationRunRecords: input.verificationRunRecords ?? [],
+    automationLoopRuns: input.automationLoopRuns ?? [],
+    automationLoopCycles: input.automationLoopCycles ?? [],
   };
 }
