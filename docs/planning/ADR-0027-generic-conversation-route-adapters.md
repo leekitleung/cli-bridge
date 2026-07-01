@@ -1,6 +1,6 @@
 # ADR-0027: Generic Conversation Route Adapters
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-01
 
