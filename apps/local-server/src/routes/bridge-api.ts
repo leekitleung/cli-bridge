@@ -41,6 +41,7 @@ import { InMemoryConversationActionStore } from '../storage/conversation-action-
 import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
+import { tickAutomationLoop, runAutomationLoop } from '../automation/automation-loop-runner.ts';
 import { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-adapter.ts';
 import { InMemoryApiKeyStore } from '../model/api-key.ts';
 import { GithubTokenStore } from '../verification/github-token-store.ts';
@@ -2143,6 +2144,52 @@ export const BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX = '/verifi
 export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
 // v2.3 AgentTeam project-scoped path.
 export const BRIDGE_PROJECT_TEAMS_SUFFIX = '/teams';
+// ADR-0028: automation work-cycle loop project-scoped path.
+export const BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX = '/automation-loops';
+
+/** Matches /bridge/projects/:key/automation-loops (list/create). */
+function matchProjectAutomationLoopsListPath(pathname: string): {
+  matched: true; key: string | undefined;
+} | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  if (!rest.endsWith(BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX)) return { matched: false };
+  const raw = rest.slice(0, -BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX.length);
+  if (raw.length === 0 || raw.includes('/')) return { matched: false };
+  let decoded: string | undefined;
+  try { decoded = decodeURIComponent(raw); } catch { return { matched: true, key: undefined }; }
+  const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
+  return { matched: true, key };
+}
+
+/** Matches /bridge/projects/:key/automation-loops/:loopId/{tick|run|pause|resume|cancel}. */
+function matchProjectAutomationLoopsActionPath(pathname: string): {
+  matched: true; key: string | undefined; loopId: string | undefined; action: string;
+} | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  const basePrefix = `${BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX}/`;
+  // Find /automation-loops/ in the rest
+  const loopsIdx = rest.indexOf(basePrefix);
+  if (loopsIdx === -1) return { matched: false };
+  const rawKey = rest.slice(0, loopsIdx);
+  if (rawKey.length === 0 || rawKey.includes('/')) return { matched: false };
+  let decodedKey: string | undefined;
+  try { decodedKey = decodeURIComponent(rawKey); } catch { return { matched: true, key: undefined, loopId: undefined, action: '' }; }
+  const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
+  const after = rest.slice(loopsIdx + basePrefix.length);
+  const slashIdx = after.indexOf('/');
+  if (slashIdx === -1) return { matched: false };
+  const rawLoopId = after.slice(0, slashIdx);
+  const action = after.slice(slashIdx + 1);
+  const validActions = new Set(['tick', 'run', 'pause', 'resume', 'cancel']);
+  if (!validActions.has(action)) return { matched: false };
+  let loopId: string | undefined;
+  try { loopId = decodeURIComponent(rawLoopId); } catch { loopId = undefined; }
+  return { matched: true, key, loopId, action };
+}
 
   /** Matches /bridge/projects/:key/{timeline|audit|memory|verification}. */
 function matchProjectObservabilityPath(pathname: string): {
@@ -4526,6 +4573,109 @@ export async function handleBridgeRequest(
     if (!snapshot) return error(404, 'Goal not found or has no snapshot');
     runtime.persist();
     return ok({ binding: snapshot });
+  }
+
+  // ── ADR-0028: Automation Work-Cycle Loop Routes ──
+
+  // GET/POST /bridge/projects/:key/automation-loops
+  {
+    const loPath = matchProjectAutomationLoopsListPath(pathname);
+    if (loPath.matched) {
+      if (!loPath.key) return error(400, 'Invalid project key');
+
+      if (method === 'GET') {
+        const loops = runtime.automationLoopStore.listByProject(loPath.key);
+        return ok({ loops: loops.map(loop => ({ ...loop, cycles: runtime.automationLoopStore.getCycles(loop.id) })) });
+      }
+
+      if (method === 'POST') {
+        const parsed = await readJsonBody(request);
+        if (!parsed.ok) return error(400, parsed.message);
+        const body = parsed.body as Record<string, unknown>;
+        const sourceEndpointId = requireString(body, 'sourceEndpointId');
+        const targetEndpointId = requireString(body, 'targetEndpointId');
+        if (!sourceEndpointId || !targetEndpointId) return error(400, 'sourceEndpointId and targetEndpointId are required');
+        const maxCycles = typeof body.maxCycles === 'number' && Number.isInteger(body.maxCycles) && body.maxCycles > 0
+          ? body.maxCycles : 3;
+        const noProgressLimit = typeof body.noProgressLimit === 'number' && Number.isInteger(body.noProgressLimit) && body.noProgressLimit > 0
+          ? body.noProgressLimit : 2;
+        const deadlineMs = typeof body.deadlineMs === 'number' ? body.deadlineMs : 600_000;
+        const loop = runtime.automationLoopStore.create({
+          projectId: loPath.key,
+          sourceEndpointId,
+          targetEndpointId,
+          maxCycles,
+          noProgressLimit,
+          deadlineAt: Date.now() + deadlineMs,
+        });
+        runtime.persist();
+        return created({ loop });
+      }
+
+      return error(405, 'Method not allowed');
+    }
+  }
+
+  // POST /bridge/projects/:key/automation-loops/:id/{tick|run|pause|resume|cancel}
+  {
+    const actionPath = matchProjectAutomationLoopsActionPath(pathname);
+    if (actionPath.matched) {
+      if (method !== 'POST') return error(405, 'Method not allowed');
+      if (!actionPath.key) return error(400, 'Invalid project key');
+      if (!actionPath.loopId) return error(400, 'Invalid loop ID');
+
+      // POST routes require console-cookie
+      if (authContext?.kind !== 'console-cookie') return error(403, 'Console cookie auth required');
+
+      const parsed = await readJsonBody(request);
+      const body = (parsed.ok ? parsed.body : {}) as Record<string, unknown>;
+
+      if (actionPath.action === 'cancel') {
+        const cancelled = runtime.automationLoopStore.cancel(actionPath.loopId);
+        if (!cancelled) return error(409, 'Cannot cancel loop');
+        runtime.persist();
+        return ok({ loop: cancelled });
+      }
+
+      if (actionPath.action === 'pause') {
+        const paused = runtime.automationLoopStore.pause(actionPath.loopId);
+        if (!paused) return error(409, 'Cannot pause loop');
+        runtime.persist();
+        return ok({ loop: paused });
+      }
+
+      if (actionPath.action === 'resume') {
+        const resumed = runtime.automationLoopStore.resume(actionPath.loopId);
+        if (!resumed) return error(409, 'Cannot resume loop');
+        runtime.persist();
+        return ok({ loop: resumed });
+      }
+
+      if (actionPath.action === 'tick') {
+        const input = typeof body.input === 'string' ? body.input : '';
+        const result = tickAutomationLoop(runtime, actionPath.loopId, {
+          input,
+          authKind: 'console-cookie',
+        });
+        runtime.persist();
+        return ok(result);
+      }
+
+      if (actionPath.action === 'run') {
+        const input = typeof body.input === 'string' ? body.input : '';
+        const maxTicks = typeof body.maxTicksPerRun === 'number' && Number.isInteger(body.maxTicksPerRun)
+          ? body.maxTicksPerRun : 1;
+        const result = runAutomationLoop(runtime, actionPath.loopId, {
+          input,
+          authKind: 'console-cookie',
+          maxTicksPerRun: maxTicks,
+        });
+        runtime.persist();
+        return ok(result);
+      }
+
+      return error(400, 'Unknown action');
+    }
   }
 
   return error(405, 'Method not allowed');
