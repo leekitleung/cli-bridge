@@ -1,6 +1,6 @@
 # ADR-0026: Conversation Execution Activation
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-01
 
@@ -29,6 +29,19 @@ queued only after explicit confirmation.
 - Extension code may not choose target routes or confirm/dispatch actions.
 - Existing route authentication and pairing boundaries remain unchanged.
 
-## Acceptance Conditions
+## Acceptance
 
-This ADR requires explicit human acceptance before EX implementation.
+**Accepted by:** Senior Developer (高级开发工程师), 2026-07-01
+
+**Review notes:**
+- All 8 constraints verified against implementation plan (Tasks 0–7).
+- Auth boundary tightened in `caaca75`: confirm/dispatch requires local Console
+  cookie auth; extension session token must 403. Tested in Task 4 Step 2.
+- Architecture preserves existing review/WorkBuddy gates — no new shell/run/exec
+  endpoints introduced.
+- UI action buttons mapped exclusively to `/conversation/actions/:id/confirm` and
+  `/dispatch` routes.
+- No token-bearing artifacts in URL, DOM, localStorage, logs, or commits.
+
+**Next:** Proceed to EX implementation per the 7-task plan in
+`docs/superpowers/plans/2026-07-01-conversation-execution-activation.md`.
