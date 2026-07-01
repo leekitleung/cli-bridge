@@ -2840,10 +2840,29 @@ function renderConversationTranscript() {
       : '';
     return;
   }
-  const eventsHtml = events.map(renderConversationEvent).join('');
-  const actionsHtml = actions.map(renderConversationAction).join('');
-  el.innerHTML = eventsHtml + actionsHtml;
+  const visibleEvents = events.filter(event => !isConversationBridgeAdminEvent(event));
+  const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
+  const pendingHtml = renderConversationPendingState(actions);
+  el.innerHTML = eventsHtml + pendingHtml;
   bindConversationActionButtons();
+}
+
+function isConversationBridgeAdminEvent(event) {
+  return event
+    && event.role === 'bridge'
+    && event.status === 'awaiting-manual-confirmation'
+    && /preview created|auto-dispatch/i.test(String(event.text || ''));
+}
+
+function renderConversationPendingState(actions) {
+  const pending = (actions || []).find(action => action && !['returned', 'failed', 'cancelled'].includes(action.status));
+  if (!pending) return '';
+  const label = pending.targetEndpointId || 'target';
+  return '<div class="conversation-message bridge conversation-waiting">'
+    + '<div class="conversation-meta">bridge</div>'
+    + '<div class="conversation-bubble">Waiting for ' + escapeHtml(label) + '…</div>'
+    + '<div class="conversation-state"><span class="pill">' + escapeHtml(pending.status) + '</span></div>'
+    + '</div>';
 }
 
 function renderConversationEvent(event) {

@@ -2250,8 +2250,9 @@ test('conversation mode auto-dispatches previewed workbuddy actions after pairin
   assert.equal(document.getElementById('command-status').textContent, 'conversation auto-dispatched');
   assert.match(document.getElementById('conversation-transcript').textContent, /queued/);
   assert.ok(document.querySelector('.conversation-message.user'));
-  assert.ok(document.querySelector('.conversation-message.bridge'));
-  assert.ok(document.querySelector('.conversation-message.action'));
+  assert.ok(document.querySelector('.conversation-waiting'));
+  assert.doesNotMatch(document.getElementById('conversation-transcript').textContent, /WorkBuddy preview/);
+  assert.doesNotMatch(document.getElementById('conversation-transcript').textContent, /Confirm|Dispatch/);
 });
 
 // ── ADR-0025 Task 3: auto-pair token discipline ──
