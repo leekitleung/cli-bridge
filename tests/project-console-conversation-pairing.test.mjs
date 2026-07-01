@@ -162,8 +162,8 @@ test('conversation mode routes text to message endpoint and renders transcript',
     ok: true,
     payload: {
       events: [
-        { id: 'ev-1', projectId: 'cli-bridge', role: 'user', text: 'hi draft', status: 'queued', routeKind: 'workbuddy-execution', createdAt: Date.now() },
-        { id: 'ev-2', projectId: 'cli-bridge', role: 'bridge', text: 'Queued for WorkBuddy execution flow.', status: 'queued', routeKind: 'workbuddy-execution', createdAt: Date.now() },
+        { id: 'ev-1', projectId: 'cli-bridge', role: 'user', text: 'hi draft', status: 'queued', routeKind: 'workbuddy-execution', kind: 'user_message', visibility: 'user', createdAt: Date.now() },
+        { id: 'ev-2', projectId: 'cli-bridge', role: 'bridge', text: 'Queued for WorkBuddy execution flow.', status: 'queued', routeKind: 'workbuddy-execution', kind: 'status', visibility: 'user', createdAt: Date.now() },
       ],
     },
   });

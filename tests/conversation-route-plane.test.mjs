@@ -1,0 +1,205 @@
+// EX-2: Instruction Packets — internal instruction packet store for
+// the passthrough route plane.  Instruction packets are purely internal
+// metadata and must NEVER appear in user-visible API responses.
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { InMemoryConversationInstructionStore } from '../apps/local-server/src/storage/conversation-instruction-store.ts';
+
+// ── Unit: store contract ──
+
+test('instruction store creates a packet with all fields', () => {
+  const store = new InMemoryConversationInstructionStore();
+  const packet = store.create({
+    projectId: 'cli-bridge',
+    pairingId: 'chatgpt-web→codex-cli',
+    userEventId: 'conv-100-abc',
+    text: 'refactor the login form',
+  });
+
+  assert.equal(typeof packet.id, 'string');
+  assert.ok(packet.id.length > 0);
+  assert.equal(packet.projectId, 'cli-bridge');
+  assert.equal(packet.pairingId, 'chatgpt-web→codex-cli');
+  assert.equal(packet.userEventId, 'conv-100-abc');
+  assert.equal(packet.text, 'refactor the login form');
+  assert.equal(typeof packet.payloadHash, 'string');
+  assert.ok(packet.payloadHash.length > 0);
+  assert.equal(typeof packet.createdAt, 'number');
+  assert.ok(packet.createdAt > 0);
+});
+
+test('payloadHash is deterministic — same text → same hash', () => {
+  const store = new InMemoryConversationInstructionStore();
+  const a = store.create({ projectId: 'proj', pairingId: 'p1', userEventId: 'e1', text: 'Hello' });
+  const b = store.create({ projectId: 'proj', pairingId: 'p2', userEventId: 'e2', text: 'Hello' });
+  assert.equal(a.payloadHash, b.payloadHash);
+});
+
+test('payloadHash is deterministic — different text → different hash', () => {
+  const store = new InMemoryConversationInstructionStore();
+  const a = store.create({ projectId: 'proj', pairingId: 'p1', userEventId: 'e1', text: 'Hello' });
+  const b = store.create({ projectId: 'proj', pairingId: 'p2', userEventId: 'e2', text: 'World' });
+  assert.notEqual(a.payloadHash, b.payloadHash);
+});
+
+test('listByProject returns packets sorted by createdAt', async () => {
+  const store = new InMemoryConversationInstructionStore();
+  const a = store.create({ projectId: 'alpha', pairingId: 'p1', userEventId: 'e1', text: 'first' });
+  await new Promise(r => setTimeout(r, 5));
+  const b = store.create({ projectId: 'alpha', pairingId: 'p2', userEventId: 'e2', text: 'second' });
+
+  // Also create a packet for a different project.
+  store.create({ projectId: 'beta', pairingId: 'p3', userEventId: 'e3', text: 'third' });
+
+  const list = store.listByProject('alpha');
+  assert.equal(list.length, 2);
+  assert.equal(list[0].id, a.id);
+  assert.equal(list[1].id, b.id);
+});
+
+test('get returns a single packet', () => {
+  const store = new InMemoryConversationInstructionStore();
+  const packet = store.create({ projectId: 'proj', pairingId: 'p1', userEventId: 'e1', text: 'test' });
+
+  const found = store.get(packet.id);
+  assert.ok(found);
+  assert.equal(found.id, packet.id);
+  assert.equal(found.text, 'test');
+
+  assert.equal(store.get('nonexistent'), undefined);
+});
+
+test('exportPackets returns all packets', () => {
+  const store = new InMemoryConversationInstructionStore();
+  store.create({ projectId: 'alpha', pairingId: 'p1', userEventId: 'e1', text: 'one' });
+  store.create({ projectId: 'beta', pairingId: 'p2', userEventId: 'e2', text: 'two' });
+
+  const all = store.exportPackets();
+  assert.equal(all.length, 2);
+});
+
+test('persistence roundtrip: export → hydrate into new store → verify', () => {
+  const original = new InMemoryConversationInstructionStore();
+  const a = original.create({ projectId: 'alpha', pairingId: 'p1', userEventId: 'e1', text: 'hello' });
+  const b = original.create({ projectId: 'beta', pairingId: 'p2', userEventId: 'e2', text: 'world' });
+
+  const exported = original.exportPackets();
+
+  const restored = new InMemoryConversationInstructionStore();
+  for (const packet of exported) {
+    restored.hydratePacket(packet);
+  }
+
+  assert.equal(restored.get(a.id).text, 'hello');
+  assert.equal(restored.get(a.id).payloadHash, a.payloadHash);
+  assert.equal(restored.get(b.id).text, 'world');
+  assert.equal(restored.listByProject('alpha').length, 1);
+  assert.equal(restored.listByProject('beta').length, 1);
+});
+
+test('hydratePacket skips invalid packets silently', () => {
+  const store = new InMemoryConversationInstructionStore();
+
+  // Missing id
+  store.hydratePacket({ projectId: 'x', pairingId: 'p', userEventId: 'e', text: 't', payloadHash: 'h', createdAt: 1 });
+  // Missing projectId
+  store.hydratePacket({ id: 'id1', pairingId: 'p', userEventId: 'e', text: 't', payloadHash: 'h', createdAt: 1 });
+
+  assert.equal(store.exportPackets().length, 0);
+});
+
+// ── Integration: API response must not leak instruction metadata ──
+
+test('conversation message API response does not contain instruction packet metadata', async () => {
+  const {
+    createBridgeRuntime,
+    handleBridgeRequest,
+  } = await import('../apps/local-server/src/routes/bridge-api.ts');
+
+  const runtime = createBridgeRuntime();
+
+  // Setup project and pairing.
+  const putPairing = await handleBridgeRequest(
+    runtime,
+    'PUT',
+    '/bridge/projects/cli-bridge/conversation-pairing',
+    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'claude-code-command', scope: 'project' }),
+  );
+
+  // Send a conversation message.
+  const post = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: 'refactor the login form' }),
+  );
+
+  assert.equal(post.statusCode, 201);
+
+  // The response must contain events and actions.
+  const events = Array.isArray(post.payload.events) ? post.payload.events : [];
+  assert.ok(events.length > 0, 'response must contain events');
+
+  // No event must expose instruction packet metadata.
+  for (const event of events) {
+    assert.equal('payloadHash' in event, false, `event ${event.id} must not expose payloadHash`);
+    assert.equal('conversationInstructionId' in event, false, `event ${event.id} must not expose instruction id`);
+  }
+
+  // payload MUST NOT contain an instructionPackets key.
+  assert.equal('instructionPackets' in post.payload, false, 'API response must not expose instruction packets');
+
+  // The user event should have the text as-is, no instruction metadata.
+  const userEvent = events.find(e => e.role === 'user');
+  assert.ok(userEvent, 'response must include a user event');
+  assert.equal(userEvent.text, 'refactor the login form');
+});
+
+// ── Integration: instruction packet IS created internally ──
+
+test('instruction packet is created internally when a conversation message is posted', async () => {
+  const {
+    createBridgeRuntime,
+    handleBridgeRequest,
+  } = await import('../apps/local-server/src/routes/bridge-api.ts');
+
+  const runtime = createBridgeRuntime();
+
+  // Setup project and pairing.
+  await handleBridgeRequest(
+    runtime,
+    'PUT',
+    '/bridge/projects/cli-bridge/conversation-pairing',
+    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'claude-code-command', scope: 'project' }),
+  );
+
+  // Before: no instruction packets.
+  assert.equal(runtime.conversationInstructionStore.exportPackets().length, 0);
+
+  await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: 'refactor login' }),
+  );
+
+  // After: one instruction packet created.
+  const packets = runtime.conversationInstructionStore.exportPackets();
+  assert.equal(packets.length, 1);
+  assert.equal(packets[0].text, 'refactor login');
+  assert.equal(packets[0].projectId, 'cli-bridge');
+  assert.equal(typeof packets[0].userEventId, 'string');
+  assert.ok(packets[0].userEventId.length > 0);
+  assert.equal(typeof packets[0].payloadHash, 'string');
+  assert.ok(packets[0].payloadHash.length > 0);
+});
+
+function jsonBody(body) {
+  const text = body === undefined ? '' : JSON.stringify(body);
+  async function* gen() {
+    if (text.length > 0) yield Buffer.from(text, 'utf8');
+  }
+  return gen();
+}

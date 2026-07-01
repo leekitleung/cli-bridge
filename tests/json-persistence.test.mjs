@@ -730,3 +730,60 @@ test('automation loops and cycles persist across runtime reload', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// EX-2: instruction packets survive snapshot round-trip and persist across restarts
+test('conversation instruction packets persist across runtime restarts', () => {
+  const dir = tempDir();
+  try {
+    const first = createBridgeRuntime({ dataDir: dir });
+    const packet = first.conversationInstructionStore.create({
+      projectId: 'alpha',
+      pairingId: 'chatgpt-web→claude-code-command',
+      userEventId: 'evt-1',
+      text: 'refactor login form',
+    });
+    assert.equal(typeof packet.payloadHash, 'string');
+    first.persist();
+
+    const second = createBridgeRuntime({ dataDir: dir });
+    const packets = second.conversationInstructionStore.exportPackets();
+    assert.equal(packets.length, 1);
+    assert.equal(packets[0].id, packet.id);
+    assert.equal(packets[0].text, 'refactor login form');
+    assert.equal(packets[0].payloadHash, packet.payloadHash);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot roundtrip preserves instruction packets', () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonSnapshotStore(dir);
+    const snapshot = buildSnapshot({
+      packets: [], auditEvents: [], pendingPrompts: [],
+      goals: [], plans: [], projects: [],
+      automationBindings: [], workbuddyTaskReferences: [],
+      workbuddyReviewResultSinks: [], workbuddyPromptDraftSinks: [],
+      workbuddyExecutionLedgerEvents: [], teams: [], teamArtifacts: [],
+      conversationInstructionPackets: [{
+        id: 'inst-1',
+        projectId: 'alpha',
+        pairingId: 'p1→p2',
+        userEventId: 'evt-1',
+        text: 'test instruction',
+        payloadHash: 'abc123',
+        createdAt: 1793000000000,
+      }],
+    });
+    store.write(snapshot);
+    const read = store.read().snapshot;
+    assert.ok(read, 'snapshot exists');
+    assert.equal(Array.isArray(read.conversationInstructionPackets), true);
+    assert.equal(read.conversationInstructionPackets.length, 1);
+    assert.equal(read.conversationInstructionPackets[0].id, 'inst-1');
+    assert.equal(read.conversationInstructionPackets[0].text, 'test instruction');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
