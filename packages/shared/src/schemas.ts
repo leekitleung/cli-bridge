@@ -44,6 +44,11 @@ import {
   type WorkBuddyReviewResultSink,
   type WorkBuddyTaskReference,
   SLOT_ROLES,
+  AUTOMATION_LOOP_STATUSES,
+  AUTOMATION_LOOP_STOP_REASONS,
+  AUTOMATION_LOOP_CYCLE_STATUSES,
+  type AutomationLoopRun,
+  type AutomationLoopCycle,
 } from './types.ts';
 
 export const SHARED_SCHEMA_VERSION = 0;
@@ -691,6 +696,103 @@ export function assertWebRelayLoop(value: unknown): asserts value is WebRelayLoo
   const result = validateWebRelayLoop(value);
   if (!result.ok) {
     throw new Error(`Invalid WebRelayLoop: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateAutomationLoopRun(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['automation loop run must be an object'] };
+  }
+
+  for (const key of ['id', 'projectId', 'sourceEndpointId', 'targetEndpointId']) {
+    if (typeof value[key] !== 'string' || (value[key] as string).trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isOneOf(value.status, AUTOMATION_LOOP_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  for (const key of [
+    'cycleCount', 'maxCycles', 'noProgressLimit', 'noProgressCount',
+    'deadlineAt', 'createdAt', 'updatedAt',
+  ]) {
+    requireNumber(value, key, errors);
+  }
+
+  for (const key of ['goalId', 'pairingId']) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') {
+      errors.push(`${key} must be a string when present`);
+    }
+  }
+
+  if (value.stopReason !== undefined && !isOneOf(value.stopReason, AUTOMATION_LOOP_STOP_REASONS)) {
+    errors.push('stopReason is invalid');
+  }
+
+  for (const key of ['startedAt', 'pausedAt', 'doneAt', 'failedAt', 'cancelledAt', 'lastProgressHash']) {
+    if (key === 'lastProgressHash') {
+      if (value[key] !== undefined && typeof value[key] !== 'string') {
+        errors.push(`${key} must be a string when present`);
+      }
+      continue;
+    }
+    if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key] as number))) {
+      errors.push(`${key} must be a finite number`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertAutomationLoopRun(value: unknown): asserts value is AutomationLoopRun {
+  const result = validateAutomationLoopRun(value);
+  if (!result.ok) {
+    throw new Error(`Invalid AutomationLoopRun: ${result.errors.join(', ')}`);
+  }
+}
+
+export function validateAutomationLoopCycle(value: unknown): SchemaValidationResult {
+  const errors: string[] = [];
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ['automation loop cycle must be an object'] };
+  }
+
+  for (const key of ['id', 'loopId', 'promptHash']) {
+    if (typeof value[key] !== 'string' || (value[key] as string).trim().length === 0) {
+      errors.push(`${key} must be a non-empty string`);
+    }
+  }
+
+  if (!isOneOf(value.status, AUTOMATION_LOOP_CYCLE_STATUSES)) {
+    errors.push('status is invalid');
+  }
+
+  for (const key of ['index', 'createdAt', 'updatedAt']) {
+    requireNumber(value, key, errors);
+  }
+
+  for (const key of ['conversationActionId', 'workBuddyTaskId', 'reviewId', 'progressHash']) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') {
+      errors.push(`${key} must be a string when present`);
+    }
+  }
+
+  if (value.stopReason !== undefined && !isOneOf(value.stopReason, AUTOMATION_LOOP_STOP_REASONS)) {
+    errors.push('stopReason is invalid');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertAutomationLoopCycle(value: unknown): asserts value is AutomationLoopCycle {
+  const result = validateAutomationLoopCycle(value);
+  if (!result.ok) {
+    throw new Error(`Invalid AutomationLoopCycle: ${result.errors.join(', ')}`);
   }
 }
 

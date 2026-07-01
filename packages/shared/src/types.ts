@@ -345,6 +345,96 @@ export interface WebRelayLoop {
   }[];
 }
 
+export const AUTOMATION_LOOP_STATUSES = [
+  'draft',
+  'running',
+  'waiting',
+  'paused',
+  'done',
+  'failed',
+  'cancelled',
+] as const;
+
+export type AutomationLoopStatus = typeof AUTOMATION_LOOP_STATUSES[number];
+
+export const AUTOMATION_LOOP_STOP_REASONS = [
+  'goal-done',
+  'goal-cancelled',
+  'goal-failed',
+  'max-cycles',
+  'deadline',
+  'no-progress',
+  'awaiting-gate',
+  'action-failed',
+  'endpoint-unavailable',
+  'manual-pause',
+  'cancelled',
+] as const;
+
+export type AutomationLoopStopReason = typeof AUTOMATION_LOOP_STOP_REASONS[number];
+
+export const AUTOMATION_LOOP_CYCLE_STATUSES = [
+  'planned',
+  'dispatching',
+  'waiting-result',
+  'returned',
+  'failed',
+  'skipped',
+] as const;
+
+export type AutomationLoopCycleStatus = typeof AUTOMATION_LOOP_CYCLE_STATUSES[number];
+
+export interface AutomationLoopRun {
+  id: string;
+  projectId: string;
+  goalId?: string;
+  pairingId?: string;
+  sourceEndpointId: string;
+  targetEndpointId: string;
+  status: AutomationLoopStatus;
+  cycleCount: number;
+  maxCycles: number;
+  noProgressLimit: number;
+  noProgressCount: number;
+  lastProgressHash?: string;
+  deadlineAt: number;
+  stopReason?: AutomationLoopStopReason;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  pausedAt?: number;
+  doneAt?: number;
+  failedAt?: number;
+  cancelledAt?: number;
+}
+
+export interface CreateAutomationLoopInput {
+  projectId: string;
+  goalId?: string;
+  pairingId?: string;
+  sourceEndpointId: string;
+  targetEndpointId: string;
+  maxCycles: number;
+  noProgressLimit: number;
+  deadlineAt: number;
+  now?: number;
+}
+
+export interface AutomationLoopCycle {
+  id: string;
+  loopId: string;
+  index: number;
+  status: AutomationLoopCycleStatus;
+  promptHash: string;
+  progressHash?: string;
+  conversationActionId?: string;
+  workBuddyTaskId?: string;
+  reviewId?: string;
+  stopReason?: AutomationLoopStopReason;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /**
  * Phase 3 multi-executor relay (foundation): the server-resolved routing context
  * for a session, established only when an outbound prompt carrying an
