@@ -35,6 +35,11 @@ export class InMemoryConversationTranscriptStore {
       .map(clone);
   }
 
+  get(id: string): ConversationTranscriptEvent | undefined {
+    const event = this.events.get(id);
+    return event ? clone(event) : undefined;
+  }
+
   exportEvents(): ConversationTranscriptEvent[] {
     return Array.from(this.events.values(), clone);
   }

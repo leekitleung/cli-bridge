@@ -82,6 +82,16 @@ test('workbuddy adapter creates and dispatches a target-specific task', async ()
     capabilities: { canExecute: true, canAcceptPrompt: true, canReturnOutput: true },
   });
   runtime.endpointRegistry.register(target);
+  // Create a user transcript event so dispatch can look up the original text
+  runtime.conversationTranscriptStore.append({
+    id: 'u1',
+    projectId: 'cli-bridge',
+    pairingId: 'chatgpt-web→custom-executor',
+    role: 'user',
+    text: 'inspect this repository',
+    status: 'queued',
+    routeKind: 'workbuddy-execution',
+  });
   const route = resolveConversationRouteAdapter(target);
   const action = route.adapter.createAction({
     runtime,
@@ -99,4 +109,7 @@ test('workbuddy adapter creates and dispatches a target-specific task', async ()
   const dispatched = await route.adapter.dispatch({ runtime, action: confirmed.payload.action, request: {} });
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
+  // Verify the inbox task prompt is the user's original text, not the preview
+  const inbox = await runtime.workbuddyExecution.claimNext('custom-executor');
+  assert.equal(inbox.prompt, 'inspect this repository');
 });

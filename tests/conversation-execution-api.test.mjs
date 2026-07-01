@@ -186,6 +186,9 @@ test('conversation routes custom workbuddy transport target through route adapte
   const dispatched = await call(runtime, 'POST', `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`, {}, CONSOLE_AUTH);
   assert.equal(dispatched.statusCode, 200);
   assert.equal(dispatched.payload.task.endpointId, 'custom-executor');
+  const inbox = await call(runtime, 'GET', '/bridge/endpoints/custom-executor/inbox/next');
+  assert.equal(inbox.statusCode, 200);
+  assert.equal(inbox.payload.task.prompt, 'inspect the repo through custom executor');
 });
 
 // --- Task 7: Review-Command Auto-Dispatch ---

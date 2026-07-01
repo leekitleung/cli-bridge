@@ -45,13 +45,15 @@ const workbuddyExecutionAdapter: ConversationRouteAdapter = {
     if (input.action.status !== 'confirmed') return bridgeError(409, 'Conversation action must be confirmed before dispatch');
     const dispatching = input.runtime.conversationActionStore.markDispatching(input.action.id);
     if (!dispatching) return bridgeError(409, 'Conversation action cannot dispatch');
+    const userEvent = input.runtime.conversationTranscriptStore.get(input.action.userEventId);
+    const prompt = userEvent?.text ?? input.action.preview;
     const task = input.runtime.workbuddyExecution.enqueue({
       endpointId: input.action.targetEndpointId,
       proposalId: input.action.id,
       planId: `conversation:${input.action.projectId}`,
       goalId: `conversation:${input.action.projectId}`,
       bindingHash: input.action.textHash,
-      prompt: input.action.preview,
+      prompt,
       workingDirectory: process.cwd(),
       timeoutMs: 120_000,
     });
