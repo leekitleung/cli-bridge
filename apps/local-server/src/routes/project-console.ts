@@ -2007,6 +2007,12 @@ function renderCommandContext() {
 
 function formatWorkBuddyResultForDisplay(result) {
   if (!result) return '';
+  if (typeof result.stdout === 'string' && /^diagnostic worker received:/i.test(result.stdout.trim())) {
+    return 'Connector diagnostic completed. Real WorkBuddy execution output is not attached.';
+  }
+  if (typeof result.output === 'string' && /^diagnostic worker received:/i.test(result.output.trim())) {
+    return 'Connector diagnostic completed. Real WorkBuddy execution output is not attached.';
+  }
   if (typeof result.stdout === 'string' && result.stdout.trim()) return result.stdout.trim();
   if (typeof result.stderr === 'string' && result.stderr.trim()) return result.stderr.trim();
   if (typeof result.failureReason === 'string' && result.failureReason.trim()) return result.failureReason.trim();

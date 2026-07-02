@@ -200,6 +200,61 @@ test('workbuddy status-style request uses local fast path instead of slow planne
   assert.equal(res.payload.dispatch.task.prompt, '怎样，有没有结果');
 });
 
+test('diagnostic workbuddy result stays out of user-visible transcript', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime({
+    plannerAdapters: [{
+      id: 'slow-planner',
+      mode: 'test-only',
+      async plan() {
+        throw new Error('planner should not run');
+      },
+    }],
+  });
+
+  await setupPairing(runtime);
+  runtime.workbuddyExecution.enqueue({
+    projectId: 'cli-bridge',
+    endpointId: 'workbuddy',
+    proposalId: 'readiness-probe',
+    planId: 'readiness-probe',
+    goalId: 'readiness-probe',
+    bindingHash: 'readiness-probe',
+    prompt: 'readiness-probe',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.claimNext('workbuddy');
+
+  const message = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: '测试 workbuddy' }),
+  );
+  assert.equal(message.statusCode, 201);
+  const task = message.payload.dispatch.task;
+  runtime.workbuddyExecution.claimNext('workbuddy');
+
+  const result = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/endpoints/workbuddy/results',
+    jsonBody({
+      taskId: task.taskId,
+      proposalId: task.proposalId,
+      ok: true,
+      stdout: 'diagnostic worker received: 测试 workbuddy',
+      output: 'diagnostic worker received: 测试 workbuddy',
+    }),
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.event, undefined);
+  const transcript = runtime.conversationTranscriptStore.listByProject('cli-bridge');
+  assert.equal(transcript.some(e => /diagnostic worker received/.test(e.text)), false);
+  assert.equal(transcript.some(e => e.kind === 'executor_output'), false);
+});
+
 test('executor raw result returns to transcript without bridge-authored rewrite', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime({ plannerAdapters: [safeAutoExecutePlanner()] });

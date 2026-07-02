@@ -1154,6 +1154,11 @@ function createLocalWorkBuddyEnvelope(input: {
   };
 }
 
+function isWorkBuddyConnectorDiagnosticText(value: unknown): boolean {
+  return typeof value === 'string'
+    && /^diagnostic worker received:/i.test(value.trim());
+}
+
 // ---- WorkBuddy strict whitelist builder ----
 
 /** Strips unknown keys from a WorkBuddy payload, keeping only allowed fields
@@ -3373,16 +3378,21 @@ export async function handleBridgeRequest(
         ? formatWorkBuddyConversationResult(executionPacket.output, executionPacket.stdout)
         : (executionPacket.failureReason ?? executionPacket.stderr ?? 'WorkBuddy execution failed');
 
-      const event = runtime.conversationTranscriptStore.append({
-        projectId: conversationAction.projectId,
-        pairingId: executionPacket.pairingId,
-        role: 'target',
-        kind: 'executor_output',
-        visibility: 'user',
-        text: transcriptText,
-        status: outcomeOk ? 'returned' : 'failed',
-        routeKind: conversationAction.routeKind,
-      });
+      const connectorDiagnostic = isWorkBuddyConnectorDiagnosticText(executionPacket.stdout)
+        || isWorkBuddyConnectorDiagnosticText(executionPacket.output);
+
+      const event = connectorDiagnostic
+        ? undefined
+        : runtime.conversationTranscriptStore.append({
+          projectId: conversationAction.projectId,
+          pairingId: executionPacket.pairingId,
+          role: 'target',
+          kind: 'executor_output',
+          visibility: 'user',
+          text: transcriptText,
+          status: outcomeOk ? 'returned' : 'failed',
+          routeKind: conversationAction.routeKind,
+        });
       // EX-4: Strip internal routeId from the action before API response.
       if (updatedAction) {
         const sanitized = { ...updatedAction };
