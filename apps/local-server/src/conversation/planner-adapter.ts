@@ -37,7 +37,7 @@ export class PlannerAdapterRegistry {
   /** Returns first registered planner, or undefined if none. */
   defaultPlanner(): PlannerAdapter | undefined {
     for (const adapter of this.adapters.values()) {
-      if (adapter.mode !== 'test-only') return adapter;
+      return adapter;
     }
     return undefined;
   }

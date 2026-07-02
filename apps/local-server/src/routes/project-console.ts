@@ -2924,8 +2924,11 @@ function renderConversationPendingState(actions) {
 }
 
 function renderConversationEvent(event) {
-  const roleClass = event.role === 'user' ? 'user' : event.role === 'target' ? 'target' : 'bridge';
-  const label = event.role === 'user' ? 'user' : event.role === 'target' ? 'target' : 'bridge';
+  let roleClass, label;
+  if (event.role === 'user') { roleClass = 'user'; label = 'user'; }
+  else if (event.role === 'target') { roleClass = 'target'; label = 'target'; }
+  else if (event.role === 'planner') { roleClass = 'bridge'; label = 'planner'; }
+  else { roleClass = 'bridge'; label = 'bridge'; }
   return '<div class="conversation-message ' + roleClass + '"><div class="conversation-meta">'
     + escapeHtml(label)
     + '</div><div class="conversation-bubble">' + escapeHtml(event.text)

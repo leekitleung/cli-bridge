@@ -15,6 +15,37 @@ function jsonBody(body) {
 const CONSOLE_AUTH = { kind: 'console-cookie' };
 
 /**
+ * Test planner that returns propose_plan for plan-proposal-based tests.
+ */
+function testProposePlanPlanner() {
+  return {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: `Plan: ${input.userText}`,
+        intent: 'request_execution',
+        proposedInstruction: {
+          summary: input.userText,
+          payload: input.userText,
+          targetExecutorIds: ['workbuddy'],
+          riskHints: ['filesystem-mutation'],
+        },
+        createdAt: new Date().toISOString(),
+      };
+    },
+  };
+}
+
+async function createTestRuntime() {
+  const { createBridgeRuntime } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  return createBridgeRuntime({ plannerAdapters: [testProposePlanPlanner()] });
+}
+
+/**
  * Setup helper: creates a planner-gated workbuddy conversation, accepts the
  * generated plan, dispatches, and claims it — returning { runtime, action, task }
  * ready for result submission.
@@ -22,6 +53,18 @@ const CONSOLE_AUTH = { kind: 'console-cookie' };
 async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test instruction') {
   // Setup project and workbuddy pairing.
   const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+
+  // Establish WorkBuddy readiness so the gate doesn't block.
+  runtime.workbuddyExecution.enqueue({
+    endpointId: 'workbuddy',
+    proposalId: 'readiness-probe',
+    planId: 'readiness-probe',
+    goalId: 'readiness-probe',
+    bindingHash: 'readiness-probe',
+    prompt: 'readiness-probe',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.claimNext('workbuddy');
 
   await handleBridgeRequest(
     runtime,
@@ -70,7 +113,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
 
 test('result submission creates an execution packet before transcript event', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { action, task } = await setupAndClaim(runtime);
 
   // Before result: no execution packets.
@@ -109,7 +152,7 @@ test('result submission creates an execution packet before transcript event', as
 
 test('execution packet is NOT in result API response', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run tests');
 
   const resultRes = await handleBridgeRequest(
@@ -137,7 +180,7 @@ test('execution packet is NOT in result API response', async () => {
 
 test('user-visible answer body is derived from executor fields only', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'generate report');
 
   const resultRes = await handleBridgeRequest(
@@ -165,7 +208,7 @@ test('user-visible answer body is derived from executor fields only', async () =
 
 test('failed executor text comes from failureReason', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run failing command');
 
   const resultRes = await handleBridgeRequest(
@@ -201,7 +244,7 @@ test('failed executor text comes from failureReason', async () => {
 
 test('failed executor text falls back to stderr when failureReason is absent', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'run error');
 
   const resultRes = await handleBridgeRequest(
@@ -225,7 +268,7 @@ test('failed executor text falls back to stderr when failureReason is absent', a
 
 test('execution packet links to instruction packet via userEventId', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'my instruction');
 
   // Verify instruction packet exists.
@@ -260,7 +303,7 @@ test('persistence roundtrip preserves execution packets', async () => {
   const dir = mkdtempSync(resolve(tmpdir(), 'cli-bridge-test-'));
   try {
     // Phase 1: create runtime, setup, submit result, persist.
-    const first = createBridgeRuntime({ dataDir: dir });
+    const first = createBridgeRuntime({ dataDir: dir, plannerAdapters: [testProposePlanPlanner()] });
     const { task } = await setupAndClaim(first, 'cli-bridge', 'persistent instruction');
 
     await handleBridgeRequest(
@@ -284,7 +327,7 @@ test('persistence roundtrip preserves execution packets', async () => {
     const firstEp = firstPackets[0];
 
     // Phase 2: new runtime from same dir should restore execution packets.
-    const second = createBridgeRuntime({ dataDir: dir });
+    const second = createBridgeRuntime({ dataDir: dir, plannerAdapters: [testProposePlanPlanner()] });
     const secondPackets = second.conversationExecutionStore.exportPackets();
     assert.equal(secondPackets.length, 1);
     const secondEp = secondPackets[0];
@@ -306,7 +349,7 @@ test('persistence roundtrip preserves execution packets', async () => {
 
 test('full pipeline creates route linking instruction → action → task → result', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { action, task } = await setupAndClaim(runtime, 'cli-bridge', 'full pipeline test');
 
   // Verify route was created.
@@ -353,7 +396,7 @@ test('full pipeline creates route linking instruction → action → task → re
 
 test('route lifecycle: proposed → accepted → dispatched → completed via full pipeline', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'lifecycle test');
 
   const routes = runtime.conversationRouteStore.exportRoutes();
@@ -384,7 +427,7 @@ test('route lifecycle: proposed → accepted → dispatched → completed via fu
 
 test('route lifecycle: pending → dispatched → failed', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'failure test');
 
   const routes = runtime.conversationRouteStore.exportRoutes();
@@ -411,7 +454,7 @@ test('route lifecycle: pending → dispatched → failed', async () => {
 
 test('route id stays internal — not in API responses', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
   const { task } = await setupAndClaim(runtime, 'cli-bridge', 'internal test');
 
   // Submit result.
@@ -447,7 +490,19 @@ test('route id stays internal — not in API responses', async () => {
 
 test('posting messages creates no routes before plan acceptance', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime();
+  const runtime = await createTestRuntime();
+
+  // Establish WorkBuddy readiness so the gate doesn't block.
+  runtime.workbuddyExecution.enqueue({
+    endpointId: 'workbuddy',
+    proposalId: 'readiness-probe',
+    planId: 'readiness-probe',
+    goalId: 'readiness-probe',
+    bindingHash: 'readiness-probe',
+    prompt: 'readiness-probe',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.claimNext('workbuddy');
 
   // Setup.
   await handleBridgeRequest(

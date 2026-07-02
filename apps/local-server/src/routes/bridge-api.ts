@@ -46,6 +46,12 @@ import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts
 import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
 import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
 import type { PlannerAdapter } from '../conversation/planner-adapter.ts';
+import { resolveExecutorAvailability } from '../conversation/executor-availability.ts';
+import type { ExecutorAvailability } from '../conversation/executor-availability.ts';
+import { evaluateGate } from '../conversation/gate-evaluator.ts';
+import type { GateDecision } from '../conversation/gate-evaluator.ts';
+import { validatePlannerOutputEnvelope } from '../conversation/planner-output-envelope.ts';
+import { InMemoryGateDecisionStore } from '../storage/gate-decision-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
 import { tickAutomationLoop, runAutomationLoop } from '../automation/automation-loop-runner.ts';
@@ -191,6 +197,8 @@ export interface BridgeRuntime {
   workbuddyExecution: WorkBuddyExecutionAdapter;
   /** ADR-0031: planner adapter registry. Default runtime has no planners. */
   plannerRegistry: import('../conversation/planner-adapter.ts').PlannerAdapterRegistry;
+  /** ADR-0031: gate decision store for audit/debug. */
+  gateDecisionStore: InMemoryGateDecisionStore;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
@@ -1501,6 +1509,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   for (const adapter of options.plannerAdapters ?? []) {
     plannerRegistry.register(adapter);
   }
+  // ADR-0031: gate decision store.
+  const gateDecisionStore = new InMemoryGateDecisionStore();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
@@ -1695,6 +1705,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     planProposalStore,
     workbuddyExecution,
     plannerRegistry,
+    gateDecisionStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
@@ -3601,59 +3612,205 @@ export async function handleBridgeRequest(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (!text) return error(400, 'text is required');
 
+      // ADR-0031 Step 1: Resolve planner.
+      const planner = runtime.plannerRegistry.defaultPlanner();
+      if (!planner) {
+        return error(409, 'Planner unavailable: no planner adapter configured');
+      }
+
       const pairing = runtime.conversationPairingStore.get(key);
       if (!pairing) return error(409, 'Conversation pairing is not configured');
 
-      const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
-      if (!targetEndpoint) return error(409, 'Conversation target endpoint is unavailable');
-
-      // ADR-0029: Resolve route adapter (for accept-phase dispatch only — not used here).
-      const route = resolveConversationRouteAdapter(targetEndpoint);
-
       const sessionId = `conversation:${key}`;
+      const pairingId = `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`;
 
+      // ADR-0031 Step 2: Append user event.
       const userEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
-        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        pairingId,
         role: 'user',
         text,
-        status: 'queued',
+        status: 'draft',
         routeKind: pairing.targetRouteKind,
       });
 
-      // ADR-0030 EX-2: Route to planner instead of executor.
-      // Generate plan proposal. Do NOT create instruction packet / route / action.
-      const mockPlan = generateMockPlanProposal(text);
-      const planProposal = runtime.planProposalStore.create({
+      // ADR-0031 Step 3: Call planner.
+      let envelope;
+      try {
+        envelope = await planner.plan({
+          sessionId,
+          projectId: key,
+          userText: text,
+          history: [],
+        });
+      } catch (err) {
+        return error(500, `Planner error: ${String(err)}`);
+      }
+
+      // ADR-0031 Step 4: Validate envelope.
+      const validation = validatePlannerOutputEnvelope(envelope);
+      if (!validation.ok) {
+        return error(500, `Invalid planner output: ${validation.reason}`);
+      }
+
+      // ADR-0031 Step 5: Append planner visible output.
+      const plannerEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
+        pairingId,
+        role: 'planner',
+        text: envelope.visibleText,
+        status: 'draft',
+        routeKind: pairing.targetRouteKind,
+        kind: 'planner_output',
+        visibility: 'user',
+      });
+
+      // ADR-0031 Step 6: Resolve executor availability.
+      const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
+      const workbuddyReady = runtime.workbuddyExecution.isReady();
+      const availabilityList: ExecutorAvailability[] = [];
+      if (targetEndpoint) {
+        availabilityList.push(resolveExecutorAvailability({
+          endpoint: targetEndpoint,
+          workbuddyReady,
+          lastSeenAt: runtime.workbuddyExecution.getLastClaimedAt(),
+          now: Date.now(),
+        }));
+      }
+
+      // ADR-0031 Step 7: Evaluate gate.
+      const gateDecision = evaluateGate({
+        plannerOutput: envelope,
+        sessionState: { projectId: key },
+        executorAvailability: availabilityList,
+        policyConfig: { allowSafeAutoExecute: true },
+      });
+
+      // ADR-0031 Step 8: Persist gate decision.
+      runtime.gateDecisionStore.create({
         sessionId,
-        sourceEndpointId: pairing.sourceEndpointId,
-        plannerEndpointId: 'mock-planner',
-        executorEndpointIds: [pairing.targetEndpointId],
-        userEventId: userEvent.id,
-        title: mockPlan.title,
-        body: mockPlan.body,
-        steps: mockPlan.steps,
-        constraints: mockPlan.constraints,
-        riskNotes: mockPlan.riskNotes,
-      });
-
-      const bridgeText = `Plan proposal: ${mockPlan.title}\n\n${mockPlan.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
-      const bridgeEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
-        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
-        role: 'bridge',
-        text: bridgeText,
-        status: 'awaiting-manual-confirmation',
-        routeKind: pairing.targetRouteKind,
+        decision: gateDecision,
       });
 
-      // P0 gate: no instruction packet, no route, no task before accept.
+      // ADR-0031 Step 9: Act on gate decision.
+      const events = [userEvent, plannerEvent];
+
+      // ── continue_planning / clarify / answer / propose_plan ──
+      if (gateDecision.type === 'continue_planning') {
+        runtime.persist();
+        return created({ events, gate: gateDecision });
+      }
+
+      // ── blocked (executor unavailable or planner blocked) ──
+      if (gateDecision.type === 'blocked') {
+        runtime.persist();
+        return created({ events, gate: gateDecision });
+      }
+
+      // ── require_user_confirm — create plan proposal ──
+      if (gateDecision.type === 'require_user_confirm') {
+        const planText = envelope.proposedInstruction?.payload ?? envelope.visibleText;
+        const planSteps = envelope.proposedInstruction ? [envelope.proposedInstruction.summary] : [];
+        const planRisks = envelope.proposedInstruction?.riskHints ?? [];
+
+        const planProposal = runtime.planProposalStore.create({
+          projectId: key,
+          sessionId,
+          sourceEndpointId: pairing.sourceEndpointId,
+          plannerEndpointId: envelope.plannerEndpointId,
+          executorEndpointIds: envelope.proposedInstruction?.targetExecutorIds ?? [pairing.targetEndpointId],
+          userEventId: userEvent.id,
+          title: envelope.proposedInstruction?.summary ?? envelope.visibleText.slice(0, 80),
+          body: planText,
+          steps: planSteps,
+          constraints: [],
+          riskNotes: planRisks,
+        });
+
+        runtime.persist();
+        return created({ events, gate: gateDecision, plan: planProposal });
+      }
+
+      // ── auto_execute — create instruction + route + task ──
+      if (gateDecision.type === 'auto_execute' && targetEndpoint) {
+        const routeRes = resolveConversationRouteAdapter(targetEndpoint);
+        if (!routeRes.adapter) {
+          runtime.persist();
+          return created({ events, gate: gateDecision });
+        }
+
+        // Create instruction packet.
+        const instPacket = runtime.conversationInstructionStore.create({
+          projectId: key,
+          pairingId,
+          userEventId: userEvent.id,
+          text: gateDecision.instruction.payload,
+        });
+
+        // Append bridge event for instruction.
+        const bridgeEvent = runtime.conversationTranscriptStore.append({
+          projectId: key,
+          pairingId,
+          role: 'bridge',
+          text: 'Auto-executing...',
+          status: 'queued',
+          routeKind: pairing.targetRouteKind,
+        });
+
+        // Create action via route adapter.
+        const action = routeRes.adapter.createAction({
+          runtime,
+          projectId: key,
+          sourceEndpointId: pairing.sourceEndpointId,
+          targetEndpoint,
+          userEventId: userEvent.id,
+          bridgeEventId: bridgeEvent.id,
+          text: gateDecision.instruction.payload,
+        });
+
+        if (!action) {
+          runtime.persist();
+          return created({ events, gate: gateDecision });
+        }
+
+        // Create route linking instruction → action.
+        const taskRoute = runtime.conversationRouteStore.create({
+          projectId: key,
+          pairingId,
+          instructionPacketId: instPacket.id,
+          actionId: action.id,
+          mode: 'single',
+        });
+        runtime.conversationActionStore.linkRoute(action.id, taskRoute.id);
+
+        // Confirm → dispatch.
+        const linkedAction = runtime.conversationActionStore.get(action.id);
+        if (!linkedAction) {
+          runtime.persist();
+          return created({ events, gate: gateDecision });
+        }
+
+        const confirmed = routeRes.adapter.confirm({ runtime, action: linkedAction });
+        if (confirmed.statusCode !== 200) {
+          runtime.persist();
+          return created({ events, gate: gateDecision });
+        }
+
+        const confirmedAction = runtime.conversationActionStore.get(action.id);
+        if (!confirmedAction) {
+          runtime.persist();
+          return created({ events, gate: gateDecision });
+        }
+
+        const dispatchResult = await routeRes.adapter.dispatch({ runtime, action: confirmedAction, request });
+
+        runtime.persist();
+        return created({ events, gate: gateDecision, dispatch: dispatchResult.payload });
+      }
+
       runtime.persist();
-      return created({
-        events: [userEvent, bridgeEvent],
-        plan: planProposal,
-      });
+      return created({ events, gate: gateDecision });
     }
 
     return error(405, 'Method not allowed');

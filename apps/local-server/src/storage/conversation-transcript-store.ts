@@ -4,12 +4,12 @@ export interface ConversationTranscriptEvent {
   id: string;
   projectId: string;
   pairingId: string;
-  role: 'user' | 'bridge' | 'target';
+  role: 'user' | 'bridge' | 'target' | 'planner';
   text: string;
   status: 'draft' | 'queued' | 'awaiting-manual-confirmation' | 'returned' | 'failed' | 'not-implemented';
   routeKind: ConversationRouteKind;
   createdAt: number;
-  kind: 'user_message' | 'instruction' | 'executor_output' | 'status';
+  kind: 'user_message' | 'instruction' | 'executor_output' | 'status' | 'planner_output';
   visibility: 'user' | 'internal';
 }
 
@@ -18,6 +18,7 @@ function deriveKind(role: string): ConversationTranscriptEvent['kind'] {
     case 'user': return 'user_message';
     case 'target': return 'executor_output';
     case 'bridge': return 'status';
+    case 'planner': return 'planner_output';
     default: return 'status';
   }
 }
