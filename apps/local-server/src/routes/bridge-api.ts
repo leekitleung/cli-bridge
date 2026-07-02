@@ -44,6 +44,8 @@ import { InMemoryConversationExecutionStore } from '../storage/conversation-exec
 import { InMemoryConversationRouteStore } from '../storage/conversation-route-store.ts';
 import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts';
 import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
+import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
+import type { PlannerAdapter } from '../conversation/planner-adapter.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
 import { tickAutomationLoop, runAutomationLoop } from '../automation/automation-loop-runner.ts';
@@ -187,6 +189,8 @@ export interface BridgeRuntime {
   /** ADR-0030 EX-1: plan proposal store for planner-gated execution. */
   planProposalStore: InMemoryPlanProposalStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
+  /** ADR-0031: planner adapter registry. Default runtime has no planners. */
+  plannerRegistry: import('../conversation/planner-adapter.ts').PlannerAdapterRegistry;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
   modelProviderFor?: (apiKey: string) => ModelProvider;
@@ -246,6 +250,8 @@ export interface BridgeRuntimeOptions {
   // v2.14 ADR-0019-b: injectable fetch for tests.
   githubChecksFetchFn?: typeof fetch;
   additionalEndpoints?: readonly AgentEndpoint[];
+  /** ADR-0031: planner adapters to register at runtime. Mock planner must not be default. */
+  plannerAdapters?: readonly import('../conversation/planner-adapter.ts').PlannerAdapter[];
 }
 
 
@@ -1490,6 +1496,11 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const conversationRouteStore = new InMemoryConversationRouteStore();
   const planProposalStore = new InMemoryPlanProposalStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
+  // ADR-0031: planner registry — no planners by default.
+  const plannerRegistry = new PlannerAdapterRegistry();
+  for (const adapter of options.plannerAdapters ?? []) {
+    plannerRegistry.register(adapter);
+  }
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
   const applyRoot = options.applyRoot ?? process.env.TEMP ?? process.env.TMPDIR ?? '/tmp';
@@ -1683,6 +1694,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     conversationRouteStore,
     planProposalStore,
     workbuddyExecution,
+    plannerRegistry,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
     applyStore,
