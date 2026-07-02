@@ -342,3 +342,75 @@ test('archived project PATCH/DELETE workbuddy returns 409', async () => {
   assert.equal(res1.statusCode, 409);
   assert.equal(res2.statusCode, 409);
 });
+
+// ════════════════════════════════════════════════════════════════════
+// ADR-0032: Execution read model
+// ════════════════════════════════════════════════════════════════════
+
+test('GET workbuddy includes execution tasks and logs read model', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  const task = runtime.workbuddyExecution.enqueue({
+    projectId: 'alpha',
+    endpointId: 'workbuddy',
+    proposalId: 'proposal-1',
+    planId: 'alpha',
+    goalId: 'goal-1',
+    bindingHash: 'hash-1',
+    prompt: 'diagnostic',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.recordLog({
+    taskId: task.taskId,
+    endpointId: 'workbuddy',
+    kind: 'progress',
+    message: 'claimed',
+  });
+
+  const res = await call(runtime, 'GET', WB);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.executionTasks.length, 1);
+  assert.equal(res.payload.executionTasks[0].taskId, task.taskId);
+  assert.equal(res.payload.executionLogs.length, 1);
+  assert.equal(res.payload.executionLogs[0].message, 'claimed');
+  assert.doesNotMatch(JSON.stringify(res.payload), /x-cli-bridge-pairing-token/);
+});
+
+test('alpha GET does not see beta execution tasks or logs', async () => {
+  const runtime = createBridgeRuntime();
+  runtime.projectStore.upsert({ key: 'alpha' });
+  runtime.projectStore.upsert({ key: 'beta' });
+
+  // Create task in beta.
+  const betaTask = runtime.workbuddyExecution.enqueue({
+    projectId: 'beta',
+    endpointId: 'workbuddy',
+    proposalId: 'proposal-1',
+    planId: 'beta-plan',
+    goalId: 'goal-1',
+    bindingHash: 'hash-1',
+    prompt: 'diagnostic',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.recordLog({
+    taskId: betaTask.taskId,
+    endpointId: 'workbuddy',
+    kind: 'progress',
+    message: 'beta claimed',
+  });
+
+  // Alpha GET should not see beta's task or log.
+  const alphaRes = await call(runtime, 'GET', WB);
+  assert.equal(alphaRes.statusCode, 200);
+  assert.equal(alphaRes.payload.executionTasks.length, 0, 'alpha must not see beta tasks');
+  assert.equal(alphaRes.payload.executionLogs.length, 0, 'alpha must not see beta logs');
+
+  // Beta GET should see them.
+  const betaWb = BRIDGE_PROJECTS_PATH + '/beta/workbuddy';
+  const betaRes = await call(runtime, 'GET', betaWb);
+  assert.equal(betaRes.statusCode, 200);
+  assert.equal(betaRes.payload.executionTasks.length, 1, 'beta must see its own task');
+  assert.equal(betaRes.payload.executionTasks[0].taskId, betaTask.taskId);
+  assert.equal(betaRes.payload.executionLogs.length, 1, 'beta must see its own log');
+  assert.equal(betaRes.payload.executionLogs[0].message, 'beta claimed');
+});

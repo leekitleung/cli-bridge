@@ -169,6 +169,7 @@ test('executor raw result returns to transcript without bridge-authored rewrite'
 
   // Simulate WorkBuddy readiness by enqueueing and claiming a task.
   runtime.workbuddyExecution.enqueue({
+    projectId: 'cli-bridge',
     endpointId: 'workbuddy',
     proposalId: 'stub',
     planId: 'stub',
@@ -213,4 +214,55 @@ test('executor raw result returns to transcript without bridge-authored rewrite'
   const transcript = runtime.conversationTranscriptStore.listByProject('cli-bridge');
   const executorEvents = transcript.filter(e => e.role === 'target');
   assert.ok(executorEvents.length > 0, 'has executor output event');
+});
+
+// ADR-0032: WorkBuddy worker online integration.
+test('safe planner execution creates workbuddy task when worker has polled', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime({
+    plannerAdapters: [{
+      id: 'test-planner',
+      mode: 'test-only',
+      async plan(input) {
+        return {
+          id: `out-${Date.now()}`,
+          sessionId: input.sessionId,
+          plannerEndpointId: 'test-planner',
+          visibleText: 'Ready to run a diagnostic task.',
+          intent: 'request_execution',
+          proposedInstruction: {
+            summary: 'diagnostic',
+            payload: 'diagnostic: ping',
+            targetExecutorIds: ['workbuddy'],
+            riskHints: ['pure-transform'],
+          },
+        };
+      },
+    }],
+  });
+
+  // Simulate worker polling to establish readiness.
+  runtime.workbuddyExecution.claimNext('workbuddy');
+
+  // Setup pairing.
+  const pairRes = await handleBridgeRequest(
+    runtime,
+    'PUT',
+    '/bridge/projects/cli-bridge/conversation-pairing',
+    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+  );
+  assert.equal(pairRes.statusCode, 200);
+
+  const res = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: 'run diagnostic' }),
+  );
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.payload.gate.type, 'auto_execute');
+  const tasks = runtime.workbuddyExecution.exportTasks().filter(t => t.proposalId !== 'stub');
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].endpointId, 'workbuddy');
 });

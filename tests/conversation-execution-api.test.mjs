@@ -56,6 +56,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
 
   // Establish WorkBuddy readiness so the gate doesn't block.
   runtime.workbuddyExecution.enqueue({
+    projectId: 'cli-bridge',
     endpointId: 'workbuddy',
     proposalId: 'readiness-probe',
     planId: 'readiness-probe',
@@ -494,6 +495,7 @@ test('posting messages creates no routes before plan acceptance', async () => {
 
   // Establish WorkBuddy readiness so the gate doesn't block.
   runtime.workbuddyExecution.enqueue({
+    projectId: 'cli-bridge',
     endpointId: 'workbuddy',
     proposalId: 'readiness-probe',
     planId: 'readiness-probe',

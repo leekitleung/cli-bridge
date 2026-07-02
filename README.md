@@ -76,6 +76,32 @@ loops.
   `docs/contracts/bridge-workbuddy-api.md`.
   Archived project GET allowed, POST → 409.
   Console Tasks dashboard visible at `/console/project`.
+- **Local WorkBuddy Worker (ADR-0032)**: A bounded local pull-based worker that
+  polls the WorkBuddy inbox, processes diagnostic tasks, and returns raw
+  execution results. This completes the planner gate → executor → result closed
+  loop for local operator testing.
+
+  Enable in `scripts/local-config.json`:
+
+  ```json
+  {
+    "planner": { "kind": "codex" },
+    "workbuddyWorker": {
+      "enabled": true,
+      "endpointId": "workbuddy",
+      "pollIntervalMs": 1000
+    }
+  }
+  ```
+
+  Start:
+  ```bash
+  npm run start:local-server:configured
+  ```
+
+  The worker uses the server-owned pairing token in memory. Do not put
+  pairing tokens in config files. The main transcript shows planner/user-facing
+  messages only; WorkBuddy lifecycle appears in the WorkBuddy panel.
 - **Planned v1.5b route**: local review-only command transport for Codex CLI and
   Claude Code CLI, using fixed allowlisted argv, `shell: false`, no-tools /
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is

@@ -603,6 +603,7 @@ test('WorkBuddy execution proposals survive restart alongside tasks', () => {
     });
     assert.ok(confirmResult.ok, 'confirmation succeeded: ' + (confirmResult.failureReason ?? ''));
     first.workbuddyExecution.enqueue({
+      projectId: 'default',
       endpointId: 'workbuddy', proposalId: proposal.id,
       planId: plan.id, goalId: goal.id, bindingHash: 'sha256:fake',
       prompt: 'test prompt', workingDirectory: '/tmp',

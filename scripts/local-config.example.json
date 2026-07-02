@@ -41,6 +41,11 @@
     "timeoutMs": 120000,
     "maxOutputBytes": 1000000
   },
+  "workbuddyWorker": {
+    "enabled": false,
+    "endpointId": "workbuddy",
+    "pollIntervalMs": 1000
+  },
   "projects": [
     {
       "key": "cli-bridge",

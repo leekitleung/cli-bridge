@@ -512,6 +512,50 @@ test('parseConfig rejects non-object and bad projects', () => {
   assert.throws(() => parseConfig('{"planner":{"kind":"mock"}}'), /planner\.kind/);
 });
 
+test('parseConfig accepts disabled workbuddy worker config', () => {
+  const config = parseConfig(JSON.stringify({
+    workbuddyWorker: { enabled: false, endpointId: 'workbuddy', pollIntervalMs: 250 },
+  }));
+  assert.equal(config.workbuddyWorker.enabled, false);
+  assert.equal(config.workbuddyWorker.endpointId, 'workbuddy');
+  assert.equal(config.workbuddyWorker.pollIntervalMs, 250);
+});
+
+test('parseConfig allows enabled workbuddy worker config', () => {
+  const config = parseConfig(JSON.stringify({
+    workbuddyWorker: { enabled: true },
+  }));
+  assert.equal(config.workbuddyWorker.enabled, true);
+  assert.equal(config.workbuddyWorker.endpointId, undefined);
+});
+
+test('parseConfig rejects invalid workbuddy worker config', () => {
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyWorker: { enabled: true, pollIntervalMs: -1 } })),
+    /workbuddyWorker.pollIntervalMs/,
+  );
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyWorker: { enabled: 'yes' } })),
+    /workbuddyWorker.enabled/,
+  );
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyWorker: { enabled: true, endpointId: 123 } })),
+    /workbuddyWorker.endpointId/,
+  );
+});
+
+test('parseConfig allows workbuddyWorker top-level key with other config', () => {
+  const config = parseConfig(JSON.stringify({
+    port: 31337,
+    planner: { kind: 'codex' },
+    workbuddyWorker: { enabled: true, pollIntervalMs: 500 },
+  }));
+  assert.equal(config.port, 31337);
+  assert.equal(config.planner.kind, 'codex');
+  assert.equal(config.workbuddyWorker.enabled, true);
+  assert.equal(config.workbuddyWorker.pollIntervalMs, 500);
+});
+
 test('formatStartupSummary never includes a github token value', () => {
   const lines = formatStartupSummary(
     { url: 'http://127.0.0.1:31337', pairingToken: 'PAIR' },

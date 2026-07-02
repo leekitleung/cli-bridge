@@ -1,6 +1,6 @@
 # /bridge/projects/:key/workbuddy API Contract
 
-**Status**: Implemented (v2.2) | **Version**: v2.2 (feat/v2.2-workbuddy-surface)
+**Status**: Implemented (v2.2, ADR-0032) | **Version**: v2.2 + ADR-0032
 **Source**: `apps/local-server/src/routes/bridge-api.ts`
 **Tests**: `tests/bridge-workbuddy-api.test.mjs`
 
@@ -47,9 +47,16 @@ Returns all WorkBuddy state scoped to the project.
   "tasks": [...WorkBuddyTaskReference],
   "reviewResultSinks": [...WorkBuddyReviewResultSink],
   "promptDraftSinks": [...WorkBuddyPromptDraftSink],
-  "executionLedgerEvents": [...WorkBuddyExecutionLedgerEvent]
+  "executionLedgerEvents": [...WorkBuddyExecutionLedgerEvent],
+  "executionTasks": [...WorkBuddyExecutionTask],
+  "executionLogs": [...WorkBuddyExecutionLogEntry]
 }
 ```
+
+The `executionTasks` and `executionLogs` fields (ADR-0032) provide a read-only
+view into the WorkBuddy execution lifecycle. They include task status, endpoint
+ID, and structured log entries — but never include pairing token, instruction
+packets, route IDs, action IDs, or planner internals.
 
 ### Error cases
 

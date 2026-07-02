@@ -1832,8 +1832,8 @@ function renderCommandContext() {
     html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
     html += '</div>';
   } else if (store.contextView === 'workbuddy') {
-    html = '<div class="card"><h3>WorkBuddy Tasks (non-executing)</h3>';
-    html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records. All strictly non-executing — no dispatch, no confirm, no auto-send.</p>';
+    html = '<div class="card"><h3>WorkBuddy</h3>';
+    html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records are non-executing — no dispatch, no confirm, no auto-send. Execution lifecycle is reported by the configured local worker.</p>';
     const wb = store.cache.workbuddy;
     if (wb && wb.tasks && wb.tasks.length) {
       html += '<h4 style="margin-top:12px;">Tasks</h4><table><thead><tr><th>title</th><th>status</th></tr></thead><tbody>';
@@ -1863,8 +1863,23 @@ function renderCommandContext() {
       });
       html += '</tbody></table>';
     }
-    if (!wb || (!wb.tasks?.length && !wb.reviewResultSinks?.length && !wb.promptDraftSinks?.length && !wb.executionLedgerEvents?.length)) {
-      html += '<span class="unavailable">No WorkBuddy records in this project. Tasks, review results, prompt drafts, and external execution records will appear here once recorded via the WorkBuddy API.</span>';
+    // ADR-0032: WorkBuddy execution lifecycle.
+    if (wb && wb.executionTasks && wb.executionTasks.length) {
+      html += '<h4 style="margin-top:12px;">Execution Tasks</h4><table><thead><tr><th>status</th><th>endpoint</th></tr></thead><tbody>';
+      wb.executionTasks.forEach(t => {
+        html += '<tr><td><span class="pill">' + escapeHtml(t.status || 'unknown') + '</span></td><td>' + escapeHtml(t.endpointId || 'workbuddy') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (wb && wb.executionLogs && wb.executionLogs.length) {
+      html += '<h4 style="margin-top:12px;">Worker Logs</h4><table><thead><tr><th>kind</th><th>message</th></tr></thead><tbody>';
+      wb.executionLogs.forEach(l => {
+        html += '<tr><td><span class="pill">' + escapeHtml(l.kind || 'info') + '</span></td><td>' + escapeHtml(l.message || '') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    if (!wb || (!wb.tasks?.length && !wb.reviewResultSinks?.length && !wb.promptDraftSinks?.length && !wb.executionLedgerEvents?.length && !wb.executionTasks?.length && !wb.executionLogs?.length)) {
+      html += '<span class="unavailable">No WorkBuddy records in this project. Tasks, review results, prompt drafts, execution lifecycle, and external execution records will appear here once recorded via the WorkBuddy API.</span>';
     }
     html += '</div>';
   }

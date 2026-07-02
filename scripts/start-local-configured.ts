@@ -52,6 +52,10 @@ import {
   createClaudePlannerAdapter,
   createCodexPlannerAdapter,
 } from '../apps/local-server/src/conversation/command-planner-adapter.ts';
+import {
+  createWorkBuddyWorker,
+  runWorkBuddyWorker,
+} from '../apps/local-server/src/workbuddy/workbuddy-worker.ts';
 
 export interface LocalProjectConfig {
   key: string;
@@ -74,6 +78,11 @@ export interface LocalConfig {
     id?: string;
     timeoutMs?: number;
     maxOutputBytes?: number;
+  };
+  workbuddyWorker?: {
+    enabled: boolean;
+    endpointId?: string;
+    pollIntervalMs?: number;
   };
 }
 
@@ -141,6 +150,23 @@ export function parseConfig(raw: string): LocalConfig {
     }
     if (config.planner.kind !== 'codex' && config.planner.kind !== 'claude') {
       throw new Error('config.planner.kind must be "codex" or "claude".');
+    }
+  }
+  if (config.workbuddyWorker !== undefined) {
+    if (typeof config.workbuddyWorker !== 'object' || config.workbuddyWorker === null || Array.isArray(config.workbuddyWorker)) {
+      throw new Error('config.workbuddyWorker must be an object when present.');
+    }
+    if (typeof config.workbuddyWorker.enabled !== 'boolean') {
+      throw new Error('config.workbuddyWorker.enabled must be boolean.');
+    }
+    if (config.workbuddyWorker.endpointId !== undefined && typeof config.workbuddyWorker.endpointId !== 'string') {
+      throw new Error('config.workbuddyWorker.endpointId must be string when present.');
+    }
+    if (
+      config.workbuddyWorker.pollIntervalMs !== undefined
+      && (!Number.isInteger(config.workbuddyWorker.pollIntervalMs) || config.workbuddyWorker.pollIntervalMs <= 0)
+    ) {
+      throw new Error('config.workbuddyWorker.pollIntervalMs must be a positive integer when present.');
     }
   }
   for (const project of config.projects ?? []) {
@@ -245,6 +271,30 @@ export function buildRuntimeOptions(
     githubTokenStore,
     plannerAdapters,
   };
+}
+
+/**
+ * Start a bounded local WorkBuddy worker if the config enables it.
+ * Uses the server-owned pairing token in memory — never persisted.
+ * Returns an AbortController for graceful shutdown, or undefined
+ * if the worker is not enabled.
+ */
+export function startConfiguredWorkBuddyWorker(
+  handle: Pick<LocalServerHandle, 'url' | 'pairingToken'>,
+  config: LocalConfig,
+): AbortController | undefined {
+  if (!config.workbuddyWorker?.enabled) return undefined;
+  const controller = new AbortController();
+  const worker = createWorkBuddyWorker({
+    endpointId: config.workbuddyWorker.endpointId ?? 'workbuddy',
+    baseUrl: handle.url,
+    pairingToken: handle.pairingToken,
+    pollIntervalMs: config.workbuddyWorker.pollIntervalMs,
+  });
+  void runWorkBuddyWorker(worker, controller.signal).catch((err: unknown) => {
+    console.error(`WorkBuddy worker stopped: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  return controller;
 }
 
 /**
@@ -440,7 +490,14 @@ async function main(): Promise<void> {
     config.projects ?? [],
     fetch as unknown as FetchLike,
   );
+
+  // ADR-0032: optionally start a local WorkBuddy worker.
+  const workbuddyWorkerController = startConfiguredWorkBuddyWorker(handle, config);
   installShutdownHandlers(handle);
+  if (workbuddyWorkerController) {
+    process.once('SIGINT', () => workbuddyWorkerController.abort());
+    process.once('SIGTERM', () => workbuddyWorkerController.abort());
+  }
 
   for (const line of formatStartupSummary(handle, config, tokenProjects)) {
     console.log(line);

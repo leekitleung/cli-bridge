@@ -48,6 +48,7 @@ const workbuddyExecutionAdapter: ConversationRouteAdapter = {
     const userEvent = input.runtime.conversationTranscriptStore.get(input.action.userEventId);
     const prompt = userEvent?.text ?? input.action.preview;
     const task = input.runtime.workbuddyExecution.enqueue({
+      projectId: input.action.projectId,
       endpointId: input.action.targetEndpointId,
       proposalId: input.action.id,
       planId: `conversation:${input.action.projectId}`,

@@ -1110,8 +1110,16 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
     reviewResultSinks: runtime.workbuddyStore.listReviewResultSinks().filter(r => resolveProjectKey(r.projectId) === projectKey),
     promptDraftSinks: runtime.workbuddyStore.listPromptDraftSinks().filter(p => resolveProjectKey(p.projectId) === projectKey),
     executionLedgerEvents: runtime.workbuddyStore.listExecutionLedgerEvents().filter(e => resolveProjectKey(e.projectId) === projectKey),
-  };
-}
+    // ADR-0032: WorkBuddy execution read model.
+    // Scope to this project: filter tasks by explicit projectId, logs by belonging taskIds.
+    executionTasks: runtime.workbuddyExecution.listTasks('workbuddy')
+      .filter(t => resolveProjectKey(t.projectId) === projectKey),
+    executionLogs: runtime.workbuddyExecution.listLogs('workbuddy')
+      .filter(l => {
+        const task = runtime.workbuddyExecution.getTask(l.taskId);
+        return task && resolveProjectKey(task.projectId) === projectKey;
+      }),
+  };}
 
 // ---- WorkBuddy strict whitelist builder ----
 

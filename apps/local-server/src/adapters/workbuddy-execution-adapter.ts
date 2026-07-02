@@ -14,6 +14,8 @@ import { randomUUID } from 'node:crypto';
 
 export interface WorkBuddyExecutionTask {
   taskId: string;
+  /** Project this task belongs to (ADR-0032 P0 fix). */
+  projectId: string;
   endpointId: string;
   proposalId: string;
   planId: string;
@@ -86,6 +88,7 @@ export class WorkBuddyExecutionAdapter {
    */
   enqueue(input: {
     endpointId: string;
+    projectId: string;
     proposalId: string;
     planId: string;
     goalId: string;
@@ -97,6 +100,7 @@ export class WorkBuddyExecutionAdapter {
     const now = Date.now();
     const task: WorkBuddyExecutionTask = {
       taskId: randomUUID(),
+      projectId: input.projectId,
       endpointId: input.endpointId,
       proposalId: input.proposalId,
       planId: input.planId,
@@ -199,6 +203,20 @@ export class WorkBuddyExecutionAdapter {
     return this.logs.filter(l => l.taskId === taskId).map(clone);
   }
 
+  /** List all tasks, optionally filtered by endpointId. */
+  listTasks(endpointId?: string): WorkBuddyExecutionTask[] {
+    return Array.from(this.tasks.values())
+      .filter(t => endpointId === undefined || t.endpointId === endpointId)
+      .map(clone);
+  }
+
+  /** List all log entries, optionally filtered by endpointId. */
+  listLogs(endpointId?: string): WorkBuddyExecutionLogEntry[] {
+    return this.logs
+      .filter(l => endpointId === undefined || l.endpointId === endpointId)
+      .map(clone);
+  }
+
   // ── Snapshot persistence ──
 
   exportTasks(): WorkBuddyExecutionTask[] {
@@ -206,7 +224,7 @@ export class WorkBuddyExecutionAdapter {
   }
 
   hydrateTask(task: WorkBuddyExecutionTask): void {
-    if (!task.taskId || !task.endpointId || !task.proposalId) return;
+    if (!task.taskId || !task.endpointId || !task.proposalId || !task.projectId) return;
     this.tasks.set(task.taskId, clone(task));
   }
 }
