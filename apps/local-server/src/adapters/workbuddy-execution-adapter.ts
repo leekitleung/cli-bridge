@@ -63,6 +63,21 @@ export class WorkBuddyExecutionAdapter {
   private readonly tasks = new Map<string, WorkBuddyExecutionTask>();
   private readonly results = new Map<string, WorkBuddyExecutionResult>();
   private readonly logs: WorkBuddyExecutionLogEntry[] = [];
+  private lastClaimedAt = 0;
+
+  /**
+   * Readiness: true if WorkBuddy has polled recently (claimed a task).
+   * This signal is checked before dispatch to avoid queuing tasks for an
+   * unavailable pull-based executor.
+   */
+  isReady(maxStaleMs = 120_000): boolean {
+    return this.lastClaimedAt > 0 && (Date.now() - this.lastClaimedAt < maxStaleMs);
+  }
+
+  /** Expose readiness timestamp for availability resolution. */
+  getLastClaimedAt(): number {
+    return this.lastClaimedAt;
+  }
 
   /**
    * Enqueue a new execution task to the endpoint's inbox.
@@ -102,6 +117,7 @@ export class WorkBuddyExecutionAdapter {
    * it as 'claimed'. Returns undefined if no pending tasks.
    */
   claimNext(endpointId: string): WorkBuddyExecutionTask | undefined {
+    this.lastClaimedAt = Date.now();
     for (const task of this.tasks.values()) {
       if (task.endpointId === endpointId && task.status === 'pending') {
         task.status = 'claimed';
