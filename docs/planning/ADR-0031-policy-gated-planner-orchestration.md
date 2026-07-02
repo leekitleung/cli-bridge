@@ -1,6 +1,6 @@
 # ADR-0031: Policy-Gated Planner Orchestration
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-02
 
