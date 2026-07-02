@@ -2470,6 +2470,20 @@ test('renderConversationTranscript shows planner waiting state while send is pen
   assert.match(document.getElementById('conversation-transcript').innerHTML, /wait-spinner/);
 });
 
+test('main conversation transcript hides role and status chrome', () => {
+  const { window } = setupConsole();
+  const html = window.renderConversationTranscript([
+    { role: 'user', kind: 'user_message', visibility: 'user', text: 'hi', status: 'draft' },
+    { role: 'planner', kind: 'planner_output', visibility: 'user', text: 'plan text', status: 'draft' },
+    { role: 'target', kind: 'executor_output', visibility: 'user', text: 'raw result', status: 'returned' },
+  ]);
+
+  assert.match(html, /hi/);
+  assert.match(html, /plan text/);
+  assert.match(html, /raw result/);
+  assert.doesNotMatch(html, /conversation-meta|>planner<|>target<|>status<|Executor started/);
+});
+
 test('renderConversationTranscript preserved legacy admin filter', () => {
   const consoleSource = readFileSync(
     resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
@@ -2510,7 +2524,7 @@ test('conversation send guards duplicate submit while planner request is pending
   assert.ok(consoleSource.includes("$('command-send').disabled = false"));
 });
 
-test('conversation transcript renders gate status when no executor task is created', () => {
+test('conversation transcript hides gate status when no executor task is created', () => {
   const { window } = setupConsole();
 
   const html = window.renderConversationTranscript([
@@ -2521,7 +2535,7 @@ test('conversation transcript renders gate status when no executor task is creat
   });
 
   assert.match(html, /Planner answered only/);
-  assert.match(html, /Executor was not started/);
+  assert.doesNotMatch(html, /Executor was not started|conversation-gate-status|status/);
 });
 
 // ── EX-5: Passthrough route plane acceptance ───────────────────

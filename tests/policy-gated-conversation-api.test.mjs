@@ -50,6 +50,7 @@ async function setupPairing(runtime, projectId = 'cli-bridge') {
 test('conversation message returns planner-unavailable when no real planner is configured', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime();
+  await setupPairing(runtime);
 
   const res = await handleBridgeRequest(
     runtime,
@@ -157,6 +158,46 @@ test('request execution blocks before dispatch when executor unavailable', async
   assert.equal(read.statusCode, 200);
   assert.equal(read.payload.gate.type, 'blocked');
   assert.equal(read.payload.gateDecisions.length, 1);
+});
+
+test('workbuddy status-style request uses local fast path instead of slow planner', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  let plannerCalled = false;
+  const runtime = createBridgeRuntime({
+    plannerAdapters: [{
+      id: 'slow-planner',
+      mode: 'test-only',
+      async plan() {
+        plannerCalled = true;
+        throw new Error('planner should not run');
+      },
+    }],
+  });
+
+  await setupPairing(runtime);
+  runtime.workbuddyExecution.enqueue({
+    projectId: 'cli-bridge',
+    endpointId: 'workbuddy',
+    proposalId: 'readiness-probe',
+    planId: 'readiness-probe',
+    goalId: 'readiness-probe',
+    bindingHash: 'readiness-probe',
+    prompt: 'readiness-probe',
+    workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.claimNext('workbuddy');
+
+  const res = await handleBridgeRequest(
+    runtime,
+    'POST',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: '怎样，有没有结果' }),
+  );
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(plannerCalled, false);
+  assert.equal(res.payload.gate.type, 'auto_execute');
+  assert.equal(res.payload.dispatch.task.prompt, '怎样，有没有结果');
 });
 
 test('executor raw result returns to transcript without bridge-authored rewrite', async () => {

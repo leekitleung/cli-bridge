@@ -3080,14 +3080,12 @@ function renderConversationWaitStates() {
   let html = '';
   if (store.conversationPlannerStartedAt) {
     html += '<div class="conversation-message bridge conversation-waiting">'
-      + '<div class="conversation-meta">planner</div>'
       + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for planner', store.conversationPlannerStartedAt) + '</div>'
       + '</div>';
   }
   if (store.conversationExecutorStartedAt) {
     const label = store.conversationExecutorLabel || 'executor';
     html += '<div class="conversation-message bridge conversation-waiting">'
-      + '<div class="conversation-meta">status</div>'
       + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for ' + label, store.conversationExecutorStartedAt) + '</div>'
       + '</div>';
   }
@@ -3113,14 +3111,11 @@ function renderConversationPendingState(actions) {
 }
 
 function renderConversationEvent(event) {
-  let roleClass, label;
-  if (event.role === 'user') { roleClass = 'user'; label = 'user'; }
-  else if (event.role === 'target') { roleClass = 'target'; label = 'target'; }
-  else if (event.role === 'planner') { roleClass = 'bridge'; label = 'planner'; }
-  else { roleClass = 'bridge'; label = 'bridge'; }
-  return '<div class="conversation-message ' + roleClass + '"><div class="conversation-meta">'
-    + escapeHtml(label)
-    + '</div><div class="conversation-bubble">' + escapeHtml(event.text)
+  let roleClass;
+  if (event.role === 'user') roleClass = 'user';
+  else if (event.role === 'target') roleClass = 'target';
+  else roleClass = 'bridge';
+  return '<div class="conversation-message ' + roleClass + '"><div class="conversation-bubble">' + escapeHtml(event.text)
     + '</div></div>';
 }
 
@@ -3137,10 +3132,7 @@ function renderConversationGateStatus(gate) {
     return '';
   }
   if (!text) return '';
-  return '<div class="conversation-message bridge conversation-gate-status">'
-    + '<div class="conversation-meta">status</div>'
-    + '<div class="conversation-bubble">' + escapeHtml(text) + '</div>'
-    + '</div>';
+  return '';
 }
 
 function mergeConversationActions(existing, incoming) {

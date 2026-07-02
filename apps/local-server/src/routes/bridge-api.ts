@@ -51,6 +51,7 @@ import type { ExecutorAvailability } from '../conversation/executor-availability
 import { evaluateGate } from '../conversation/gate-evaluator.ts';
 import type { GateDecision } from '../conversation/gate-evaluator.ts';
 import { validatePlannerOutputEnvelope } from '../conversation/planner-output-envelope.ts';
+import type { PlannerOutputEnvelope } from '../conversation/planner-output-envelope.ts';
 import { InMemoryGateDecisionStore } from '../storage/gate-decision-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
@@ -1121,6 +1122,37 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
     executionLogs: runtime.workbuddyExecution.listLogs('workbuddy')
       .filter(l => executionTaskIds.has(l.taskId)),
   };}
+
+function isLocalWorkBuddyFastRequest(text: string, pairing: ConversationPairing | undefined): boolean {
+  if (!pairing || pairing.targetEndpointId !== 'workbuddy') return false;
+  const normalized = text.toLowerCase();
+  if (normalized.includes('workbuddy')) return true;
+  return /结果|响应|进度|状态|收到|有没有|怎样|怎么样/.test(normalized);
+}
+
+function createLocalWorkBuddyEnvelope(input: {
+  sessionId: string;
+  projectId: string;
+  text: string;
+  pairing: ConversationPairing | undefined;
+}): PlannerOutputEnvelope | null {
+  if (!isLocalWorkBuddyFastRequest(input.text, input.pairing)) return null;
+  const now = new Date().toISOString();
+  return {
+    id: `local-workbuddy-${Date.now()}`,
+    sessionId: input.sessionId,
+    plannerEndpointId: 'local-workbuddy-fast-path',
+    visibleText: 'Checking WorkBuddy.',
+    intent: 'request_execution',
+    proposedInstruction: {
+      summary: 'Check WorkBuddy',
+      payload: input.text,
+      targetExecutorIds: ['workbuddy'],
+      riskHints: ['pure-transform'],
+    },
+    createdAt: now,
+  };
+}
 
 // ---- WorkBuddy strict whitelist builder ----
 
@@ -3624,17 +3656,24 @@ export async function handleBridgeRequest(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (!text) return error(400, 'text is required');
 
-      // ADR-0031 Step 1: Resolve planner.
-      const planner = runtime.plannerRegistry.defaultPlanner();
-      if (!planner) {
-        return error(409, 'Planner unavailable: no planner adapter configured');
-      }
-
       const pairing = runtime.conversationPairingStore.get(key);
       if (!pairing) return error(409, 'Conversation pairing is not configured');
 
       const sessionId = `conversation:${key}`;
       const pairingId = `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`;
+      const localEnvelope = createLocalWorkBuddyEnvelope({
+        sessionId,
+        projectId: key,
+        text,
+        pairing,
+      });
+
+      // ADR-0031 Step 1: Resolve planner unless a deterministic local
+      // WorkBuddy status/diagnostic path can avoid the slow planner command.
+      const planner = localEnvelope ? undefined : runtime.plannerRegistry.defaultPlanner();
+      if (!localEnvelope && !planner) {
+        return error(409, 'Planner unavailable: no planner adapter configured');
+      }
 
       // ADR-0031 Step 2: Append user event.
       const userEvent = runtime.conversationTranscriptStore.append({
@@ -3649,7 +3688,7 @@ export async function handleBridgeRequest(
       // ADR-0031 Step 3: Call planner.
       let envelope;
       try {
-        envelope = await planner.plan({
+        envelope = localEnvelope ?? await planner!.plan({
           sessionId,
           projectId: key,
           userText: text,
