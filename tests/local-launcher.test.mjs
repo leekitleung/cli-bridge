@@ -25,7 +25,9 @@ import {
   bootstrapStartedServer,
   installShutdownHandlers,
   openInBrowser,
+  buildRuntimeOptions,
 } from '../scripts/start-local-configured.ts';
+import { GithubTokenStore } from '../apps/local-server/src/verification/github-token-store.ts';
 
 const PAIRING_HEADER = 'x-cli-bridge-pairing-token';
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -477,6 +479,17 @@ test('local-config.example.json parses and uses directly-spawnable executables',
   assert.equal(selectedProfile.argv[0], 'node');
 });
 
+test('local config can register an operator command planner adapter', () => {
+  const config = parseConfig(JSON.stringify({
+    planner: { kind: 'codex', id: 'operator-codex-planner' },
+  }));
+  const options = buildRuntimeOptions(config, new GithubTokenStore());
+
+  assert.equal(options.plannerAdapters?.length, 1);
+  assert.equal(options.plannerAdapters[0].id, 'operator-codex-planner');
+  assert.equal(options.plannerAdapters[0].mode, 'automatic');
+});
+
 // ── §5.5 Config/token helpers + summary token discipline ──
 
 test('resolveTokenForProject prefers per-project over global, else undefined', () => {
@@ -496,6 +509,7 @@ test('parseConfig rejects non-object and bad projects', () => {
   assert.throws(() => parseConfig('[]'), /JSON object/);
   assert.throws(() => parseConfig('{"projects":{}}'), /must be an array/);
   assert.throws(() => parseConfig('{"projects":[{"label":"x"}]}'), /non-empty string key/);
+  assert.throws(() => parseConfig('{"planner":{"kind":"mock"}}'), /planner\.kind/);
 });
 
 test('formatStartupSummary never includes a github token value', () => {

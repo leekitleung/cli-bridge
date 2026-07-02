@@ -43,3 +43,50 @@ test('default runtime has no default planner', async () => {
   const planner = runtime.plannerRegistry.defaultPlanner();
   assert.equal(planner, undefined);
 });
+
+test('command planner adapter converts CLI JSON output into planner envelope', async () => {
+  const { createCodexPlannerAdapter } = await import('../apps/local-server/src/conversation/command-planner-adapter.ts');
+
+  const adapter = createCodexPlannerAdapter({
+    id: 'operator-codex-planner',
+    commandOptions: {
+      launcherResolver: () => ({ executable: 'codex', prependArgs: [] }),
+      runner: {
+        async run(execution) {
+          assert.equal(execution.command, 'codex');
+          assert.match(execution.stdin, /format this/i);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              visibleText: 'I can format this.',
+              intent: 'request_execution',
+              proposedInstruction: {
+                summary: 'Format text',
+                payload: 'format this',
+                targetExecutorIds: ['workbuddy'],
+                riskHints: ['pure-transform'],
+              },
+            }),
+            stderr: '',
+            timedOut: false,
+            truncated: false,
+          };
+        },
+      },
+    },
+  });
+
+  const envelope = await adapter.plan({
+    sessionId: 's1',
+    projectId: 'cli-bridge',
+    userText: 'format this',
+    history: [],
+  });
+
+  assert.equal(envelope.id.length > 0, true);
+  assert.equal(envelope.sessionId, 's1');
+  assert.equal(envelope.plannerEndpointId, 'operator-codex-planner');
+  assert.equal(envelope.visibleText, 'I can format this.');
+  assert.equal(envelope.intent, 'request_execution');
+  assert.equal(envelope.proposedInstruction.payload, 'format this');
+});

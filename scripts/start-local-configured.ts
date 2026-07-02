@@ -48,6 +48,10 @@ import {
 import { GithubTokenStore } from '../apps/local-server/src/verification/github-token-store.ts';
 import { redactSensitiveContent } from '../apps/local-server/src/security/redaction.ts';
 import type { BridgeRuntimeOptions } from '../apps/local-server/src/routes/bridge-api.ts';
+import {
+  createClaudePlannerAdapter,
+  createCodexPlannerAdapter,
+} from '../apps/local-server/src/conversation/command-planner-adapter.ts';
 
 export interface LocalProjectConfig {
   key: string;
@@ -65,6 +69,12 @@ export interface LocalConfig {
   verifyProfiles?: VerifyProfile[];
   githubChecksConfig?: Record<string, GithubChecksProviderConfig>;
   projects?: LocalProjectConfig[];
+  planner?: {
+    kind: 'codex' | 'claude';
+    id?: string;
+    timeoutMs?: number;
+    maxOutputBytes?: number;
+  };
 }
 
 const CREATE_PROJECT_PATH = '/bridge/projects';
@@ -124,6 +134,14 @@ export function parseConfig(raw: string): LocalConfig {
   const config = parsed as LocalConfig;
   if (config.projects !== undefined && !Array.isArray(config.projects)) {
     throw new Error('config.projects must be an array when present.');
+  }
+  if (config.planner !== undefined) {
+    if (typeof config.planner !== 'object' || config.planner === null || Array.isArray(config.planner)) {
+      throw new Error('config.planner must be an object when present.');
+    }
+    if (config.planner.kind !== 'codex' && config.planner.kind !== 'claude') {
+      throw new Error('config.planner.kind must be "codex" or "claude".');
+    }
   }
   for (const project of config.projects ?? []) {
     if (!project || typeof project.key !== 'string' || project.key.trim().length === 0) {
@@ -199,12 +217,33 @@ export function buildRuntimeOptions(
   config: LocalConfig,
   githubTokenStore: GithubTokenStore,
 ): BridgeRuntimeOptions {
+  const plannerAdapters = config.planner
+    ? [
+        config.planner.kind === 'claude'
+          ? createClaudePlannerAdapter({
+              id: config.planner.id,
+              commandOptions: {
+                timeoutMs: config.planner.timeoutMs,
+                maxOutputBytes: config.planner.maxOutputBytes,
+              },
+            })
+          : createCodexPlannerAdapter({
+              id: config.planner.id,
+              commandOptions: {
+                timeoutMs: config.planner.timeoutMs,
+                maxOutputBytes: config.planner.maxOutputBytes,
+              },
+            }),
+      ]
+    : undefined;
+
   return {
     baselineRoot: config.baselineRoot,
     projectWorkspaceRoots: config.projectWorkspaceRoots,
     verifyProfiles: config.verifyProfiles,
     githubChecksConfig: config.githubChecksConfig,
     githubTokenStore,
+    plannerAdapters,
   };
 }
 

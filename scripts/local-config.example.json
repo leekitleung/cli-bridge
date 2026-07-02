@@ -35,6 +35,12 @@
       "repo": "cli-bridge"
     }
   },
+  "planner": {
+    "kind": "codex",
+    "id": "operator-codex-planner",
+    "timeoutMs": 120000,
+    "maxOutputBytes": 1000000
+  },
   "projects": [
     {
       "key": "cli-bridge",
