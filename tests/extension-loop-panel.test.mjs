@@ -234,10 +234,25 @@ test('Bridge Panel exposes loop status without adding auto-send controls', async
   assert.equal(source.includes('automatic agent loop'), false);
 });
 
-test('Bridge Panel source implements the approved four-stage guarded utility UI', async () => {
+test('Bridge Panel defaults to planner source connection UI', async () => {
   const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
 
-  assert.match(source, /1 连接 · 2 发送至 ChatGPT · 3 选择并预览 · 4 确认回传/);
+  assert.match(source, /ChatGPT Web source/);
+  assert.match(source, /Open Project Console/);
+  assert.match(source, /Legacy relay tools/);
+  assert.match(source, /data-cli-bridge-source-status/);
+  assert.equal(source.includes('WorkBuddy'), false);
+  assert.equal(source.includes('/bridge/endpoints/workbuddy'), false);
+  assert.equal(source.includes('/bridge/endpoints/:id/results'), false);
+});
+
+test('Bridge Panel source keeps legacy four-stage controls inside collapsed details', async () => {
+  const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
+
+  assert.match(source, /Legacy relay tools/);
+  assert.match(source, /data-cli-bridge-legacy-tools/);
+  assert.match(source, /data-cli-bridge-legacy-body/);
+  assert.match(source, /legacyBody/);
   assert.match(source, /collapseButton/);
   assert.match(source, /createLucideChevronIcon/);
   assert.match(source, /renderLucideChevronIcon/);
@@ -255,75 +270,48 @@ test('Bridge Panel source implements the approved four-stage guarded utility UI'
   assert.equal(source.includes('KeyboardEvent'), false);
 });
 
-test('Bridge Panel disables guarded actions while unpaired and keeps one active primary action', async () => {
+test('Legacy relay tools: unpaired guards disabled, collapse works, connected workflow exposes primary action, return anti-double-click', async () => {
   const { mountBridgePanel } = await loadBridgePanelModule();
   const env = setupPanelDom();
-  try {
-    const handle = mountBridgePanel(env.document);
-    const buttons = Array.from(handle.element.querySelectorAll('button'));
-    const actionButtons = buttons.filter((button) => [
-      '填入下一步',
-      '预览回传',
-      '确认回传',
-      '复制预览',
-    ].includes(button.textContent ?? ''));
-
-    assert.deepEqual(actionButtons.map((button) => button.disabled), [true, true, true, true]);
-    assert.equal(actionButtons.filter((button) => button.style.fontWeight === '700').length, 0);
-  } finally {
-    env.restore();
-  }
-});
-
-test('Bridge Panel collapse hides the workflow body despite inline layout styles', async () => {
-  const { mountBridgePanel } = await loadBridgePanelModule();
-  const env = setupPanelDom();
-  try {
-    const handle = mountBridgePanel(env.document);
-    const collapse = handle.element.querySelector('button[aria-label="收起面板"]');
-    const body = Array.from(handle.element.children)
-      .find((child) => child.tagName === 'DIV' && child !== handle.element.firstElementChild);
-
-    assert.equal(collapse.title, '收起');
-    assert.match(collapse.querySelector('path').getAttribute('d'), /m18 15-6-6-6 6/);
-    collapse.click();
-    assert.equal(collapse.getAttribute('aria-label'), '展开面板');
-    assert.equal(collapse.title, '展开');
-    assert.equal(collapse.getAttribute('aria-expanded'), 'false');
-    assert.match(collapse.querySelector('path').getAttribute('d'), /m6 9 6 6 6-6/);
-    assert.equal(body.hidden, true);
-    assert.equal(body.style.display, 'none');
-
-    collapse.click();
-    assert.equal(collapse.getAttribute('aria-label'), '收起面板');
-    assert.equal(collapse.title, '收起');
-    assert.equal(collapse.getAttribute('aria-expanded'), 'true');
-    assert.match(collapse.querySelector('path').getAttribute('d'), /m18 15-6-6-6 6/);
-    assert.equal(body.hidden, false);
-    assert.equal(body.style.display, 'grid');
-  } finally {
-    env.restore();
-  }
-});
-
-test('Bridge Panel connected workflow exposes one primary action per stage and locks return retries', async () => {
-  const { mountBridgePanel } = await loadBridgePanelModule();
-  const env = setupPanelDom();
-  const calls = [];
   let releaseReturn;
   let handle;
   try {
     globalThis.chrome = {
       storage: {
         session: {
-          get: async () => ({ cliBridgePairingToken: 'tok-123' }),
+          get: async () => ({}),
           remove: async () => {},
         },
       },
     };
+
+    // 1) Unpaired: legacy body buttons disabled
+    handle = mountBridgePanel(env.document);
+    const legacyBody = handle.element.querySelector('[data-cli-bridge-legacy-body]');
+    assert.equal(legacyBody !== null, true, 'legacy body should exist');
+    const allButtons = Array.from(legacyBody.querySelectorAll('button'));
+    const actionButtons = allButtons.filter((button) => [
+      '填入下一步',
+      '预览回传',
+      '确认回传',
+      '复制预览',
+    ].includes(button.textContent ?? ''));
+    assert.equal(actionButtons.length >= 2, true, 'should find at least 2 legacy action buttons');
+    assert.deepEqual(actionButtons.map((button) => button.disabled), actionButtons.map(() => true));
+
+    // 2) Collapse still works
+    const collapse = handle.element.querySelector('button[aria-label="收起面板"]');
+    const panelBody = Array.from(handle.element.children)
+      .find((child) => child.tagName === 'DIV' && child !== handle.element.firstElementChild);
+    collapse.click();
+    assert.equal(panelBody.hidden, true);
+    collapse.click();
+    assert.equal(panelBody.hidden, false);
+
+    // 3) Connected: one primary action
+    globalThis.chrome.storage.session.get = async () => ({ cliBridgePairingToken: 'tok-123' });
     globalThis.fetch = async (url, init = {}) => {
       const path = new URL(String(url)).pathname;
-      calls.push({ path, method: init.method ?? 'GET' });
       if (path === '/health/private') {
         return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
       }
@@ -362,10 +350,19 @@ test('Bridge Panel connected workflow exposes one primary action per stage and l
     assert.deepEqual(primaryLabels(), ['确认回传']);
     assert.equal(byLabel('预览回传').disabled, false);
 
+    // 4) Return anti-double-click
+    const calls = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      const path = new URL(String(url)).pathname;
+      calls.push(path);
+      return originalFetch(url, init);
+    };
+
     byLabel('确认回传').click();
     byLabel('确认回传').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(calls.filter((call) => call.path === '/bridge/extract-return').length, 1);
+    assert.equal(calls.filter((p) => p === '/bridge/extract-return').length, 1);
     assert.equal(byLabel('确认回传').disabled, true);
 
     releaseReturn();
@@ -387,4 +384,21 @@ test('extension popup follows host theme and exposes accessible status feedback'
   assert.match(source, /prefers-color-scheme: dark/);
   assert.match(source, /aria-live/);
   assert.match(source, /minHeight: '44px'/);
+});
+
+test('extension popup is connection-first with manual token fallback only', async () => {
+  const source = await readFile(resolve(root, 'apps/extension/src/popup/index.ts'), 'utf8');
+
+  assert.match(source, /Local Bridge/);
+  assert.match(source, /Open Project Console/);
+  assert.match(source, /Clear Session/);
+  assert.match(source, /Manual token fallback/);
+  assert.match(source, /chrome\.tabs\.create/);
+  assert.match(source, /proxyHealth\(token\)/);
+  assert.match(source, /Local Bridge connected/);
+  assert.match(source, /Local Bridge offline/);
+  assert.match(source, /Session invalid/);
+  assert.equal(source.includes('chrome.storage.local'), false);
+  assert.equal(source.includes('WorkBuddy'), false);
+  assert.equal(source.includes('dispatch'), false);
 });

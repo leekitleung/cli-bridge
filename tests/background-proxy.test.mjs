@@ -220,3 +220,32 @@ test('background clears local session token on revoke', async () => {
   assert.equal(result.ok, true);
   assert.equal(stored.cliBridgePairingToken, undefined);
 });
+
+// ── ADR-0033: Extension proxy must not expose WorkBuddy executor routes ──
+
+test('extension proxy does not expose WorkBuddy executor routes', async () => {
+  const { calls, fetchImpl } = stubFetch(() => jsonResponse(200, {}));
+
+  const inbox = await handleProxyFetch({
+    path: '/bridge/endpoints/workbuddy/inbox/next',
+    method: 'GET',
+    token: 'tok',
+  }, fetchImpl);
+  const result = await handleProxyFetch({
+    path: '/bridge/endpoints/workbuddy/results',
+    method: 'POST',
+    token: 'tok',
+    body: { taskId: 'task-1', ok: true },
+  }, fetchImpl);
+  const log = await handleProxyFetch({
+    path: '/bridge/endpoints/workbuddy/log',
+    method: 'POST',
+    token: 'tok',
+    body: { taskId: 'task-1', message: 'x' },
+  }, fetchImpl);
+
+  assert.equal(inbox.error, 'invalid-path');
+  assert.equal(result.error, 'invalid-path');
+  assert.equal(log.error, 'invalid-path');
+  assert.equal(calls.length, 0);
+});

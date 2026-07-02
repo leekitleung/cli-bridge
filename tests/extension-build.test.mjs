@@ -56,10 +56,9 @@ test('extension build emits Chrome-loadable JS manifest and scripts', async () =
   assert.equal(contentSource.includes('cli-bridge-panel-root'), true);
   assert.equal(contentSource.includes('data-cli-bridge-panel'), true);
   assert.equal(contentSource.includes('data-cli-bridge-pairing-input'), false);
-  assert.equal(contentSource.includes('\\u586B\\u5165'), true);
-  assert.equal(contentSource.includes('\\u9884\\u89C8\\u56DE\\u4F20'), true);
-  assert.equal(contentSource.includes('\\u786E\\u8BA4\\u56DE\\u4F20'), true);
-  assert.equal(contentSource.includes('\\u590D\\u5236'), true);
+  assert.equal(contentSource.includes('ChatGPT Web source'), true);
+  assert.equal(contentSource.includes('Open Project Console'), true);
+  assert.equal(contentSource.includes('Legacy relay tools'), true);
   assert.equal(contentSource.includes('Pending Prompt'), false);
   assert.equal(contentSource.includes('BridgePacket'), false);
   assert.equal(contentSource.includes('MockAgent'), false);

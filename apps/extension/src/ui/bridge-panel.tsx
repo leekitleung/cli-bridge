@@ -126,7 +126,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   });
 
   const title = root.createElement('div');
-  title.textContent = 'CLI BRIDGE';
+  title.textContent = 'ChatGPT Web source';
   Object.assign(title.style, {
     fontWeight: '700',
     color: 'var(--cb-text)',
@@ -151,7 +151,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   panelHeader.append(title, collapseButton);
 
   const scope = root.createElement('div');
-  scope.textContent = '1 连接 · 2 发送至 ChatGPT · 3 选择并预览 · 4 确认回传';
+  scope.textContent = 'Connected to Local Bridge as planner/source. Use Project Console for routing and execution.';
+  scope.setAttribute('data-cli-bridge-source-status', 'true');
   Object.assign(scope.style, {
     color: 'var(--cb-muted)',
     fontSize: '12px',
@@ -614,15 +615,36 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   });
 
   connectionActions.append(testTokenButton, clearTokenButton);
+
+  const openConsoleButton = root.createElement('button');
+  openConsoleButton.type = 'button';
+  openConsoleButton.textContent = 'Open Project Console';
+  Object.assign(openConsoleButton.style, {
+    minHeight: '44px',
+    color: 'var(--cb-text)',
+    background: 'var(--cb-surface)',
+    border: '1px solid var(--cb-border)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    font: 'inherit',
+  });
+
+  openConsoleButton.addEventListener('click', () => {
+    window.open('http://127.0.0.1:31337/console/project', '_blank', 'noopener,noreferrer');
+  });
   returnActions.append(extractButton, returnButton, copyButton);
   automationActions.append(pauseAutomationButton, resumeAutomationButton, cancelAutomationButton);
 
-  const panelBody = root.createElement('div');
-  Object.assign(panelBody.style, { display: 'grid', gap: '8px' });
-  panelBody.append(
-    scope,
-    connectionStatus,
-    connectionActions,
+  const legacyTools = root.createElement('details');
+  const legacySummary = root.createElement('summary');
+  legacySummary.textContent = 'Legacy relay tools';
+  legacyTools.setAttribute('data-cli-bridge-legacy-tools', 'true');
+  legacyTools.append(legacySummary);
+
+  const legacyBody = root.createElement('div');
+  Object.assign(legacyBody.style, { display: 'grid', gap: '8px', marginTop: '8px' });
+  legacyBody.setAttribute('data-cli-bridge-legacy-body', 'true');
+  legacyBody.append(
     input,
     fillButton,
     returnActions,
@@ -632,6 +654,17 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     automationActions,
     status,
     preview,
+  );
+  legacyTools.append(legacyBody);
+
+  const panelBody = root.createElement('div');
+  Object.assign(panelBody.style, { display: 'grid', gap: '8px' });
+  panelBody.append(
+    scope,
+    connectionStatus,
+    connectionActions,
+    openConsoleButton,
+    legacyTools,
   );
   collapseButton.addEventListener('click', () => {
     const collapsed = panelBody.hidden === false;

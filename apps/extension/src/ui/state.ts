@@ -160,7 +160,7 @@ export function createConnectionPanelStatus(state: BridgePanelConnectionState): 
       return {
         kind: 'idle',
         label: '未配对',
-        detail: '请点击浏览器扩展图标，在扩展弹窗中完成配对',
+        detail: 'Open Project Console to pair, or use extension popup manual fallback.',
       };
     case 'checking':
       return {

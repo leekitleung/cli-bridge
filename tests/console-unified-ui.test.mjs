@@ -33,4 +33,6 @@ test('extension panel uses the same Project Workspace color system', async () =>
   assert.match(popup, /--border:\s*#d7ddd9/);
   assert.match(popup, /--accent:\s*#10a37f/);
   assert.match(popup, /--bg:\s*#0d0d0d/);
+  assert.match(popup, /Open Project Console/);
+  assert.match(popup, /Manual token fallback/);
 });

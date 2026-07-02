@@ -35,4 +35,8 @@ declare namespace chrome {
       responseCallback?: (response: unknown) => void,
     ): void;
   }
+
+  namespace tabs {
+    function create(options: { url: string }): Promise<unknown>;
+  }
 }
