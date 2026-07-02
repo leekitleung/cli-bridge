@@ -729,6 +729,7 @@ const store = {
   conversationEvents: [],
   conversationActions: [],
   conversationPlans: [],
+  conversationGate: null,
   conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
 };
 
@@ -3082,11 +3083,20 @@ async function sendConversationMessage(input) {
     return;
   }
   store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
+  store.conversationGate = res.data?.gate ?? null;
   if (res.data?.plan) {
     store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
   }
   renderConversationTranscript();
-  setCommandStatus('plan proposed — accept or reject in transcript');
+  if (store.conversationGate?.type === 'blocked') {
+    setCommandStatus('blocked: ' + (store.conversationGate.missing?.join(', ') || store.conversationGate.reason));
+  } else if (store.conversationGate?.type === 'require_user_confirm') {
+    setCommandStatus('plan proposed — accept or reject in transcript');
+  } else if (store.conversationGate?.type === 'auto_execute') {
+    setCommandStatus('auto-executing...');
+  } else {
+    setCommandStatus('planner responded');
+  }
 }
 
 async function handleCommand() {
