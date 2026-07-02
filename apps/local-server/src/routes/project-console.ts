@@ -1863,6 +1863,7 @@ function renderCommandContext() {
       });
       html += '</tbody></table>';
     }
+    html += renderWorkBuddyConversation(wb);
     // ADR-0032: WorkBuddy execution lifecycle.
     if (wb && wb.executionTasks && wb.executionTasks.length) {
       html += '<h4 style="margin-top:12px;">Execution Tasks</h4><table><thead><tr><th>status</th><th>endpoint</th></tr></thead><tbody>';
@@ -1903,6 +1904,45 @@ function renderCommandContext() {
     initGitStatusGate();
     initGithubChecksGate();
   }
+}
+
+function formatWorkBuddyResultForDisplay(result) {
+  if (!result) return '';
+  if (typeof result.stdout === 'string' && result.stdout.trim()) return result.stdout.trim();
+  if (typeof result.stderr === 'string' && result.stderr.trim()) return result.stderr.trim();
+  if (typeof result.failureReason === 'string' && result.failureReason.trim()) return result.failureReason.trim();
+  if (typeof result.output === 'string' && result.output.trim()) return result.output.trim();
+  if (result.output !== undefined) {
+    try { return JSON.stringify(result.output); } catch { return String(result.output); }
+  }
+  return result.ok === false ? 'WorkBuddy execution failed.' : 'WorkBuddy returned no output.';
+}
+
+function renderWorkBuddyConversation(wb) {
+  const tasks = wb && Array.isArray(wb.executionTasks) ? wb.executionTasks : [];
+  if (!tasks.length) return '';
+  const results = wb && Array.isArray(wb.executionResults) ? wb.executionResults : [];
+  let html = '<h4 style="margin-top:12px;">WorkBuddy Conversation</h4><div class="conversation-transcript">';
+  tasks.forEach(task => {
+    const result = results.find(r => r.taskId === task.taskId);
+    html += '<div class="conversation-message user">'
+      + '<div class="conversation-meta">user</div>'
+      + '<div class="conversation-bubble">' + escapeHtml(task.prompt || '') + '</div>'
+      + '</div>';
+    if (result) {
+      html += '<div class="conversation-message target">'
+        + '<div class="conversation-meta">workbuddy</div>'
+        + '<div class="conversation-bubble">' + escapeHtml(formatWorkBuddyResultForDisplay(result)) + '</div>'
+        + '</div>';
+    } else {
+      html += '<div class="conversation-message bridge">'
+        + '<div class="conversation-meta">status</div>'
+        + '<div class="conversation-bubble">' + escapeHtml(task.status || 'pending') + '</div>'
+        + '</div>';
+    }
+  });
+  html += '</div>';
+  return html;
 }
 
 function renderLoopActionButton(label, url, body) {

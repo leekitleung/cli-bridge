@@ -126,3 +126,40 @@ test('command planner adapter ignores Codex user echo JSONL events', async () =>
   assert.equal(envelope.visibleText, 'Hi. What would you like to do?');
   assert.equal(envelope.intent, 'answer');
 });
+
+test('command planner adapter handles WorkBuddy diagnostic requests without command confirmation', async () => {
+  const { createCodexPlannerAdapter } = await import('../apps/local-server/src/conversation/command-planner-adapter.ts');
+
+  let ranCommand = false;
+  const adapter = createCodexPlannerAdapter({
+    id: 'operator-codex-planner',
+    commandOptions: {
+      launcherResolver: () => ({ executable: 'codex', prependArgs: [] }),
+      runner: {
+        async run() {
+          ranCommand = true;
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: 'should not run',
+            timedOut: false,
+            truncated: false,
+          };
+        },
+      },
+    },
+  });
+
+  const envelope = await adapter.plan({
+    sessionId: 's1',
+    projectId: 'cli-bridge',
+    userText: '触发 workbuddy 让我测试',
+    history: [],
+  });
+
+  assert.equal(ranCommand, false);
+  assert.equal(envelope.intent, 'request_execution');
+  assert.equal(envelope.proposedInstruction.payload, '触发 workbuddy 让我测试');
+  assert.deepEqual(envelope.proposedInstruction.targetExecutorIds, ['workbuddy']);
+  assert.deepEqual(envelope.proposedInstruction.riskHints, ['pure-transform']);
+});

@@ -366,6 +366,14 @@ test('GET workbuddy includes execution tasks and logs read model', async () => {
     kind: 'progress',
     message: 'claimed',
   });
+  runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.recordResult(task.taskId, {
+    ok: true,
+    proposalId: task.proposalId,
+    stdout: 'diagnostic worker received: ping',
+    output: 'diagnostic worker received: ping',
+    durationMs: 1,
+  });
 
   const res = await call(runtime, 'GET', WB);
   assert.equal(res.statusCode, 200);
@@ -373,6 +381,8 @@ test('GET workbuddy includes execution tasks and logs read model', async () => {
   assert.equal(res.payload.executionTasks[0].taskId, task.taskId);
   assert.equal(res.payload.executionLogs.length, 1);
   assert.equal(res.payload.executionLogs[0].message, 'claimed');
+  assert.equal(res.payload.executionResults.length, 1);
+  assert.equal(res.payload.executionResults[0].stdout, 'diagnostic worker received: ping');
   assert.doesNotMatch(JSON.stringify(res.payload), /x-cli-bridge-pairing-token/);
 });
 
@@ -404,6 +414,7 @@ test('alpha GET does not see beta execution tasks or logs', async () => {
   assert.equal(alphaRes.statusCode, 200);
   assert.equal(alphaRes.payload.executionTasks.length, 0, 'alpha must not see beta tasks');
   assert.equal(alphaRes.payload.executionLogs.length, 0, 'alpha must not see beta logs');
+  assert.equal(alphaRes.payload.executionResults.length, 0, 'alpha must not see beta results');
 
   // Beta GET should see them.
   const betaWb = BRIDGE_PROJECTS_PATH + '/beta/workbuddy';

@@ -49,14 +49,16 @@ Returns all WorkBuddy state scoped to the project.
   "promptDraftSinks": [...WorkBuddyPromptDraftSink],
   "executionLedgerEvents": [...WorkBuddyExecutionLedgerEvent],
   "executionTasks": [...WorkBuddyExecutionTask],
+  "executionResults": [...WorkBuddyExecutionResult],
   "executionLogs": [...WorkBuddyExecutionLogEntry]
 }
 ```
 
-The `executionTasks` and `executionLogs` fields (ADR-0032) provide a read-only
+The `executionTasks`, `executionResults`, and `executionLogs` fields (ADR-0032)
+provide a read-only
 view into the WorkBuddy execution lifecycle. They include task status, endpoint
-ID, and structured log entries — but never include pairing token, instruction
-packets, route IDs, action IDs, or planner internals.
+ID, raw worker result output, and structured log entries — but never include
+pairing token, instruction packets, route IDs, action IDs, or planner internals.
 
 ### Error cases
 
@@ -146,7 +148,9 @@ starts with only valid state.
 
 `/console/project` includes a Tasks/WorkBuddy view ("Tasks" nav tab) that displays
 project-scoped task references, review results, prompt drafts, and execution
-ledger events. All text is HTML-escaped. No execute/dispatch/confirm buttons.
+ledger events. It also displays WorkBuddy execution prompts and raw worker
+results as a conversation-style read-only view. All text is HTML-escaped. No
+execute/dispatch/confirm buttons.
 
 ## Non-Goals (explicitly not in v2.2)
 

@@ -2413,6 +2413,33 @@ test('renderConversationTranscript includes visibility filter', () => {
   );
 });
 
+test('renderWorkBuddyConversation shows prompt and raw result without route internals', () => {
+  const { window } = setupConsole();
+  const html = window.renderWorkBuddyConversation({
+    executionTasks: [{
+      taskId: 'task-1',
+      endpointId: 'workbuddy',
+      prompt: '触发 workbuddy 让我测试',
+      status: 'returned',
+    }],
+    executionResults: [{
+      taskId: 'task-1',
+      ok: true,
+      stdout: 'diagnostic worker received: 触发 workbuddy 让我测试',
+    }],
+    executionLogs: [{
+      taskId: 'task-1',
+      kind: 'progress',
+      message: 'worker returned result',
+    }],
+  });
+
+  assert.match(html, /WorkBuddy Conversation/);
+  assert.match(html, /触发 workbuddy 让我测试/);
+  assert.match(html, /diagnostic worker received/);
+  assert.doesNotMatch(html, /workbuddy-execution|dispatch|route|action/);
+});
+
 test('renderConversationTranscript preserved legacy admin filter', () => {
   const consoleSource = readFileSync(
     resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),

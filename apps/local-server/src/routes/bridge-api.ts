@@ -1104,6 +1104,9 @@ function requireProjectIdMatch(body: Record<string, unknown>, urlKey: string): s
 }
 
 function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
+  const executionTasks = runtime.workbuddyExecution.listTasks('workbuddy')
+    .filter(t => resolveProjectKey(t.projectId) === projectKey);
+  const executionTaskIds = new Set(executionTasks.map(t => t.taskId));
   return {
     projectId: projectKey,
     tasks: runtime.workbuddyStore.listTaskReferences().filter(t => resolveProjectKey(t.projectId) === projectKey),
@@ -1112,13 +1115,11 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
     executionLedgerEvents: runtime.workbuddyStore.listExecutionLedgerEvents().filter(e => resolveProjectKey(e.projectId) === projectKey),
     // ADR-0032: WorkBuddy execution read model.
     // Scope to this project: filter tasks by explicit projectId, logs by belonging taskIds.
-    executionTasks: runtime.workbuddyExecution.listTasks('workbuddy')
-      .filter(t => resolveProjectKey(t.projectId) === projectKey),
+    executionTasks,
+    executionResults: runtime.workbuddyExecution.listResults('workbuddy')
+      .filter(r => executionTaskIds.has(r.taskId)),
     executionLogs: runtime.workbuddyExecution.listLogs('workbuddy')
-      .filter(l => {
-        const task = runtime.workbuddyExecution.getTask(l.taskId);
-        return task && resolveProjectKey(task.projectId) === projectKey;
-      }),
+      .filter(l => executionTaskIds.has(l.taskId)),
   };}
 
 // ---- WorkBuddy strict whitelist builder ----

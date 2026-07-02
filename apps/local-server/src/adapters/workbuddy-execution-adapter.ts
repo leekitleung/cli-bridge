@@ -191,6 +191,17 @@ export class WorkBuddyExecutionAdapter {
     return r ? clone(r) : undefined;
   }
 
+  /** List all results, optionally filtered by endpointId through task ownership. */
+  listResults(endpointId?: string): WorkBuddyExecutionResult[] {
+    return Array.from(this.results.values())
+      .filter(r => {
+        if (endpointId === undefined) return true;
+        const task = this.tasks.get(r.taskId);
+        return task?.endpointId === endpointId;
+      })
+      .map(clone);
+  }
+
   /** List pending tasks for an endpoint. */
   listPendingTasks(endpointId: string): WorkBuddyExecutionTask[] {
     return Array.from(this.tasks.values())
