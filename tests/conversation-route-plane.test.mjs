@@ -7,6 +7,28 @@ import test from 'node:test';
 
 import { InMemoryConversationInstructionStore } from '../apps/local-server/src/storage/conversation-instruction-store.ts';
 
+function testConfirmPlanner() {
+  return {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: `Plan proposal: ${input.userText}`,
+        intent: 'request_execution',
+        proposedInstruction: {
+          summary: input.userText,
+          payload: input.userText,
+          riskHints: ['filesystem-mutation'],
+        },
+        createdAt: new Date().toISOString(),
+      };
+    },
+  };
+}
+
 // ── Unit: store contract ──
 
 test('instruction store creates a packet with all fields', () => {
@@ -118,7 +140,7 @@ test('conversation message API response does not contain instruction packet meta
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
 
   // Setup project and pairing.
   const putPairing = await handleBridgeRequest(
@@ -165,7 +187,7 @@ test('instruction packet is created internally only after plan acceptance', asyn
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
 
   // Setup project and pairing.
   await handleBridgeRequest(
@@ -546,7 +568,7 @@ test('conversation message API response does not contain route metadata', async 
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
 
   // Setup project and pairing.
   await handleBridgeRequest(
@@ -589,7 +611,7 @@ test('route IS created internally only after plan acceptance', async () => {
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
 
   // Setup project and pairing with workbuddy.
   await handleBridgeRequest(

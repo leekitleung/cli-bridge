@@ -21,6 +21,28 @@ async function call(runtime, method, path, body) {
   return handleBridgeRequest(runtime, method, path, jsonRequest(body));
 }
 
+function testConfirmPlanner() {
+  return {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: `Plan proposal: ${input.userText}`,
+        intent: 'request_execution',
+        proposedInstruction: {
+          summary: input.userText,
+          payload: input.userText,
+          riskHints: ['filesystem-mutation'],
+        },
+        createdAt: new Date().toISOString(),
+      };
+    },
+  };
+}
+
 test('conversation pairing saves ChatGPT Web to Codex CLI route', async () => {
   const runtime = createBridgeRuntime();
   const create = await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
@@ -82,7 +104,7 @@ test('conversation pairing rejects unknown source endpoint', async () => {
 });
 
 test('review-command conversation creates a plan proposal before review action', async () => {
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
     sourceEndpointId: 'chatgpt-web',
     targetEndpointId: 'claude-code-command',
@@ -93,15 +115,16 @@ test('review-command conversation creates a plan proposal before review action',
   });
 
   assert.equal(res.statusCode, 201);
-  assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
+  assert.equal(res.payload.events[1].status, 'draft');
   assert.match(res.payload.events[1].text, /plan proposal/i);
+  assert.equal(res.payload.gate.type, 'require_user_confirm');
   assert.equal((res.payload.actions ?? []).length, 0);
   assert.ok(res.payload.plan);
   assert.equal(res.payload.plan.status, 'proposed');
 });
 
 test('workbuddy route creates a plan proposal before executor action', async () => {
-  const runtime = createBridgeRuntime();
+  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
     sourceEndpointId: 'chatgpt-web',
     targetEndpointId: 'workbuddy',
@@ -113,8 +136,9 @@ test('workbuddy route creates a plan proposal before executor action', async () 
 
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.events[1].routeKind, 'workbuddy-execution');
-  assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
+  assert.equal(res.payload.events[1].status, 'draft');
   assert.match(res.payload.events[1].text, /plan proposal/i);
+  assert.equal(res.payload.gate.type, 'require_user_confirm');
   assert.equal((res.payload.actions ?? []).length, 0);
   assert.ok(res.payload.plan);
   assert.equal(res.payload.plan.status, 'proposed');
@@ -123,7 +147,7 @@ test('workbuddy route creates a plan proposal before executor action', async () 
 test('conversation pairing and transcript survive snapshot round-trip', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'conversation-pairing-test-'));
   try {
-    const runtimeA = createBridgeRuntime({ dataDir: dir });
+    const runtimeA = createBridgeRuntime({ dataDir: dir, plannerAdapters: [testConfirmPlanner()] });
 
     await call(runtimeA, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
       sourceEndpointId: 'chatgpt-web',
