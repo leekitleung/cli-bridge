@@ -314,6 +314,29 @@ main .timeline-entry .body { white-space: pre-wrap; }
   border-left: 2px solid var(--border);
   padding-left: 12px;
 }
+.conversation-waiting .conversation-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.wait-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: cli-bridge-spin 0.9s linear infinite;
+  flex: 0 0 auto;
+}
+.wait-elapsed {
+  color: var(--subtle);
+  font-size: 12px;
+}
+@keyframes cli-bridge-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ADR-0030 EX-4: Plan proposal styling */
 .plan-proposal {
@@ -731,6 +754,11 @@ const store = {
   conversationPlans: [],
   conversationGate: null,
   conversationSending: false,
+  conversationPlannerStartedAt: 0,
+  conversationExecutorStartedAt: 0,
+  conversationExecutorLabel: '',
+  workbuddyPollUntil: 0,
+  workbuddyPollActive: false,
   conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
 };
 
@@ -903,6 +931,71 @@ async function refreshConversationMessages(options) {
   if (options.render !== false) renderConversationTranscript();
 }
 
+async function refreshWorkBuddyContext(options) {
+  if (options === undefined) options = {};
+  if (!store.connected) return null;
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/workbuddy');
+  if (!res.ok) return null;
+  store.cache.workbuddy = res.data;
+  updateWorkBuddyWaitingState();
+  if (options.render !== false) {
+    if (store.contextView === 'workbuddy') renderWorkspace();
+    renderConversationTranscript();
+  }
+  return res.data;
+}
+
+function mergeWorkBuddyTaskFromDispatch(dispatch) {
+  const task = dispatch && dispatch.task;
+  if (!task) return;
+  if (!store.cache.workbuddy) {
+    store.cache.workbuddy = {
+      projectId: store.activeProjectKey,
+      tasks: [],
+      reviewResultSinks: [],
+      promptDraftSinks: [],
+      executionLedgerEvents: [],
+      executionTasks: [],
+      executionResults: [],
+      executionLogs: [],
+    };
+  }
+  const tasks = store.cache.workbuddy.executionTasks || [];
+  if (!tasks.some(item => item.taskId === task.taskId)) tasks.push(task);
+  store.cache.workbuddy.executionTasks = tasks;
+}
+
+function updateWorkBuddyWaitingState() {
+  const wb = store.cache.workbuddy;
+  const tasks = wb && Array.isArray(wb.executionTasks) ? wb.executionTasks : [];
+  const pending = tasks
+    .filter(task => task && !['returned', 'failed', 'cancelled'].includes(task.status))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  if (pending) {
+    store.conversationExecutorStartedAt = pending.createdAt || store.conversationExecutorStartedAt || Date.now();
+    store.conversationExecutorLabel = pending.endpointId || 'workbuddy';
+  } else if (store.conversationExecutorStartedAt && wb) {
+    store.conversationExecutorStartedAt = 0;
+    store.conversationExecutorLabel = '';
+  }
+}
+
+async function pollWorkBuddyUntilSettled(startedAt) {
+  if (store.workbuddyPollActive) return;
+  store.workbuddyPollActive = true;
+  store.workbuddyPollUntil = startedAt + 30_000;
+  try {
+    while (Date.now() < store.workbuddyPollUntil) {
+      await refreshWorkBuddyContext({ render: true });
+      await refreshConversationMessages({ render: true });
+      if (!store.conversationExecutorStartedAt) break;
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+  } finally {
+    store.workbuddyPollActive = false;
+  }
+}
+
 async function pollConversationMessages() {
   if (store.connected && store.composerMode === 'conversation') {
     await refreshConversationMessages();
@@ -911,6 +1004,12 @@ async function pollConversationMessages() {
 
 if (!/jsdom/i.test(navigator.userAgent || '')) {
   window.setInterval(pollConversationMessages, 3000);
+  window.setInterval(() => {
+    if (store.conversationPlannerStartedAt || store.conversationExecutorStartedAt) {
+      renderConversationTranscript();
+      if (store.contextView === 'workbuddy') renderWorkspace();
+    }
+  }, 1000);
 }
 
 // ─── Render ───
@@ -1937,12 +2036,24 @@ function renderWorkBuddyConversation(wb) {
     } else {
       html += '<div class="conversation-message bridge">'
         + '<div class="conversation-meta">status</div>'
-        + '<div class="conversation-bubble">' + escapeHtml(task.status || 'pending') + '</div>'
+        + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for workbuddy', task.createdAt || Date.now()) + '</div>'
+        + '<div class="conversation-state"><span class="pill">' + escapeHtml(task.status || 'pending') + '</span></div>'
         + '</div>';
     }
   });
   html += '</div>';
   return html;
+}
+
+function formatElapsed(startedAt) {
+  if (!startedAt) return '0s';
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) + 's';
+}
+
+function renderWaitingLabel(label, startedAt) {
+  return '<span class="wait-spinner" aria-hidden="true"></span>'
+    + '<span>' + escapeHtml(label) + '…</span>'
+    + '<span class="wait-elapsed">' + escapeHtml(formatElapsed(startedAt)) + '</span>';
 }
 
 function renderLoopActionButton(label, url, body) {
@@ -2945,7 +3056,8 @@ function renderConversationTranscript(explicitEvents, explicitGate) {
   if (!el && !isTest) return;
   const events = isTest ? explicitEvents : (store.conversationEvents || []);
   const plans = isTest ? [] : (store.conversationPlans || []);
-  const hasContent = events.length > 0 || plans.length > 0;
+  const pendingHtml = isTest ? '' : renderConversationWaitStates();
+  const hasContent = events.length > 0 || plans.length > 0 || pendingHtml;
   if (!hasContent) {
     const html = store.composerMode === 'conversation'
       ? '<span class="unavailable">No conversation messages yet. Type a message and send.</span>'
@@ -2958,10 +3070,28 @@ function renderConversationTranscript(explicitEvents, explicitGate) {
   const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
   const plansHtml = plans.filter(p => p.status === 'proposed').map(renderPlanProposal).join('');
   const gateHtml = renderConversationGateStatus(isTest ? explicitGate : store.conversationGate);
-  const html = eventsHtml + plansHtml + gateHtml;
+  const html = eventsHtml + plansHtml + gateHtml + pendingHtml;
   if (isTest) return html;
   el.innerHTML = html;
   bindPlanActionButtons();
+}
+
+function renderConversationWaitStates() {
+  let html = '';
+  if (store.conversationPlannerStartedAt) {
+    html += '<div class="conversation-message bridge conversation-waiting">'
+      + '<div class="conversation-meta">planner</div>'
+      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for planner', store.conversationPlannerStartedAt) + '</div>'
+      + '</div>';
+  }
+  if (store.conversationExecutorStartedAt) {
+    const label = store.conversationExecutorLabel || 'executor';
+    html += '<div class="conversation-message bridge conversation-waiting">'
+      + '<div class="conversation-meta">status</div>'
+      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for ' + label, store.conversationExecutorStartedAt) + '</div>'
+      + '</div>';
+  }
+  return html;
 }
 
 function isConversationBridgeAdminEvent(event) {
@@ -3155,12 +3285,19 @@ async function sendConversationMessage(input) {
     return;
   }
   store.conversationSending = true;
+  store.conversationPlannerStartedAt = Date.now();
+  store.conversationExecutorStartedAt = 0;
+  store.conversationExecutorLabel = '';
   $('command-send').disabled = true;
+  renderConversationTranscript();
+  setCommandStatus('waiting for planner...');
   try {
     const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages', 'POST', { text: input });
+    store.conversationPlannerStartedAt = 0;
     if (!res.ok) {
       appendCommandMessage(input, 'Conversation send failed: ' + escapeHtml(res.data?.message || res.status), true);
       setCommandStatus('conversation failed', true);
+      renderConversationTranscript();
       return;
     }
     store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
@@ -3168,19 +3305,24 @@ async function sendConversationMessage(input) {
     if (res.data?.plan) {
       store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
     }
+    if (res.data?.dispatch) mergeWorkBuddyTaskFromDispatch(res.data.dispatch);
+    updateWorkBuddyWaitingState();
     renderConversationTranscript();
     if (store.conversationGate?.type === 'blocked') {
       setCommandStatus('blocked: ' + (store.conversationGate.missing?.join(', ') || store.conversationGate.reason));
     } else if (store.conversationGate?.type === 'require_user_confirm') {
       setCommandStatus('plan proposed — accept or reject in transcript');
     } else if (store.conversationGate?.type === 'auto_execute') {
-      setCommandStatus('auto-executing...');
+      setCommandStatus('waiting for ' + (store.conversationExecutorLabel || 'executor') + '...');
+      pollWorkBuddyUntilSettled(Date.now());
     } else {
       setCommandStatus('planner responded');
     }
   } finally {
+    store.conversationPlannerStartedAt = 0;
     store.conversationSending = false;
     $('command-send').disabled = false;
+    renderConversationTranscript();
   }
 }
 

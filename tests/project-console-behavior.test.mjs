@@ -2440,6 +2440,36 @@ test('renderWorkBuddyConversation shows prompt and raw result without route inte
   assert.doesNotMatch(html, /workbuddy-execution|dispatch|route|action/);
 });
 
+test('renderWorkBuddyConversation shows elapsed waiting state for pending task', () => {
+  const { window } = setupConsole();
+  const html = window.renderWorkBuddyConversation({
+    executionTasks: [{
+      taskId: 'task-1',
+      endpointId: 'workbuddy',
+      prompt: 'run diagnostic',
+      status: 'pending',
+      createdAt: Date.now() - 2_100,
+    }],
+    executionResults: [],
+    executionLogs: [],
+  });
+
+  assert.match(html, /Waiting for workbuddy/);
+  assert.match(html, /wait-spinner/);
+  assert.match(html, /wait-elapsed/);
+  assert.doesNotMatch(html, /workbuddy-execution|dispatch|route|action/);
+});
+
+test('renderConversationTranscript shows planner waiting state while send is pending', () => {
+  const { window, document } = setupConsole();
+  window.eval("store.composerMode = 'conversation'; store.conversationPlannerStartedAt = Date.now() - 1100;");
+  window.renderConversationTranscript();
+
+  const text = document.getElementById('conversation-transcript').textContent;
+  assert.match(text, /Waiting for planner/);
+  assert.match(document.getElementById('conversation-transcript').innerHTML, /wait-spinner/);
+});
+
 test('renderConversationTranscript preserved legacy admin filter', () => {
   const consoleSource = readFileSync(
     resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
