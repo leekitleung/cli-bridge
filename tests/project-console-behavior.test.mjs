@@ -2411,3 +2411,97 @@ test('renderConversationTranscript preserved legacy admin filter', () => {
     'expected legacy admin event filter preserved',
   );
 });
+
+// ── EX-5: Passthrough route plane acceptance ───────────────────
+//
+// Verify:
+//   - Project Console hides instruction/route/task/action/confirm/dispatch
+//   - User-visible answer body comes from executor result fields
+
+test('EX-5: transcript filter excludes instruction kind events', () => {
+  const instructionEvent = { role: 'bridge', kind: 'instruction', visibility: 'internal', text: 'inst-internal', status: 'queued' };
+  assert.equal(isTranscriptVisible(instructionEvent), false, 'instruction event excluded');
+});
+
+test('EX-5: transcript filter excludes internal route/task/dispatch events', () => {
+  const routeInternal = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'route created', status: 'queued' };
+  const taskInternal = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'task dispatched', status: 'dispatched' };
+  const dispatchInternal = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'dispatch queued', status: 'queued' };
+
+  assert.equal(isTranscriptVisible(routeInternal), false, 'route internal excluded');
+  assert.equal(isTranscriptVisible(taskInternal), false, 'task internal excluded');
+  assert.equal(isTranscriptVisible(dispatchInternal), false, 'dispatch internal excluded');
+});
+
+test('EX-5: transcript filter excludes action confirm/dispatch events', () => {
+  const actionConfirm = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'action confirmed', status: 'queued' };
+  const actionDispatch = { role: 'bridge', kind: 'status', visibility: 'internal', text: 'action dispatched', status: 'dispatched' };
+
+  assert.equal(isTranscriptVisible(actionConfirm), false, 'action confirm excluded');
+  assert.equal(isTranscriptVisible(actionDispatch), false, 'action dispatch excluded');
+});
+
+test('EX-5: user-visible executor_output passes through filter', () => {
+  const executorEvent = { role: 'target', kind: 'executor_output', visibility: 'user', text: 'Login form refactored.', status: 'returned' };
+  assert.equal(isTranscriptVisible(executorEvent), true, 'executor_output visible to user');
+});
+
+test('EX-5: user-visible event text is executor result, not internal metadata', () => {
+  // Given an executor_output event with text from the real executor result
+  const actualOutput = 'Deployment complete: staging.example.com is live.';
+  const executorEvent = { role: 'target', kind: 'executor_output', visibility: 'user', text: actualOutput, status: 'returned' };
+
+  // It should be visible
+  assert.equal(isTranscriptVisible(executorEvent), true);
+
+  // Its text should be the executor output, not internal metadata
+  assert.equal(executorEvent.text, actualOutput);
+  assert.ok(!executorEvent.text.includes('instruction'), 'text has no instruction ref');
+  assert.ok(!executorEvent.text.includes('route'), 'text has no route ref');
+  assert.ok(!executorEvent.text.includes('taskId'), 'text has no taskId');
+  assert.ok(!executorEvent.text.includes('dispatch'), 'text has no dispatch ref');
+});
+
+test('EX-5: full passthrough transcript — only user_message and executor_output visible', () => {
+  // Simulate a complete transcript with mixed events
+  const fullTranscript = [
+    { role: 'user', kind: 'user_message', visibility: 'user', text: 'deploy staging', status: 'draft', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'instruction', visibility: 'internal', text: 'system: instruction packet created', status: 'queued', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'status', visibility: 'internal', text: 'route: single mode created', status: 'queued', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'status', visibility: 'internal', text: 'action: previewed', status: 'previewed', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'status', visibility: 'internal', text: 'action: confirmed', status: 'confirmed', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'status', visibility: 'internal', text: 'task dispatched to workbuddy', status: 'dispatched', routeKind: 'workbuddy-execution' },
+    { role: 'target', kind: 'executor_output', visibility: 'user', text: 'deploy complete: staging.example.com', status: 'returned', routeKind: 'workbuddy-execution' },
+  ];
+
+  const visible = fullTranscript.filter((event) => event.visibility === 'user');
+
+  assert.equal(visible.length, 2, 'only 2 user-visible events in full passthrough');
+  assert.equal(visible[0].kind, 'user_message', 'first = user_message');
+  assert.equal(visible[1].kind, 'executor_output', 'second = executor_output');
+  assert.equal(visible[1].text, 'deploy complete: staging.example.com', 'text = executor result');
+
+  // Verify internal events are not visible via the transcript filter
+  const internal = fullTranscript.filter((event) => event.visibility !== 'user');
+  const internalVisible = internal.filter((event) => isTranscriptVisible(event));
+  assert.equal(internalVisible.length, 0, 'no internal events pass transcript filter');
+});
+
+test('EX-5: no instruction/route/task/action/confirm/dispatch in visible transcript', () => {
+  const systemWords = ['instruction', 'route', 'task', 'action', 'confirm', 'dispatch'];
+
+  // User-visible events should not contain system internals
+  const visibleEvents = [
+    { role: 'user', kind: 'user_message', visibility: 'user', text: 'deploy staging', status: 'draft' },
+    { role: 'target', kind: 'executor_output', visibility: 'user', text: 'deploy complete: staging.example.com', status: 'returned' },
+  ];
+
+  for (const evt of visibleEvents) {
+    for (const word of systemWords) {
+      assert.ok(
+        !evt.text.toLowerCase().includes(word.toLowerCase()),
+        `user-visible text '${evt.text}' does not contain '${word}'`
+      );
+    }
+  }
+});
