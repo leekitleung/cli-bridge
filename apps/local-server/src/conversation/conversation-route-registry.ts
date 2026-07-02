@@ -143,6 +143,74 @@ const reviewCommandAdapter: ConversationRouteAdapter = {
 
 const adapters = [workbuddyExecutionAdapter, reviewCommandAdapter];
 
+// ── Mock Planner (ADR-0030 EX-2 MVP) ──
+//
+// Generates a plan proposal from user text. First version uses simple heuristics;
+// later versions can swap in an LLM-based planner.
+
+export interface MockPlannerOutput {
+  title: string;
+  body: string;
+  steps: string[];
+  constraints: string[];
+  riskNotes: string[];
+}
+
+export function generateMockPlanProposal(userText: string): MockPlannerOutput {
+  const lines = userText.split('\n').map(l => l.trim()).filter(Boolean);
+  const title = extractTitle(lines[0] ?? userText);
+  const body = userText;
+  const steps = extractSteps(lines);
+  const constraints = [
+    'Executor output must be raw — no synthesis, no summarization.',
+    'No shell/run/exec/Git/PR mutation endpoint is added.',
+    'Existing conversation pairing must still work.',
+  ];
+  const riskNotes: string[] = [];
+
+  // Detect risky language
+  const lowerText = userText.toLowerCase();
+  if (/delete|rm\s+-rf|drop\s+table|truncate/i.test(lowerText)) {
+    riskNotes.push('Destructive operation detected. Verify backup exists.');
+  }
+  if (/sudo|root|chmod\s+777/i.test(lowerText)) {
+    riskNotes.push('Privilege escalation detected. Verify isolation boundary.');
+  }
+  if (/\bshell\b|\bexec\b|\brun\b/i.test(lowerText)) {
+    riskNotes.push('Shell execution language detected. Confirm this is an executor-side task, not a bridge mutation.');
+  }
+
+  return { title, body, steps, constraints, riskNotes };
+}
+
+function extractTitle(firstLine: string): string {
+  // Use first sentence or first 80 chars
+  const sentence = firstLine.split(/[.。!！?？\n]/)[0].trim();
+  return sentence.length > 80 ? sentence.slice(0, 77) + '...' : sentence;
+}
+
+function extractSteps(lines: string[]): string[] {
+  const steps: string[] = [];
+  for (const line of lines) {
+    // Bullet points: "- ...", "* ...", "1. ..."
+    const trimmed = line.replace(/^[-*•]\s*/, '').replace(/^\d+[.)]\s*/, '').trim();
+    if (trimmed && trimmed !== lines[0]) {
+      steps.push(trimmed);
+      if (steps.length >= 10) break;
+    }
+  }
+  // If no bullets found, treat each line as a step
+  if (steps.length === 0) {
+    for (let i = 1; i < Math.min(lines.length, 10); i++) {
+      steps.push(lines[i]);
+    }
+  }
+  if (steps.length === 0) {
+    steps.push('Execute the requested task');
+  }
+  return steps;
+}
+
 export function resolveConversationRouteAdapter(endpoint: AgentEndpoint): ConversationRouteResolution {
   const adapter = adapters.find(candidate => candidate.canHandleTarget(endpoint));
   if (adapter) {

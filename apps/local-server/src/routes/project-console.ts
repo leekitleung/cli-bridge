@@ -315,6 +315,48 @@ main .timeline-entry .body { white-space: pre-wrap; }
   padding-left: 12px;
 }
 
+/* ADR-0030 EX-4: Plan proposal styling */
+.plan-proposal {
+  border-left: 3px solid var(--accent, #378add);
+  padding-left: 14px;
+  margin: 12px 0;
+}
+.plan-body {
+  max-width: 100%;
+}
+.plan-body h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.plan-body ol, .plan-body ul {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.plan-body li {
+  margin-bottom: 2px;
+}
+.plan-constraints, .plan-risks {
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.plan-accept {
+  background: var(--success-bg, #eaf3de);
+  color: var(--success-text, #173404);
+  border: 1px solid var(--success-border, #3b6d11);
+}
+.plan-reject {
+  background: var(--danger-bg, #fcebeb);
+  color: var(--danger-text, #501313);
+  border: 1px solid var(--danger-border, #a32d2d);
+}
+.pill.proposed {
+  background: var(--info-bg, #e6f1fb);
+  color: var(--info-text, #0c447c);
+}
+
 /* ─── Right Facts Rail ─── */
 .facts-rail {
   grid-area: facts;
@@ -686,6 +728,7 @@ const store = {
   composerMode: (localStorage.getItem('cli-bridge-composer-mode') || 'project'),
   conversationEvents: [],
   conversationActions: [],
+  conversationPlans: [],
   conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
 };
 
@@ -853,6 +896,7 @@ async function refreshConversationMessages(options) {
   if (!res.ok) return;
   store.conversationEvents = res.data?.messages || res.data?.events || [];
   store.conversationActions = res.data?.actions || [];
+  store.conversationPlans = res.data?.plans || [];
   if (options.render !== false) renderConversationTranscript();
 }
 
@@ -2833,8 +2877,9 @@ function renderConversationTranscript() {
   const el = document.getElementById('conversation-transcript');
   if (!el) return;
   const events = store.conversationEvents || [];
-  const actions = store.conversationActions || [];
-  if (!events.length && !actions.length) {
+  const plans = store.conversationPlans || [];
+  const hasContent = events.length > 0 || plans.length > 0;
+  if (!hasContent) {
     el.innerHTML = store.composerMode === 'conversation'
       ? '<span class="unavailable">No conversation messages yet. Type a message and send.</span>'
       : '';
@@ -2842,9 +2887,9 @@ function renderConversationTranscript() {
   }
   const visibleEvents = events.filter(event => event.visibility === 'user' && !isConversationBridgeAdminEvent(event));
   const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
-  const pendingHtml = renderConversationPendingState(actions);
-  el.innerHTML = eventsHtml + pendingHtml;
-  bindConversationActionButtons();
+  const plansHtml = plans.filter(p => p.status === 'proposed').map(renderPlanProposal).join('');
+  el.innerHTML = eventsHtml + plansHtml;
+  bindPlanActionButtons();
 }
 
 function isConversationBridgeAdminEvent(event) {
@@ -2910,6 +2955,81 @@ function bindConversationActionButtons() {
   });
 }
 
+// ── ADR-0030 EX-4: Plan Proposal UI ──
+
+function mergeConversationPlans(existing, incoming) {
+  const byId = {};
+  existing.forEach(p => { byId[p.id] = p; });
+  incoming.forEach(p => { byId[p.id] = p; });
+  return Object.values(byId);
+}
+
+function renderPlanProposal(plan) {
+  const stepsHtml = (plan.steps || []).map((s, i) => '<li>' + escapeHtml(s) + '</li>').join('');
+  const constraintsHtml = (plan.constraints || []).map(c => '<li><em>' + escapeHtml(c) + '</em></li>').join('');
+  const risksHtml = (plan.riskNotes && plan.riskNotes.length)
+    ? '<div class="plan-risks"><strong>Risks:</strong><ul>' + plan.riskNotes.map(r => '<li>' + escapeHtml(r) + '</li>').join('') + '</ul></div>'
+    : '';
+
+  return '<div class="conversation-message bridge plan-proposal" data-plan-id="' + escapeHtml(plan.id) + '">'
+    + '<div class="conversation-meta">planner v' + plan.version + '</div>'
+    + '<div class="conversation-bubble plan-body">'
+    + '<h4>' + escapeHtml(plan.title) + '</h4>'
+    + '<p>' + escapeHtml(plan.body ? (plan.body.length > 200 ? plan.body.slice(0, 197) + '...' : plan.body) : '') + '</p>'
+    + (stepsHtml ? '<ol>' + stepsHtml + '</ol>' : '')
+    + (constraintsHtml ? '<div class="plan-constraints"><strong>Constraints:</strong><ul>' + constraintsHtml + '</ul></div>' : '')
+    + risksHtml
+    + '</div>'
+    + '<div class="conversation-state"><span class="pill proposed">' + escapeHtml(plan.status) + '</span></div>'
+    + '<div class="context-actions">'
+    + '<button data-plan-accept="' + escapeHtml(plan.id) + '" class="plan-accept">Accept</button>'
+    + '<button data-plan-reject="' + escapeHtml(plan.id) + '" class="plan-reject">Reject</button>'
+    + '</div></div>';
+}
+
+function bindPlanActionButtons() {
+  document.querySelectorAll('[data-plan-accept]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const planId = button.getAttribute('data-plan-accept');
+      await acceptPlan(planId);
+    });
+  });
+  document.querySelectorAll('[data-plan-reject]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const planId = button.getAttribute('data-plan-reject');
+      await rejectPlan(planId);
+    });
+  });
+}
+
+async function acceptPlan(planId) {
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/plans/' + encodeURIComponent(planId) + '/accept', 'POST', {});
+  if (!res.ok) {
+    appendCommandMessage('accept plan', 'Plan accept failed: ' + escapeHtml(res.data?.message || res.status), true);
+    setCommandStatus('plan accept failed', true);
+    return;
+  }
+  store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
+  if (res.data.action) {
+    store.conversationActions = mergeConversationActions(store.conversationActions || [], [res.data.action]);
+  }
+  renderConversationTranscript();
+  setCommandStatus('plan accepted — executor dispatched');
+  await refreshConversationMessages({ render: true });
+}
+
+async function rejectPlan(planId) {
+  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/plans/' + encodeURIComponent(planId) + '/reject', 'POST', {});
+  if (!res.ok) {
+    appendCommandMessage('reject plan', 'Plan reject failed: ' + escapeHtml(res.data?.message || res.status), true);
+    setCommandStatus('plan reject failed', true);
+    return;
+  }
+  store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
+  renderConversationTranscript();
+  setCommandStatus('plan rejected');
+}
+
 async function runConversationAction(actionId, action) {
   const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/actions/' + encodeURIComponent(actionId) + '/' + action, 'POST', {});
   if (!res.ok) {
@@ -2947,11 +3067,11 @@ async function sendConversationMessage(input) {
     return;
   }
   store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
-  const newActions = res.data?.actions || [];
-  store.conversationActions = mergeConversationActions(store.conversationActions || [], newActions);
+  if (res.data?.plan) {
+    store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
+  }
   renderConversationTranscript();
-  setCommandStatus('conversation routed');
-  await autoDispatchConversationActions(newActions);
+  setCommandStatus('plan proposed — accept or reject in transcript');
 }
 
 async function handleCommand() {

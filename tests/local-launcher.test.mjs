@@ -107,7 +107,7 @@ test('extension claim nonce can be used once to obtain extension session token',
   }
 });
 
-test('extension session token cannot confirm or dispatch conversation actions', async () => {
+test('extension session token cannot accept planner-gated conversation plans', async () => {
   const handle = await startLocalServer(0);
   try {
     const consoleRes = await fetch(`${handle.url}/console/project`);
@@ -148,36 +148,22 @@ test('extension session token cannot confirm or dispatch conversation actions', 
     });
     assert.equal(message.status, 201);
     const messagePayload = await message.json();
-    const actionId = messagePayload.actions?.[0]?.id;
-    assert.equal(typeof actionId, 'string');
+    const planId = messagePayload.plan?.id;
+    assert.equal(typeof planId, 'string');
 
-    const confirmByExtension = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/confirm`, {
+    const acceptByExtension = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/plans/${planId}/accept`, {
       method: 'POST',
       headers: extensionHeaders,
       body: JSON.stringify({}),
     });
-    assert.equal(confirmByExtension.status, 403);
+    assert.equal(acceptByExtension.status, 403);
 
-    const dispatchByExtension = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/dispatch`, {
-      method: 'POST',
-      headers: extensionHeaders,
-      body: JSON.stringify({}),
-    });
-    assert.equal(dispatchByExtension.status, 403);
-
-    const confirmByConsole = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/confirm`, {
+    const acceptByConsole = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/plans/${planId}/accept`, {
       method: 'POST',
       headers: consoleHeaders,
       body: JSON.stringify({}),
     });
-    assert.equal(confirmByConsole.status, 200);
-
-    const dispatchByConsole = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation/actions/${actionId}/dispatch`, {
-      method: 'POST',
-      headers: consoleHeaders,
-      body: JSON.stringify({}),
-    });
-    assert.equal(dispatchByConsole.status, 200);
+    assert.equal(acceptByConsole.status, 200);
   } finally {
     await closeServer(handle);
   }

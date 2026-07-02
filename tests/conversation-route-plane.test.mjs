@@ -159,7 +159,7 @@ test('conversation message API response does not contain instruction packet meta
 
 // ── Integration: instruction packet IS created internally ──
 
-test('instruction packet is created internally when a conversation message is posted', async () => {
+test('instruction packet is created internally only after plan acceptance', async () => {
   const {
     createBridgeRuntime,
     handleBridgeRequest,
@@ -178,17 +178,32 @@ test('instruction packet is created internally when a conversation message is po
   // Before: no instruction packets.
   assert.equal(runtime.conversationInstructionStore.exportPackets().length, 0);
 
-  await handleBridgeRequest(
+  const post = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/projects/cli-bridge/conversation/messages',
     jsonBody({ text: 'refactor login' }),
   );
 
-  // After: one instruction packet created.
+  // Still gated: message creates a plan, not an instruction packet.
+  assert.equal(runtime.conversationInstructionStore.exportPackets().length, 0);
+  const plan = post.payload.plan;
+  assert.ok(plan);
+
+  const accept = await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/cli-bridge/conversation/plans/${plan.id}/accept`,
+    jsonBody({}),
+    undefined,
+    { kind: 'console-cookie' },
+  );
+  assert.equal(accept.statusCode, 200);
+
+  // After accept: one instruction packet created.
   const packets = runtime.conversationInstructionStore.exportPackets();
   assert.equal(packets.length, 1);
-  assert.equal(packets[0].text, 'refactor login');
+  assert.match(packets[0].text, /refactor login/);
   assert.equal(packets[0].projectId, 'cli-bridge');
   assert.equal(typeof packets[0].userEventId, 'string');
   assert.ok(packets[0].userEventId.length > 0);
@@ -568,7 +583,7 @@ test('conversation message API response does not contain route metadata', async 
   }
 });
 
-test('route IS created internally when a conversation message is posted', async () => {
+test('route IS created internally only after plan acceptance', async () => {
   const {
     createBridgeRuntime,
     handleBridgeRequest,
@@ -587,18 +602,33 @@ test('route IS created internally when a conversation message is posted', async 
   // Before: no routes.
   assert.equal(runtime.conversationRouteStore.exportRoutes().length, 0);
 
-  await handleBridgeRequest(
+  const post = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/projects/cli-bridge/conversation/messages',
     jsonBody({ text: 'run tests' }),
   );
 
-  // After: one route created internally (only for workbuddy-execution adapter).
+  // Still gated: message creates a plan, not a route.
+  assert.equal(runtime.conversationRouteStore.exportRoutes().length, 0);
+  const plan = post.payload.plan;
+  assert.ok(plan);
+
+  const accept = await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/cli-bridge/conversation/plans/${plan.id}/accept`,
+    jsonBody({}),
+    undefined,
+    { kind: 'console-cookie' },
+  );
+  assert.equal(accept.statusCode, 200);
+
+  // After accept: one route created internally (only for workbuddy-execution adapter).
   const routes = runtime.conversationRouteStore.exportRoutes();
   assert.equal(routes.length, 1);
   assert.equal(routes[0].mode, 'single');
-  assert.equal(routes[0].status, 'pending');
+  assert.equal(routes[0].status, 'dispatched');
   assert.equal(routes[0].projectId, 'cli-bridge');
   assert.equal(typeof routes[0].instructionPacketId, 'string');
   assert.equal(typeof routes[0].actionId, 'string');

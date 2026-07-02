@@ -81,7 +81,7 @@ test('conversation pairing rejects unknown source endpoint', async () => {
   assert.match(res.payload.message, /source endpoint/);
 });
 
-test('review-command conversation creates a previewed review action', async () => {
+test('review-command conversation creates a plan proposal before review action', async () => {
   const runtime = createBridgeRuntime();
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
     sourceEndpointId: 'chatgpt-web',
@@ -94,13 +94,13 @@ test('review-command conversation creates a previewed review action', async () =
 
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /review preview created/i);
-  assert.equal(res.payload.actions.length, 1);
-  assert.equal(res.payload.actions[0].routeKind, 'review-command');
-  assert.equal(res.payload.actions[0].status, 'previewed');
+  assert.match(res.payload.events[1].text, /plan proposal/i);
+  assert.equal((res.payload.actions ?? []).length, 0);
+  assert.ok(res.payload.plan);
+  assert.equal(res.payload.plan.status, 'proposed');
 });
 
-test('workbuddy route creates previewed transcript event with action', async () => {
+test('workbuddy route creates a plan proposal before executor action', async () => {
   const runtime = createBridgeRuntime();
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
     sourceEndpointId: 'chatgpt-web',
@@ -114,10 +114,10 @@ test('workbuddy route creates previewed transcript event with action', async () 
   assert.equal(res.statusCode, 201);
   assert.equal(res.payload.events[1].routeKind, 'workbuddy-execution');
   assert.equal(res.payload.events[1].status, 'awaiting-manual-confirmation');
-  assert.match(res.payload.events[1].text, /execution preview created/i);
-  assert.equal(res.payload.actions.length, 1);
-  assert.equal(res.payload.actions[0].routeKind, 'workbuddy-execution');
-  assert.equal(res.payload.actions[0].status, 'previewed');
+  assert.match(res.payload.events[1].text, /plan proposal/i);
+  assert.equal((res.payload.actions ?? []).length, 0);
+  assert.ok(res.payload.plan);
+  assert.equal(res.payload.plan.status, 'proposed');
 });
 
 test('conversation pairing and transcript survive snapshot round-trip', async () => {

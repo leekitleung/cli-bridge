@@ -15,8 +15,9 @@ function jsonBody(body) {
 const CONSOLE_AUTH = { kind: 'console-cookie' };
 
 /**
- * Setup helper: creates a workbuddy conversation action, confirms, dispatches,
- * and claims it — returning { runtime, action, task } ready for result submission.
+ * Setup helper: creates a planner-gated workbuddy conversation, accepts the
+ * generated plan, dispatches, and claims it — returning { runtime, action, task }
+ * ready for result submission.
  */
 async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test instruction') {
   // Setup project and workbuddy pairing.
@@ -36,27 +37,22 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
     jsonBody({ text }),
   );
   assert.equal(postMsg.statusCode, 201);
-  const action = postMsg.payload.actions[0];
+  const plan = postMsg.payload.plan;
+  assert.ok(plan);
+  assert.equal(plan.status, 'proposed');
+
+  const acceptRes = await handleBridgeRequest(
+    runtime,
+    'POST',
+    `/bridge/projects/${projectId}/conversation/plans/${plan.id}/accept`,
+    jsonBody({}),
+    undefined,
+    CONSOLE_AUTH,
+  );
+  assert.equal(acceptRes.statusCode, 200);
+  const action = acceptRes.payload.action;
   assert.ok(action);
-
-  await handleBridgeRequest(
-    runtime,
-    'POST',
-    `/bridge/projects/${projectId}/conversation/actions/${action.id}/confirm`,
-    jsonBody({}),
-    undefined,
-    CONSOLE_AUTH,
-  );
-
-  const dispatchRes = await handleBridgeRequest(
-    runtime,
-    'POST',
-    `/bridge/projects/${projectId}/conversation/actions/${action.id}/dispatch`,
-    jsonBody({}),
-    undefined,
-    CONSOLE_AUTH,
-  );
-  const task = dispatchRes.payload.task;
+  const task = acceptRes.payload.dispatch?.task;
   assert.ok(task);
 
   // Claim the task.
@@ -69,7 +65,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
   assert.equal(claimRes.statusCode, 200);
   assert.equal(claimRes.payload.task.taskId, task.taskId);
 
-  return { runtime, action, task };
+  return { runtime, plan, action, task };
 }
 
 test('result submission creates an execution packet before transcript event', async () => {
@@ -265,43 +261,7 @@ test('persistence roundtrip preserves execution packets', async () => {
   try {
     // Phase 1: create runtime, setup, submit result, persist.
     const first = createBridgeRuntime({ dataDir: dir });
-
-    await handleBridgeRequest(
-      first,
-      'PUT',
-      '/bridge/projects/cli-bridge/conversation-pairing',
-      jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
-    );
-
-    const postMsg = await handleBridgeRequest(
-      first,
-      'POST',
-      '/bridge/projects/cli-bridge/conversation/messages',
-      jsonBody({ text: 'persistent instruction' }),
-    );
-    const action = postMsg.payload.actions[0];
-
-    await handleBridgeRequest(
-      first,
-      'POST',
-      `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`,
-      jsonBody({}),
-      undefined,
-      CONSOLE_AUTH,
-    );
-
-    const dispatchRes = await handleBridgeRequest(
-      first,
-      'POST',
-      `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`,
-      jsonBody({}),
-      undefined,
-      CONSOLE_AUTH,
-    );
-    const task = dispatchRes.payload.task;
-
-    // Claim.
-    await handleBridgeRequest(first, 'GET', '/bridge/endpoints/workbuddy/inbox/next', jsonBody(undefined));
+    const { task } = await setupAndClaim(first, 'cli-bridge', 'persistent instruction');
 
     await handleBridgeRequest(
       first,
@@ -391,57 +351,13 @@ test('full pipeline creates route linking instruction → action → task → re
   assert.equal(execPackets.length, 1);
 });
 
-test('route lifecycle: pending → dispatched → completed via full pipeline', async () => {
+test('route lifecycle: proposed → accepted → dispatched → completed via full pipeline', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime();
-
-  // Setup project and pairing.
-  await handleBridgeRequest(
-    runtime,
-    'PUT',
-    '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
-  );
-
-  // Post message — route starts as pending.
-  const postMsg = await handleBridgeRequest(
-    runtime,
-    'POST',
-    '/bridge/projects/cli-bridge/conversation/messages',
-    jsonBody({ text: 'lifecycle test' }),
-  );
-  assert.equal(postMsg.statusCode, 201);
-  const action = postMsg.payload.actions[0];
-  assert.ok(action);
+  const { task } = await setupAndClaim(runtime, 'cli-bridge', 'lifecycle test');
 
   const routes = runtime.conversationRouteStore.exportRoutes();
   assert.equal(routes.length, 1);
-  assert.equal(routes[0].status, 'pending');
-
-  // Confirm action.
-  await handleBridgeRequest(
-    runtime,
-    'POST',
-    `/bridge/projects/cli-bridge/conversation/actions/${action.id}/confirm`,
-    jsonBody({}),
-    undefined,
-    CONSOLE_AUTH,
-  );
-
-  // Dispatch action — route → dispatched.
-  const dispatchRes = await handleBridgeRequest(
-    runtime,
-    'POST',
-    `/bridge/projects/cli-bridge/conversation/actions/${action.id}/dispatch`,
-    jsonBody({}),
-    undefined,
-    CONSOLE_AUTH,
-  );
-  const task = dispatchRes.payload.task;
-  assert.ok(task);
-
-  // Claim task.
-  await handleBridgeRequest(runtime, 'GET', '/bridge/endpoints/workbuddy/inbox/next', jsonBody(undefined));
 
   const dispatchedRoute = runtime.conversationRouteStore.get(routes[0].id);
   assert.ok(dispatchedRoute);
@@ -529,7 +445,7 @@ test('route id stays internal — not in API responses', async () => {
 
 // ── EX-4: Route idempotency ──
 
-test('posting same message twice does not create duplicate routes', async () => {
+test('posting messages creates no routes before plan acceptance', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime();
 
@@ -541,7 +457,7 @@ test('posting same message twice does not create duplicate routes', async () => 
     jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
   );
 
-  // First message creates one route.
+  // First message creates a plan, but no route before acceptance.
   const first = await handleBridgeRequest(
     runtime,
     'POST',
@@ -549,9 +465,10 @@ test('posting same message twice does not create duplicate routes', async () => 
     jsonBody({ text: 'hello' }),
   );
   assert.equal(first.statusCode, 201);
-  assert.equal(runtime.conversationRouteStore.exportRoutes().length, 1);
+  assert.ok(first.payload.plan);
+  assert.equal(runtime.conversationRouteStore.exportRoutes().length, 0);
 
-  // Second message creates another route (different action).
+  // Second message creates another plan, but still no executor route.
   const second = await handleBridgeRequest(
     runtime,
     'POST',
@@ -559,11 +476,7 @@ test('posting same message twice does not create duplicate routes', async () => 
     jsonBody({ text: 'world' }),
   );
   assert.equal(second.statusCode, 201);
-  // New message → new action → new route. Not a duplicate.
-  assert.equal(runtime.conversationRouteStore.exportRoutes().length, 2);
-
-  // Both routes should be distinct.
-  const allRoutes = runtime.conversationRouteStore.exportRoutes();
-  assert.notEqual(allRoutes[0].id, allRoutes[1].id);
-  assert.notEqual(allRoutes[0].actionId, allRoutes[1].actionId);
+  assert.ok(second.payload.plan);
+  assert.notEqual(first.payload.plan.id, second.payload.plan.id);
+  assert.equal(runtime.conversationRouteStore.exportRoutes().length, 0);
 });

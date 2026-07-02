@@ -42,7 +42,8 @@ import { InMemoryConversationInstructionStore } from '../storage/conversation-in
 import type { ConversationInstructionPacket } from '../storage/conversation-instruction-store.ts';
 import { InMemoryConversationExecutionStore } from '../storage/conversation-execution-store.ts';
 import { InMemoryConversationRouteStore } from '../storage/conversation-route-store.ts';
-import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
+import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts';
+import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
 import { tickAutomationLoop, runAutomationLoop } from '../automation/automation-loop-runner.ts';
@@ -183,6 +184,8 @@ export interface BridgeRuntime {
   conversationInstructionStore: InMemoryConversationInstructionStore;
   conversationExecutionStore: InMemoryConversationExecutionStore;
   conversationRouteStore: InMemoryConversationRouteStore;
+  /** ADR-0030 EX-1: plan proposal store for planner-gated execution. */
+  planProposalStore: InMemoryPlanProposalStore;
   workbuddyExecution: WorkBuddyExecutionAdapter;
   // v2.4a Model API
   modelApiKeyStore: InMemoryApiKeyStore;
@@ -1485,6 +1488,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   const conversationInstructionStore = new InMemoryConversationInstructionStore();
   const conversationExecutionStore = new InMemoryConversationExecutionStore();
   const conversationRouteStore = new InMemoryConversationRouteStore();
+  const planProposalStore = new InMemoryPlanProposalStore();
   const workbuddyExecution = new WorkBuddyExecutionAdapter();
   // v2.4a Model API key store — memory-only, never persisted.
   const modelApiKeyStore = new InMemoryApiKeyStore();
@@ -1576,6 +1580,9 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const r of read.snapshot.conversationRoutes ?? []) {
         try { conversationRouteStore.hydrateRoute(r); } catch { }
       }
+      for (const p of read.snapshot.conversationPlanProposals ?? []) {
+        try { planProposalStore.hydrateProposal(p); } catch { }
+      }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
         try { workbuddyExecution.hydrateTask(t); } catch { }
       }
@@ -1625,6 +1632,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       conversationInstructionPackets: conversationInstructionStore.exportPackets(),
       conversationExecutionPackets: conversationExecutionStore.exportPackets(),
       conversationRoutes: conversationRouteStore.exportRoutes(),
+      conversationPlanProposals: planProposalStore.exportProposals(),
       workbuddyTasks: workbuddyExecution.exportTasks(),
       executionProposals: executionProposalStore.exportAll(),
       automationLoopRuns: automationLoopStore.exportLoops(),
@@ -1673,6 +1681,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     conversationInstructionStore,
     conversationExecutionStore,
     conversationRouteStore,
+    planProposalStore,
     workbuddyExecution,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -1921,6 +1930,28 @@ function projectConversationActionPath(pathname: string): { matched: true; key: 
     };
   } catch {
     return { matched: true, key: '', actionId: '', sub: sub as 'confirm' | 'dispatch' };
+  }
+}
+
+/** Matches /bridge/projects/:key/conversation/plans/:planId/:action
+ *  where :action is "accept" or "reject". */
+function projectConversationPlanPath(pathname: string): { matched: true; key: string; planId: string; sub: 'accept' | 'reject' } | { matched: false } {
+  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
+  if (!pathname.startsWith(prefix)) return { matched: false };
+  const rest = pathname.slice(prefix.length);
+  const parts = rest.split('/');
+  if (parts.length !== 5 || parts[1] !== 'conversation' || parts[2] !== 'plans') return { matched: false };
+  const sub = parts[4];
+  if (sub !== 'accept' && sub !== 'reject') return { matched: false };
+  try {
+    return {
+      matched: true,
+      key: decodeURIComponent(parts[0]).trim(),
+      planId: decodeURIComponent(parts[3]).trim(),
+      sub,
+    };
+  } catch {
+    return { matched: true, key: '', planId: '', sub: sub as 'accept' | 'reject' };
   }
 }
 
@@ -3245,6 +3276,16 @@ export async function handleBridgeRequest(
         }
       }
 
+      // ADR-0030 EX-5: Update plan status when executor result returns.
+      const linkedPlan = runtime.planProposalStore.findByUserEventId(conversationAction.userEventId);
+      if (linkedPlan && ['dispatching', 'dispatched'].includes(linkedPlan.status)) {
+        if (outcomeOk) {
+          runtime.planProposalStore.markReturned(linkedPlan.id);
+        } else {
+          runtime.planProposalStore.markFailed(linkedPlan.id);
+        }
+      }
+
       // Find linked instruction packet via userEventId.
       const instructionPacket = runtime.conversationInstructionStore.findByUserEventId(conversationAction.userEventId);
 
@@ -3537,6 +3578,7 @@ export async function handleBridgeRequest(
       return ok({
         messages: runtime.conversationTranscriptStore.listByProject(key),
         actions: runtime.conversationActionStore.listByProject(key),
+        plans: runtime.planProposalStore.listByProject(key),
       });
     }
 
@@ -3553,7 +3595,10 @@ export async function handleBridgeRequest(
       const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
       if (!targetEndpoint) return error(409, 'Conversation target endpoint is unavailable');
 
+      // ADR-0029: Resolve route adapter (for accept-phase dispatch only — not used here).
       const route = resolveConversationRouteAdapter(targetEndpoint);
+
+      const sessionId = `conversation:${key}`;
 
       const userEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
@@ -3564,66 +3609,39 @@ export async function handleBridgeRequest(
         routeKind: pairing.targetRouteKind,
       });
 
-      runtime.conversationInstructionStore.create({
+      // ADR-0030 EX-2: Route to planner instead of executor.
+      // Generate plan proposal. Do NOT create instruction packet / route / action.
+      const mockPlan = generateMockPlanProposal(text);
+      const planProposal = runtime.planProposalStore.create({
         projectId: key,
-        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        sessionId,
+        sourceEndpointId: pairing.sourceEndpointId,
+        plannerEndpointId: 'mock-planner',
+        executorEndpointIds: [pairing.targetEndpointId],
         userEventId: userEvent.id,
-        text,
+        title: mockPlan.title,
+        body: mockPlan.body,
+        steps: mockPlan.steps,
+        constraints: mockPlan.constraints,
+        riskNotes: mockPlan.riskNotes,
       });
 
-      const instructionPacket = runtime.conversationInstructionStore.findByUserEventId(userEvent.id);
-
-      let bridgeText = '';
-      let bridgeStatus: ConversationTranscriptEvent['status'] = 'queued';
-
-      if (pairing.targetRouteKind === 'managed-pty') {
-        bridgeStatus = 'not-implemented';
-        bridgeText = 'Managed PTY conversation dispatch is not implemented in this phase.';
-      } else if (pairing.targetRouteKind === 'web-relay') {
-        bridgeStatus = 'awaiting-manual-confirmation';
-        bridgeText = 'Web relay requires the existing manual confirmation flow.';
-      } else if (route.adapter) {
-        bridgeStatus = 'awaiting-manual-confirmation';
-        bridgeText = route.adapter.bridgeText(targetEndpoint.label || targetEndpoint.id);
-      }
-
+      const bridgeText = `Plan proposal: ${mockPlan.title}\n\n${mockPlan.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
       const bridgeEvent = runtime.conversationTranscriptStore.append({
         projectId: key,
         pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
         role: 'bridge',
         text: bridgeText,
-        status: bridgeStatus,
+        status: 'awaiting-manual-confirmation',
         routeKind: pairing.targetRouteKind,
       });
 
-      const actions: import('../storage/conversation-action-store.ts').ConversationAction[] = [];
-      if (route.adapter) {
-        const action = route.adapter.createAction({
-          runtime,
-          projectId: key,
-          sourceEndpointId: pairing.sourceEndpointId,
-          targetEndpoint,
-          userEventId: userEvent.id,
-          bridgeEventId: bridgeEvent.id,
-          text,
-        });
-        if (action) {
-          // EX-4: Create internal route linking instruction → route → action.
-          const taskRoute = runtime.conversationRouteStore.create({
-            projectId: key,
-            pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
-            instructionPacketId: instructionPacket!.id,
-            actionId: action.id,
-            mode: 'single',
-          });
-          // Link route id back to the action.
-          runtime.conversationActionStore.linkRoute(action.id, taskRoute.id);
-          actions.push(action);
-        }
-      }
-
+      // P0 gate: no instruction packet, no route, no task before accept.
       runtime.persist();
-      return created({ events: [userEvent, bridgeEvent], actions });
+      return created({
+        events: [userEvent, bridgeEvent],
+        plan: planProposal,
+      });
     }
 
     return error(405, 'Method not allowed');
@@ -3657,6 +3675,113 @@ export async function handleBridgeRequest(
 
     if (conversationActionPath.sub === 'dispatch') {
       return await route.adapter.dispatch({ runtime, action, request });
+    }
+
+    return error(405, 'Method not allowed');
+  }
+
+  // ── ADR-0030 EX-3: Plan Accept / Reject ──
+
+  const conversationPlanPath = projectConversationPlanPath(pathname);
+  if (conversationPlanPath.matched) {
+    if (authContext?.kind !== 'console-cookie') {
+      return error(403, 'Plan accept/reject requires local Console session');
+    }
+    if (!conversationPlanPath.key || !conversationPlanPath.planId) return error(400, 'Invalid conversation plan path');
+    const project = runtime.projectStore.get(conversationPlanPath.key);
+    if (!project) return error(404, 'Project not found');
+    if (project.archivedAt) return error(409, 'Cannot modify plan in archived project');
+    if (method !== 'POST') return error(405, 'Method not allowed');
+
+    const plan = runtime.planProposalStore.get(conversationPlanPath.planId);
+    if (!plan || plan.projectId !== conversationPlanPath.key) return error(404, 'Plan not found');
+
+    // ── Reject ──
+    if (conversationPlanPath.sub === 'reject') {
+      if (plan.status !== 'proposed') return error(409, `Plan status is ${plan.status}, must be proposed`);
+      const rejected = runtime.planProposalStore.reject(plan.id);
+      if (!rejected) return error(409, 'Plan cannot be rejected');
+      runtime.persist();
+      return ok({ plan: rejected });
+    }
+
+    // ── Accept ──
+    if (conversationPlanPath.sub === 'accept') {
+      const acceptResult = runtime.planProposalStore.accept(plan.id);
+      if (!acceptResult.ok) return error(409, acceptResult.reason);
+
+      const pairing = runtime.conversationPairingStore.get(conversationPlanPath.key);
+      if (!pairing) return error(409, 'Conversation pairing is not configured');
+
+      const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
+      if (!targetEndpoint) return error(409, 'Conversation target endpoint is unavailable');
+
+      const route = resolveConversationRouteAdapter(targetEndpoint);
+      if (!route.adapter) return error(409, `Route kind ${route.kind} is not dispatchable`);
+
+      // Create instruction packet (ADR-0029 passthrough plane).
+      const instPacket = runtime.conversationInstructionStore.create({
+        projectId: conversationPlanPath.key,
+        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        userEventId: plan.userEventId,
+        text: plan.body,
+      });
+
+      const bridgeEvent = runtime.conversationTranscriptStore.append({
+        projectId: conversationPlanPath.key,
+        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        role: 'bridge',
+        text: 'Plan accepted. Dispatching executor...',
+        status: 'queued',
+        routeKind: pairing.targetRouteKind,
+      });
+
+      // Create action via route adapter.
+      const action = route.adapter.createAction({
+        runtime,
+        projectId: conversationPlanPath.key,
+        sourceEndpointId: pairing.sourceEndpointId,
+        targetEndpoint,
+        userEventId: plan.userEventId,
+        bridgeEventId: bridgeEvent.id,
+        text: plan.body,
+      });
+
+      if (!action) return error(500, 'Route adapter failed to create action');
+
+      // Create route linking instruction → action.
+      const taskRoute = runtime.conversationRouteStore.create({
+        projectId: conversationPlanPath.key,
+        pairingId: `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`,
+        instructionPacketId: instPacket.id,
+        actionId: action.id,
+        mode: 'single',
+      });
+      runtime.conversationActionStore.linkRoute(action.id, taskRoute.id);
+
+      // Re-fetch action so confirm/dispatch see the linked routeId.
+      const linkedAction = runtime.conversationActionStore.get(action.id);
+      if (!linkedAction) return error(500, 'Action lost after link');
+
+      // Auto-dispatch: confirm → dispatch via route adapter.
+      const confirmed = route.adapter.confirm({ runtime, action: linkedAction });
+      if (confirmed.statusCode !== 200) return confirmed;
+
+      // Re-fetch after confirm so dispatch sees the confirmed status.
+      const confirmedAction = runtime.conversationActionStore.get(action.id);
+      if (!confirmedAction) return error(500, 'Action lost after confirm');
+
+      const dispatchResult = await route.adapter.dispatch({ runtime, action: confirmedAction, request });
+
+      // Update plan status to dispatching.
+      runtime.planProposalStore.markDispatching(plan.id);
+
+      runtime.persist();
+      return ok({
+        plan: acceptResult.plan,
+        action: confirmedAction,
+        dispatch: dispatchResult.payload,
+      });
     }
 
     return error(405, 'Method not allowed');

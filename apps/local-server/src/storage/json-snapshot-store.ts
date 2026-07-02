@@ -92,6 +92,7 @@ export interface BridgeSnapshot {
   conversationInstructionPackets?: import('./conversation-instruction-store.ts').ConversationInstructionPacket[];
   conversationExecutionPackets?: import('./conversation-execution-store.ts').ConversationExecutionPacket[];
   conversationRoutes?: import('./conversation-route-store.ts').ConversationTaskRoute[];
+  conversationPlanProposals?: import('./conversation-plan-store.ts').ConversationPlanProposal[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
   /** ADR-0028: bounded automation work-cycle loop runs and cycles. */
@@ -344,6 +345,7 @@ export interface BuildSnapshotInput {
   conversationInstructionPackets?: import('./conversation-instruction-store.ts').ConversationInstructionPacket[];
   conversationExecutionPackets?: import('./conversation-execution-store.ts').ConversationExecutionPacket[];
   conversationRoutes?: import('./conversation-route-store.ts').ConversationTaskRoute[];
+  conversationPlanProposals?: import('./conversation-plan-store.ts').ConversationPlanProposal[];
   workbuddyTasks?: import('../adapters/workbuddy-execution-adapter.ts').WorkBuddyExecutionTask[];
   verificationRunRecords?: import('../../../../packages/shared/src/types.ts').VerificationRunRecord[];
   automationLoopRuns?: AutomationLoopRun[];

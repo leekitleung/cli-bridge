@@ -2171,7 +2171,7 @@ test('clicking active project exits pairing context back to conversation main vi
   assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
 });
 
-test('conversation mode auto-dispatches previewed workbuddy actions after pairing save', async () => {
+test('conversation mode renders planner proposal and accepts before executor dispatch', async () => {
   const { document, fetchCalls, setFixture } = setupConsole();
   setFixture('/bridge/endpoints', {
     ok: true,
@@ -2226,31 +2226,39 @@ test('conversation mode auto-dispatches previewed workbuddy actions after pairin
     payload: {
       events: [
         { id: 'u1', role: 'user', text: 'inspect this', status: 'queued', routeKind: 'workbuddy-execution', kind: 'user_message', visibility: 'user' },
-        { id: 'b1', role: 'bridge', text: 'WorkBuddy preview created', status: 'awaiting-manual-confirmation', routeKind: 'workbuddy-execution', kind: 'status', visibility: 'user' },
       ],
-      actions: [
-        { id: 'act-1', status: 'previewed', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' },
-      ],
+      actions: [],
+      plan: {
+        id: 'plan-1',
+        version: 1,
+        title: 'Inspect this',
+        body: 'Review the request and inspect the repository.',
+        steps: ['Inspect repository'],
+        constraints: ['Do not expose internals'],
+        riskNotes: [],
+        status: 'proposed',
+      },
     },
   });
-  setFixture('/bridge/projects/cli-bridge/conversation/actions/act-1/confirm', {
+  setFixture('/bridge/projects/cli-bridge/conversation/plans/plan-1/accept', {
     ok: true,
-    payload: { action: { id: 'act-1', status: 'confirmed', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' } },
-  });
-  setFixture('/bridge/projects/cli-bridge/conversation/actions/act-1/dispatch', {
-    ok: true,
-    payload: { action: { id: 'act-1', status: 'queued', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' } },
+    payload: {
+      plan: { id: 'plan-1', version: 1, title: 'Inspect this', body: 'Review the request and inspect the repository.', steps: ['Inspect repository'], constraints: ['Do not expose internals'], riskNotes: [], status: 'accepted' },
+      action: { id: 'act-1', status: 'queued', routeKind: 'workbuddy-execution', preview: 'WorkBuddy preview' },
+      dispatch: { action: { id: 'act-1', status: 'queued' }, task: { taskId: 'task-1' } },
+    },
   });
 
   document.getElementById('command-input').value = 'inspect this';
   document.getElementById('command-send').click();
 
-  await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/confirm')));
-  await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/dispatch')));
-  assert.equal(document.getElementById('command-status').textContent, 'conversation auto-dispatched');
-  assert.match(document.getElementById('conversation-transcript').textContent, /queued/);
+  await waitFor(() => document.getElementById('conversation-transcript').textContent.includes('Inspect this'));
+  assert.equal(fetchCalls.some((call) => call.path.includes('/conversation/actions/')), false);
+  assert.equal(fetchCalls.some((call) => call.path.endsWith('/accept')), false);
+  document.querySelector('[data-plan-accept="plan-1"]').click();
+  await waitFor(() => fetchCalls.some((call) => call.path.endsWith('/accept')));
+  await waitFor(() => document.getElementById('command-status').textContent === 'plan accepted — executor dispatched');
   assert.ok(document.querySelector('.conversation-message.user'));
-  assert.ok(document.querySelector('.conversation-waiting'));
   assert.doesNotMatch(document.getElementById('conversation-transcript').textContent, /WorkBuddy preview/);
   assert.doesNotMatch(document.getElementById('conversation-transcript').textContent, /Confirm|Dispatch/);
 });
