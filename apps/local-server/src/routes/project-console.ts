@@ -899,6 +899,7 @@ async function refreshConversationMessages(options) {
   store.conversationEvents = res.data?.messages || res.data?.events || [];
   store.conversationActions = res.data?.actions || [];
   store.conversationPlans = res.data?.plans || [];
+  store.conversationGate = res.data?.gate ?? null;
   if (options.render !== false) renderConversationTranscript();
 }
 
@@ -2883,7 +2884,7 @@ function isMainTranscriptEvent(event) {
     && !isConversationBridgeAdminEvent(event);
 }
 
-function renderConversationTranscript(explicitEvents) {
+function renderConversationTranscript(explicitEvents, explicitGate) {
   const el = document.getElementById('conversation-transcript');
   const isTest = arguments.length > 0 && Array.isArray(explicitEvents);
   if (!el && !isTest) return;
@@ -2901,7 +2902,8 @@ function renderConversationTranscript(explicitEvents) {
   const visibleEvents = events.filter(event => isMainTranscriptEvent(event));
   const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
   const plansHtml = plans.filter(p => p.status === 'proposed').map(renderPlanProposal).join('');
-  const html = eventsHtml + plansHtml;
+  const gateHtml = renderConversationGateStatus(isTest ? explicitGate : store.conversationGate);
+  const html = eventsHtml + plansHtml + gateHtml;
   if (isTest) return html;
   el.innerHTML = html;
   bindPlanActionButtons();
@@ -2935,6 +2937,25 @@ function renderConversationEvent(event) {
     + escapeHtml(label)
     + '</div><div class="conversation-bubble">' + escapeHtml(event.text)
     + '</div></div>';
+}
+
+function renderConversationGateStatus(gate) {
+  if (!gate) return '';
+  let text = '';
+  if (gate.type === 'continue_planning') {
+    text = 'Executor was not started. Planner response only.';
+  } else if (gate.type === 'blocked') {
+    text = 'Executor not started: ' + (Array.isArray(gate.missing) && gate.missing.length ? gate.missing.join(', ') : gate.reason || 'blocked');
+  } else if (gate.type === 'auto_execute') {
+    text = 'Executor started. Waiting for result.';
+  } else if (gate.type === 'require_user_confirm') {
+    return '';
+  }
+  if (!text) return '';
+  return '<div class="conversation-message bridge conversation-gate-status">'
+    + '<div class="conversation-meta">status</div>'
+    + '<div class="conversation-bubble">' + escapeHtml(text) + '</div>'
+    + '</div>';
 }
 
 function mergeConversationActions(existing, incoming) {

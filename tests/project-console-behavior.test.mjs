@@ -2453,6 +2453,20 @@ test('conversation send guards duplicate submit while planner request is pending
   assert.ok(consoleSource.includes("$('command-send').disabled = false"));
 });
 
+test('conversation transcript renders gate status when no executor task is created', () => {
+  const { window } = setupConsole();
+
+  const html = window.renderConversationTranscript([
+    { role: 'planner', kind: 'planner_output', visibility: 'user', text: 'Planner answered only.', status: 'draft' },
+  ], {
+    type: 'continue_planning',
+    reason: 'planner intent is answer',
+  });
+
+  assert.match(html, /Planner answered only/);
+  assert.match(html, /Executor was not started/);
+});
+
 // ── EX-5: Passthrough route plane acceptance ───────────────────
 //
 // Verify:

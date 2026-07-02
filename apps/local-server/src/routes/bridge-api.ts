@@ -3598,10 +3598,13 @@ export async function handleBridgeRequest(
     if (!proj) return error(404, 'Project not found');
 
     if (method === 'GET') {
+      const gateDecisions = runtime.gateDecisionStore.listByProject(key);
       return ok({
         messages: runtime.conversationTranscriptStore.listByProject(key),
         actions: runtime.conversationActionStore.listByProject(key),
         plans: runtime.planProposalStore.listByProject(key),
+        gateDecisions,
+        gate: gateDecisions.at(-1)?.decision ?? null,
       });
     }
 

@@ -147,6 +147,16 @@ test('request execution blocks before dispatch when executor unavailable', async
   assert.equal(packets.length, 0);
   const tasks = runtime.workbuddyExecution.exportTasks();
   assert.equal(tasks.length, 0);
+
+  const read = await handleBridgeRequest(
+    runtime,
+    'GET',
+    '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody(undefined),
+  );
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.gate.type, 'blocked');
+  assert.equal(read.payload.gateDecisions.length, 1);
 });
 
 test('executor raw result returns to transcript without bridge-authored rewrite', async () => {
