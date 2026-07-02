@@ -247,6 +247,57 @@ test('ACCEPTANCE-6: high-risk operation requires confirmation', async () => {
   assert.equal(runtime.workbuddyExecution.exportTasks().length, 1); // only the readiness probe task
 });
 
+// Check 7: Extension cannot force confirmation or auto execution
+test('ACCEPTANCE-7: extension cannot accept plans or force gate decisions', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const runtime = createBridgeRuntime({ plannerAdapters: [highRiskPlanner()] });
+
+  const pairRes = await setupPairing(runtime);
+  assert.equal(pairRes.statusCode, 200);
+
+  runtime.workbuddyExecution.enqueue({
+    endpointId: 'workbuddy', proposalId: 'stub', planId: 'stub',
+    goalId: 'stub', bindingHash: 'stub', prompt: 'stub', workingDirectory: '/tmp',
+  });
+  runtime.workbuddyExecution.claimNext('workbuddy');
+
+  // Send message → creates plan proposal (require_user_confirm).
+  const msg = await handleBridgeRequest(
+    runtime, 'POST', '/bridge/projects/cli-bridge/conversation/messages',
+    jsonBody({ text: 'edit files' }),
+  );
+  assert.equal(msg.statusCode, 201);
+  const planId = msg.payload.plan?.id;
+  assert.equal(typeof planId, 'string');
+
+  // Extension tries to accept → 403 (must be console-cookie).
+  const extAccept = await handleBridgeRequest(
+    runtime, 'POST', `/bridge/projects/cli-bridge/conversation/plans/${planId}/accept`,
+    jsonBody({}),
+    undefined,
+    { kind: 'extension-session' },
+  );
+  assert.equal(extAccept.statusCode, 403);
+
+  // Extension tries to reject → 403.
+  const extReject = await handleBridgeRequest(
+    runtime, 'POST', `/bridge/projects/cli-bridge/conversation/plans/${planId}/reject`,
+    jsonBody({}),
+    undefined,
+    { kind: 'extension-session' },
+  );
+  assert.equal(extReject.statusCode, 403);
+
+  // Console can still accept.
+  const consoleAccept = await handleBridgeRequest(
+    runtime, 'POST', `/bridge/projects/cli-bridge/conversation/plans/${planId}/accept`,
+    jsonBody({}),
+    undefined,
+    { kind: 'console-cookie' },
+  );
+  assert.equal(consoleAccept.statusCode, 200);
+});
+
 // Check 8: Main transcript has no internal noise
 test('ACCEPTANCE-8: main transcript hides route/queue internals', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');

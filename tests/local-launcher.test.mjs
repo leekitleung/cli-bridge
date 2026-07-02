@@ -108,7 +108,28 @@ test('extension claim nonce can be used once to obtain extension session token',
 });
 
 test('extension session token cannot accept planner-gated conversation plans', async () => {
-  const handle = await startLocalServer(0);
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [{
+      id: 'test-planner',
+      mode: 'test-only',
+      async plan(input) {
+        return {
+          id: `out-${Date.now()}`,
+          sessionId: input.sessionId,
+          plannerEndpointId: 'test-planner',
+          visibleText: 'Plan: ' + input.userText,
+          intent: 'request_execution',
+          proposedInstruction: {
+            summary: input.userText,
+            payload: input.userText,
+            targetExecutorIds: ['workbuddy'],
+            riskHints: ['filesystem-mutation'],
+          },
+          createdAt: new Date().toISOString(),
+        };
+      },
+    }],
+  });
   try {
     const consoleRes = await fetch(`${handle.url}/console/project`);
     const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
@@ -133,6 +154,12 @@ test('extension session token cannot accept planner-gated conversation plans', a
       'content-type': 'application/json',
       [PAIRING_HEADER]: claimPayload.extensionSessionToken,
     };
+
+    // Establish WorkBuddy readiness so the gate doesn't block plan creation.
+    // Calling inbox/next records a claim timestamp even with no pending tasks.
+    await fetch(`${handle.url}/bridge/endpoints/workbuddy/inbox/next`, {
+      headers: consoleHeaders,
+    });
 
     const pairing = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation-pairing`, {
       method: 'PUT',
