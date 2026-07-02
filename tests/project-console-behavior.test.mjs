@@ -2350,7 +2350,11 @@ function isConversationBridgeAdminEvent(event) {
 }
 
 function isTranscriptVisible(event) {
-  return event.visibility === 'user' && !isConversationBridgeAdminEvent(event);
+  return event
+    && event.visibility === 'user'
+    && event.kind !== 'instruction'
+    && event.kind !== 'status'
+    && !isConversationBridgeAdminEvent(event);
 }
 
 test('visibility filter: user_message with visibility user passes through', () => {
@@ -2378,9 +2382,9 @@ test('visibility filter: legacy admin events are still hidden', () => {
   assert.equal(isTranscriptVisible(legacyAutoDispatch), false);
 });
 
-test('visibility filter: non-admin bridge user-visible event passes through', () => {
+test('visibility filter: bridge status event is hidden (kind filter)', () => {
   const statusMsg = { role: 'bridge', kind: 'status', visibility: 'user', text: 'connected', status: 'queued' };
-  assert.equal(isTranscriptVisible(statusMsg), true);
+  assert.equal(isTranscriptVisible(statusMsg), false);
 });
 
 test('visibility filter: event without visibility field defaults are handled at store level', () => {
@@ -2402,10 +2406,10 @@ test('renderConversationTranscript includes visibility filter', () => {
     resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
     'utf8',
   );
-  // Verify the visibility filter is present alongside the legacy admin filter
+  // Verify the main transcript event filter is present
   assert.ok(
-    consoleSource.includes("event.visibility === 'user' && !isConversationBridgeAdminEvent(event)"),
-    'expected visibility + legacy admin filter expression',
+    consoleSource.includes('isMainTranscriptEvent(event)'),
+    'expected isMainTranscriptEvent filter in renderConversationTranscript',
   );
 });
 
@@ -2418,6 +2422,23 @@ test('renderConversationTranscript preserved legacy admin filter', () => {
     consoleSource.includes('isConversationBridgeAdminEvent'),
     'expected legacy admin event filter preserved',
   );
+});
+
+// ── Task 1 (ADR-0031): Transcript hides route/queue internals ──
+
+test('main conversation transcript hides route and queue internals', () => {
+  const { window, document } = setupConsole();
+  const html = window.renderConversationTranscript([
+    { role: 'user', kind: 'user_message', visibility: 'user', text: 'hi', status: 'draft', routeKind: 'workbuddy-execution' },
+    { role: 'bridge', kind: 'status', visibility: 'internal', text: 'task dispatched to workbuddy', status: 'queued', routeKind: 'workbuddy-execution' },
+    { role: 'target', kind: 'executor_output', visibility: 'user', text: 'done', status: 'returned', routeKind: 'workbuddy-execution' },
+  ]);
+
+  assert.match(html, /hi/);
+  assert.match(html, /done/);
+  assert.doesNotMatch(html, /queued/);
+  assert.doesNotMatch(html, /workbuddy-execution/);
+  assert.doesNotMatch(html, /dispatch/i);
 });
 
 // ── EX-5: Passthrough route plane acceptance ───────────────────

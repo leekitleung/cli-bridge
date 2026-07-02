@@ -2873,22 +2873,35 @@ function toggleConversationAutoDispatch() {
   setCommandStatus(store.conversationAutoDispatch ? 'conversation auto-dispatch enabled' : 'conversation manual dispatch');
 }
 
-function renderConversationTranscript() {
+function isMainTranscriptEvent(event) {
+  return event
+    && event.visibility === 'user'
+    && event.kind !== 'instruction'
+    && event.kind !== 'status'
+    && !isConversationBridgeAdminEvent(event);
+}
+
+function renderConversationTranscript(explicitEvents) {
   const el = document.getElementById('conversation-transcript');
-  if (!el) return;
-  const events = store.conversationEvents || [];
-  const plans = store.conversationPlans || [];
+  const isTest = arguments.length > 0 && Array.isArray(explicitEvents);
+  if (!el && !isTest) return;
+  const events = isTest ? explicitEvents : (store.conversationEvents || []);
+  const plans = isTest ? [] : (store.conversationPlans || []);
   const hasContent = events.length > 0 || plans.length > 0;
   if (!hasContent) {
-    el.innerHTML = store.composerMode === 'conversation'
+    const html = store.composerMode === 'conversation'
       ? '<span class="unavailable">No conversation messages yet. Type a message and send.</span>'
       : '';
+    if (isTest) return html;
+    el.innerHTML = html;
     return;
   }
-  const visibleEvents = events.filter(event => event.visibility === 'user' && !isConversationBridgeAdminEvent(event));
+  const visibleEvents = events.filter(event => isMainTranscriptEvent(event));
   const eventsHtml = visibleEvents.map(renderConversationEvent).join('');
   const plansHtml = plans.filter(p => p.status === 'proposed').map(renderPlanProposal).join('');
-  el.innerHTML = eventsHtml + plansHtml;
+  const html = eventsHtml + plansHtml;
+  if (isTest) return html;
+  el.innerHTML = html;
   bindPlanActionButtons();
 }
 
@@ -2916,8 +2929,7 @@ function renderConversationEvent(event) {
   return '<div class="conversation-message ' + roleClass + '"><div class="conversation-meta">'
     + escapeHtml(label)
     + '</div><div class="conversation-bubble">' + escapeHtml(event.text)
-    + '</div><div class="conversation-state"><span class="pill">' + escapeHtml(event.status) + '</span> '
-    + escapeHtml(event.routeKind || '') + '</div></div>';
+    + '</div></div>';
 }
 
 function mergeConversationActions(existing, incoming) {
