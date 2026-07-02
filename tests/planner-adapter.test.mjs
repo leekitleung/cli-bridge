@@ -90,3 +90,39 @@ test('command planner adapter converts CLI JSON output into planner envelope', a
   assert.equal(envelope.intent, 'request_execution');
   assert.equal(envelope.proposedInstruction.payload, 'format this');
 });
+
+test('command planner adapter ignores Codex user echo JSONL events', async () => {
+  const { createCodexPlannerAdapter } = await import('../apps/local-server/src/conversation/command-planner-adapter.ts');
+
+  const adapter = createCodexPlannerAdapter({
+    id: 'operator-codex-planner',
+    commandOptions: {
+      launcherResolver: () => ({ executable: 'codex', prependArgs: [] }),
+      runner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: [
+              JSON.stringify({ type: 'item.completed', item: { type: 'user_message', text: 'hi' } }),
+              JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Hi. What would you like to do?' } }),
+              JSON.stringify({ type: 'turn.completed' }),
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+            truncated: false,
+          };
+        },
+      },
+    },
+  });
+
+  const envelope = await adapter.plan({
+    sessionId: 's1',
+    projectId: 'cli-bridge',
+    userText: 'hi',
+    history: [],
+  });
+
+  assert.equal(envelope.visibleText, 'Hi. What would you like to do?');
+  assert.equal(envelope.intent, 'answer');
+});

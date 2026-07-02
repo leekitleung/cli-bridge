@@ -1,7 +1,6 @@
 import {
   CODEX_REVIEW_ARGS,
   CLAUDE_REVIEW_ARGS,
-  selectReviewText,
 } from '../adapters/command-review-adapter.ts';
 import {
   runAllowlistedCommand,
@@ -69,6 +68,72 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     }
   }
   return null;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function plannerTextFromEvent(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+  const role = typeof record.role === 'string' ? record.role.toLowerCase() : '';
+  if (role === 'user' || type.includes('user')) return undefined;
+
+  if (typeof record.visibleText === 'string' && record.visibleText.trim().length > 0) {
+    return JSON.stringify(record);
+  }
+
+  const item = record.item;
+  if (typeof item === 'object' && item !== null) {
+    const itemRecord = item as Record<string, unknown>;
+    const itemType = typeof itemRecord.type === 'string' ? itemRecord.type.toLowerCase() : '';
+    const itemRole = typeof itemRecord.role === 'string' ? itemRecord.role.toLowerCase() : '';
+    if (itemRole === 'user' || itemType.includes('user')) return undefined;
+    if ((itemRole === 'assistant' || itemType.includes('agent') || itemType.includes('assistant'))
+      && typeof itemRecord.text === 'string'
+      && itemRecord.text.trim().length > 0) {
+      return itemRecord.text.trim();
+    }
+  }
+
+  if (role === 'assistant' || type.includes('assistant') || type.includes('agent') || type === 'result') {
+    for (const key of ['result', 'text', 'message', 'content'] as const) {
+      const field = record[key];
+      if (typeof field === 'string' && field.trim().length > 0) {
+        return field.trim();
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function selectPlannerText(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) return '';
+
+  const whole = tryParseJson(trimmed);
+  if (whole !== undefined) {
+    return plannerTextFromEvent(whole) ?? trimmed;
+  }
+
+  const lines = trimmed.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  let sawJsonLine = false;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const parsed = tryParseJson(lines[i]);
+    if (parsed === undefined) continue;
+    sawJsonLine = true;
+    const candidate = plannerTextFromEvent(parsed);
+    if (candidate !== undefined) return candidate;
+  }
+
+  return sawJsonLine ? '' : trimmed;
 }
 
 function stringArray(value: unknown): string[] | undefined {
@@ -154,7 +219,7 @@ export function createCommandPlannerAdapter(options: CommandPlannerAdapterOption
         };
       }
 
-      return envelopeFromPlannerText(options.id, input, selectReviewText(run));
+      return envelopeFromPlannerText(options.id, input, selectPlannerText(run.stdout));
     },
   };
 }

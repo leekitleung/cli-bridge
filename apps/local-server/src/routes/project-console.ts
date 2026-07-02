@@ -730,6 +730,7 @@ const store = {
   conversationActions: [],
   conversationPlans: [],
   conversationGate: null,
+  conversationSending: false,
   conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
 };
 
@@ -3071,31 +3072,39 @@ async function autoDispatchConversationActions(actions) {
 }
 
 async function sendConversationMessage(input) {
+  if (store.conversationSending) return;
   if (!store.connected) {
     appendCommandMessage(input, 'Connect with the pairing token first.', true);
     setCommandStatus('connect required', true);
     return;
   }
-  const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages', 'POST', { text: input });
-  if (!res.ok) {
-    appendCommandMessage(input, 'Conversation send failed: ' + escapeHtml(res.data?.message || res.status), true);
-    setCommandStatus('conversation failed', true);
-    return;
-  }
-  store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
-  store.conversationGate = res.data?.gate ?? null;
-  if (res.data?.plan) {
-    store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
-  }
-  renderConversationTranscript();
-  if (store.conversationGate?.type === 'blocked') {
-    setCommandStatus('blocked: ' + (store.conversationGate.missing?.join(', ') || store.conversationGate.reason));
-  } else if (store.conversationGate?.type === 'require_user_confirm') {
-    setCommandStatus('plan proposed — accept or reject in transcript');
-  } else if (store.conversationGate?.type === 'auto_execute') {
-    setCommandStatus('auto-executing...');
-  } else {
-    setCommandStatus('planner responded');
+  store.conversationSending = true;
+  $('command-send').disabled = true;
+  try {
+    const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages', 'POST', { text: input });
+    if (!res.ok) {
+      appendCommandMessage(input, 'Conversation send failed: ' + escapeHtml(res.data?.message || res.status), true);
+      setCommandStatus('conversation failed', true);
+      return;
+    }
+    store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
+    store.conversationGate = res.data?.gate ?? null;
+    if (res.data?.plan) {
+      store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
+    }
+    renderConversationTranscript();
+    if (store.conversationGate?.type === 'blocked') {
+      setCommandStatus('blocked: ' + (store.conversationGate.missing?.join(', ') || store.conversationGate.reason));
+    } else if (store.conversationGate?.type === 'require_user_confirm') {
+      setCommandStatus('plan proposed — accept or reject in transcript');
+    } else if (store.conversationGate?.type === 'auto_execute') {
+      setCommandStatus('auto-executing...');
+    } else {
+      setCommandStatus('planner responded');
+    }
+  } finally {
+    store.conversationSending = false;
+    $('command-send').disabled = false;
   }
 }
 

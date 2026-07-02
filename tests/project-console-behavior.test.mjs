@@ -2441,6 +2441,18 @@ test('main conversation transcript hides route and queue internals', () => {
   assert.doesNotMatch(html, /dispatch/i);
 });
 
+test('conversation send guards duplicate submit while planner request is pending', () => {
+  const consoleSource = readFileSync(
+    resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
+    'utf8',
+  );
+
+  assert.ok(consoleSource.includes('conversationSending'));
+  assert.ok(consoleSource.includes('if (store.conversationSending) return'));
+  assert.ok(consoleSource.includes("$('command-send').disabled = true"));
+  assert.ok(consoleSource.includes("$('command-send').disabled = false"));
+});
+
 // ── EX-5: Passthrough route plane acceptance ───────────────────
 //
 // Verify:
