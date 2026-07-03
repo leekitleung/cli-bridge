@@ -127,7 +127,7 @@ test('command planner adapter ignores Codex user echo JSONL events', async () =>
   assert.equal(envelope.intent, 'answer');
 });
 
-test('command planner adapter handles WorkBuddy diagnostic requests without command confirmation', async () => {
+test('command planner adapter routes WorkBuddy execution requests through normal planner path', async () => {
   const { createCodexPlannerAdapter } = await import('../apps/local-server/src/conversation/command-planner-adapter.ts');
 
   let ranCommand = false;
@@ -139,9 +139,18 @@ test('command planner adapter handles WorkBuddy diagnostic requests without comm
         async run() {
           ranCommand = true;
           return {
-            exitCode: 1,
-            stdout: '',
-            stderr: 'should not run',
+            exitCode: 0,
+            stdout: JSON.stringify({
+              visibleText: 'Plan: execute WorkBuddy task',
+              intent: 'request_execution',
+              proposedInstruction: {
+                summary: 'Run WorkBuddy task',
+                payload: '触发 workbuddy 让我测试',
+                targetExecutorIds: ['workbuddy'],
+                riskHints: ['pure-transform'],
+              },
+            }),
+            stderr: '',
             timedOut: false,
             truncated: false,
           };
@@ -157,7 +166,10 @@ test('command planner adapter handles WorkBuddy diagnostic requests without comm
     history: [],
   });
 
-  assert.equal(ranCommand, false);
+  // ADR-0034: WorkBuddy diagnostic requests now go through the normal planner path.
+  // The planner itself decides the intent; the local fast path only handles
+  // status/result queries.
+  assert.equal(ranCommand, true);
   assert.equal(envelope.intent, 'request_execution');
   assert.equal(envelope.proposedInstruction.payload, '触发 workbuddy 让我测试');
   assert.deepEqual(envelope.proposedInstruction.targetExecutorIds, ['workbuddy']);

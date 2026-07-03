@@ -1931,9 +1931,23 @@ function renderCommandContext() {
     html += '<pre id="apply-view-preview" style="margin-top:10px;display:none;"></pre>';
     html += '</div>';
   } else if (store.contextView === 'workbuddy') {
-    html = '<div class="card"><h3>WorkBuddy</h3>';
+    html = '<div class="card"><h3>Execution Connector</h3>';
     html += '<p style="font-size:11px;color:var(--muted);">Task references, review results, prompt drafts, and external execution records are non-executing — no dispatch, no confirm, no auto-send. Execution lifecycle is reported by the configured local worker.</p>';
+    // ADR-0034: Show executor readiness status.
     const wb = store.cache.workbuddy;
+    const execReady = wb?.executorReady === true;
+    html += '<div style="margin-top:8px;padding:6px 10px;border-radius:6px;font-size:12px;'
+      + (execReady ? 'background:#e6f7ec;color:#14532d;' : 'background:#fef3c7;color:#92400e;')
+      + '">';
+    html += '<strong>Executor: </strong>';
+    html += execReady
+      ? '✅ Online — real execution worker is connected and responding.'
+      : '⚠️ No real executor connected — channel reachable but no worker claims tasks.';
+    if (wb?.lastHeartbeatAt) {
+      html += ' <span style="color:var(--muted);">Last heartbeat: ' + escapeHtml(new Date(wb.lastHeartbeatAt).toLocaleTimeString()) + '</span>';
+    }
+    html += '</div>';
+    const wbData = store.cache.workbuddy;
     if (wb && wb.tasks && wb.tasks.length) {
       html += '<h4 style="margin-top:12px;">Tasks</h4><table><thead><tr><th>title</th><th>status</th></tr></thead><tbody>';
       wb.tasks.forEach(t => {
@@ -1978,8 +1992,8 @@ function renderCommandContext() {
       });
       html += '</tbody></table>';
     }
-    if (!wb || (!wb.tasks?.length && !wb.reviewResultSinks?.length && !wb.promptDraftSinks?.length && !wb.executionLedgerEvents?.length && !wb.executionTasks?.length && !wb.executionLogs?.length)) {
-      html += '<span class="unavailable">No WorkBuddy records in this project. Tasks, review results, prompt drafts, execution lifecycle, and external execution records will appear here once recorded via the WorkBuddy API.</span>';
+    if (!wbData || (!wbData.tasks?.length && !wbData.reviewResultSinks?.length && !wbData.promptDraftSinks?.length && !wbData.executionLedgerEvents?.length && !wbData.executionTasks?.length && !wbData.executionLogs?.length)) {
+      html += '<span class="unavailable">No execution records in this project. Tasks, review results, prompt drafts, execution lifecycle, and external execution records will appear here once recorded via the WorkBuddy API.</span>';
     }
     html += '</div>';
   }
@@ -2027,7 +2041,7 @@ function renderWorkBuddyConversation(wb) {
   const tasks = wb && Array.isArray(wb.executionTasks) ? wb.executionTasks : [];
   if (!tasks.length) return '';
   const results = wb && Array.isArray(wb.executionResults) ? wb.executionResults : [];
-  let html = '<h4 style="margin-top:12px;">WorkBuddy Conversation</h4><div class="conversation-transcript">';
+  let html = '<h4 style="margin-top:12px;">Execution Conversation</h4><div class="conversation-transcript">';
   tasks.forEach(task => {
     const result = results.find(r => r.taskId === task.taskId);
     html += '<div class="conversation-message user">'
@@ -2036,7 +2050,7 @@ function renderWorkBuddyConversation(wb) {
       + '</div>';
     if (result) {
       html += '<div class="conversation-message target">'
-        + '<div class="conversation-meta">workbuddy</div>'
+        + '<div class="conversation-meta">executor</div>'
         + '<div class="conversation-bubble">' + escapeHtml(formatWorkBuddyResultForDisplay(result)) + '</div>'
         + '</div>';
     } else {

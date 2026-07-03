@@ -36,42 +36,12 @@ function buildPlannerPrompt(input: PlannerRequest): string {
     '- Use intent "answer" for normal answers.',
     '- Use intent "clarify" when more user input is required.',
     '- Use intent "request_execution" only when a stable proposedInstruction payload exists.',
-    '- WorkBuddy is already managed by the local server worker. Do not ask the user to start or confirm WorkBuddy.',
-    '- For a WorkBuddy connectivity/diagnostic/test request, use intent "request_execution", targetExecutorIds ["workbuddy"], and riskHints ["pure-transform"].',
     '- Use riskHints ["pure-transform"] only for read-only pure text/data transformation.',
     '- Use higher risk hints for filesystem, shell, network, git, deletion, publish, or external mutation.',
     '',
     `Project: ${input.projectId}`,
     `User request: ${input.userText}`,
   ].join('\n');
-}
-
-function isWorkBuddyDiagnosticRequest(text: string): boolean {
-  const normalized = text.toLowerCase();
-  if (!normalized.includes('workbuddy')) return false;
-  return /测试|触发|检查|连通|连接|diagnostic|test|ping|verify/.test(normalized);
-}
-
-function createWorkBuddyDiagnosticEnvelope(
-  adapterId: string,
-  input: PlannerRequest,
-): PlannerOutputEnvelope | null {
-  if (!isWorkBuddyDiagnosticRequest(input.userText)) return null;
-  const now = new Date().toISOString();
-  return {
-    id: `planner-output-${Date.now()}`,
-    sessionId: input.sessionId,
-    plannerEndpointId: adapterId,
-    visibleText: 'WorkBuddy diagnostic request accepted. Running the local worker check now.',
-    intent: 'request_execution',
-    proposedInstruction: {
-      summary: 'Run WorkBuddy diagnostic',
-      payload: input.userText,
-      targetExecutorIds: ['workbuddy'],
-      riskHints: ['pure-transform'],
-    },
-    createdAt: now,
-  };
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -228,9 +198,6 @@ export function createCommandPlannerAdapter(options: CommandPlannerAdapterOption
     id: options.id,
     mode: 'automatic',
     async plan(input) {
-      const diagnostic = createWorkBuddyDiagnosticEnvelope(options.id, input);
-      if (diagnostic) return diagnostic;
-
       const run = await runAllowlistedCommand(
         {
           command: options.command,

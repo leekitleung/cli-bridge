@@ -157,8 +157,13 @@ test('extension session token cannot accept planner-gated conversation plans', a
       [PAIRING_HEADER]: claimPayload.extensionSessionToken,
     };
 
-    // Establish WorkBuddy readiness so the gate doesn't block plan creation.
-    // Calling inbox/next records a claim timestamp even with no pending tasks.
+    // ADR-0034: Establish WorkBuddy readiness so the gate doesn't block plan creation.
+    // Send a heartbeat to declare executor ready, then poll the inbox.
+    await fetch(`${handle.url}/bridge/endpoints/workbuddy/heartbeat`, {
+      method: 'POST',
+      headers: consoleHeaders,
+      body: JSON.stringify({ capabilities: { canExecute: true } }),
+    });
     await fetch(`${handle.url}/bridge/endpoints/workbuddy/inbox/next`, {
       headers: consoleHeaders,
     });

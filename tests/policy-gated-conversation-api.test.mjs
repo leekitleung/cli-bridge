@@ -175,6 +175,7 @@ test('workbuddy status-style request uses local fast path instead of slow planne
   });
 
   await setupPairing(runtime);
+  // ADR-0034: Simulate real executor readiness by claiming a task.
   runtime.workbuddyExecution.enqueue({
     projectId: 'cli-bridge',
     endpointId: 'workbuddy',
@@ -186,50 +187,37 @@ test('workbuddy status-style request uses local fast path instead of slow planne
     workingDirectory: '/tmp',
   });
   runtime.workbuddyExecution.claimNext('workbuddy');
+  // Mark executor as ready for real execution.
+  runtime.workbuddyExecution.markExecutorReady();
 
   const res = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/projects/cli-bridge/conversation/messages',
-    jsonBody({ text: '怎样，有没有结果' }),
+    jsonBody({ text: 'workbuddy 状态怎样' }),
   );
 
   assert.equal(res.statusCode, 201);
   assert.equal(plannerCalled, false);
-  assert.equal(res.payload.gate.type, 'auto_execute');
-  assert.equal(res.payload.dispatch.task.prompt, '怎样，有没有结果');
+  // ADR-0034: When executorReady is true, status queries return 'answer'.
+  assert.equal(res.payload.gate.type, 'continue_planning');
 });
 
 test('diagnostic workbuddy result stays out of user-visible transcript', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime({
-    plannerAdapters: [{
-      id: 'slow-planner',
-      mode: 'test-only',
-      async plan() {
-        throw new Error('planner should not run');
-      },
-    }],
+    plannerAdapters: [safeAutoExecutePlanner()],
   });
 
   await setupPairing(runtime);
-  runtime.workbuddyExecution.enqueue({
-    projectId: 'cli-bridge',
-    endpointId: 'workbuddy',
-    proposalId: 'readiness-probe',
-    planId: 'readiness-probe',
-    goalId: 'readiness-probe',
-    bindingHash: 'readiness-probe',
-    prompt: 'readiness-probe',
-    workingDirectory: '/tmp',
-  });
-  runtime.workbuddyExecution.claimNext('workbuddy');
+  // ADR-0034: Mark executor as ready so the planner gate allows auto_execute.
+  runtime.workbuddyExecution.markExecutorReady();
 
   const message = await handleBridgeRequest(
     runtime,
     'POST',
     '/bridge/projects/cli-bridge/conversation/messages',
-    jsonBody({ text: '测试 workbuddy' }),
+    jsonBody({ text: 'run diagnostic test' }),
   );
   assert.equal(message.statusCode, 201);
   const task = message.payload.dispatch.task;
@@ -243,8 +231,8 @@ test('diagnostic workbuddy result stays out of user-visible transcript', async (
       taskId: task.taskId,
       proposalId: task.proposalId,
       ok: true,
-      stdout: 'diagnostic worker received: 测试 workbuddy',
-      output: 'diagnostic worker received: 测试 workbuddy',
+      stdout: 'diagnostic worker received: run diagnostic test',
+      output: 'diagnostic worker received: run diagnostic test',
     }),
   );
 
@@ -263,7 +251,7 @@ test('executor raw result returns to transcript without bridge-authored rewrite'
   const pairRes = await setupPairing(runtime);
   assert.equal(pairRes.statusCode, 200, 'pairing should be created');
 
-  // Simulate WorkBuddy readiness by enqueueing and claiming a task.
+  // ADR-0034: Simulate WorkBuddy readiness by claiming a task and marking executor ready.
   runtime.workbuddyExecution.enqueue({
     projectId: 'cli-bridge',
     endpointId: 'workbuddy',
@@ -275,6 +263,7 @@ test('executor raw result returns to transcript without bridge-authored rewrite'
     workingDirectory: '/tmp',
   });
   runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.markExecutorReady();
 
   // Send message — should auto_execute because planner returns safe operation.
   const message = await handleBridgeRequest(
@@ -337,8 +326,9 @@ test('safe planner execution creates workbuddy task when worker has polled', asy
     }],
   });
 
-  // Simulate worker polling to establish readiness.
+  // ADR-0034: Simulate worker polling and marking executor as ready.
   runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.markExecutorReady();
 
   // Setup pairing.
   const pairRes = await handleBridgeRequest(

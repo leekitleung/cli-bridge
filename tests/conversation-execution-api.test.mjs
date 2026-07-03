@@ -54,7 +54,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
   // Setup project and workbuddy pairing.
   const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  // Establish WorkBuddy readiness so the gate doesn't block.
+  // ADR-0034: Establish WorkBuddy readiness so the gate doesn't block.
   runtime.workbuddyExecution.enqueue({
     projectId: 'cli-bridge',
     endpointId: 'workbuddy',
@@ -66,6 +66,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
     workingDirectory: '/tmp',
   });
   runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.markExecutorReady();
 
   await handleBridgeRequest(
     runtime,
@@ -505,6 +506,7 @@ test('posting messages creates no routes before plan acceptance', async () => {
     workingDirectory: '/tmp',
   });
   runtime.workbuddyExecution.claimNext('workbuddy');
+  runtime.workbuddyExecution.markExecutorReady();
 
   // Setup.
   await handleBridgeRequest(

@@ -1110,6 +1110,12 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
   const executionTaskIds = new Set(executionTasks.map(t => t.taskId));
   return {
     projectId: projectKey,
+    // ADR-0034: Executor readiness model.
+    executorReady: runtime.workbuddyExecution.getExecutorReady(),
+    lastHeartbeatAt: runtime.workbuddyExecution.getLastHeartbeatAt(),
+    lastClaimedAt: runtime.workbuddyExecution.getLastClaimedAt(),
+    lastResultAt: runtime.workbuddyExecution.getLastResultAt(),
+    lastFailureReason: runtime.workbuddyExecution.getLastFailureReason(),
     tasks: runtime.workbuddyStore.listTaskReferences().filter(t => resolveProjectKey(t.projectId) === projectKey),
     reviewResultSinks: runtime.workbuddyStore.listReviewResultSinks().filter(r => resolveProjectKey(r.projectId) === projectKey),
     promptDraftSinks: runtime.workbuddyStore.listPromptDraftSinks().filter(p => resolveProjectKey(p.projectId) === projectKey),
@@ -1123,33 +1129,54 @@ function buildWorkBuddyProjectView(runtime: BridgeRuntime, projectKey: string) {
       .filter(l => executionTaskIds.has(l.taskId)),
   };}
 
+/**
+ * ADR-0034: Local fast path for WorkBuddy status queries.
+ * Only status/result queries get a local fast path. Real execution requests
+ * always go through the planner.
+ */
 function isLocalWorkBuddyFastRequest(text: string, pairing: ConversationPairing | undefined): boolean {
   if (!pairing || pairing.targetEndpointId !== 'workbuddy') return false;
   const normalized = text.toLowerCase();
-  if (normalized.includes('workbuddy')) return true;
-  return /结果|响应|进度|状态|收到|有没有|怎样|怎么样/.test(normalized);
+  // ADR-0034: Only status/result queries bypass the planner.
+  // Must contain a WorkBuddy/executor reference AND a status/result query pattern.
+  if (!/workbuddy|执行|executor/.test(normalized)) return false;
+  return /结果|响应|进度|状态|收到|有没有|怎样|怎么样|ready|status|result/.test(normalized);
 }
 
+/**
+ * ADR-0034: Local fast-path envelope for WorkBuddy status/result queries.
+ * Returns 'blocked' when executor is not ready — the UI shows the status
+ * but never generates fake execution output.
+ */
 function createLocalWorkBuddyEnvelope(input: {
   sessionId: string;
   projectId: string;
   text: string;
   pairing: ConversationPairing | undefined;
+  executorReady: boolean;
+  executorStatus: string;
 }): PlannerOutputEnvelope | null {
   if (!isLocalWorkBuddyFastRequest(input.text, input.pairing)) return null;
   const now = new Date().toISOString();
+
+  if (!input.executorReady) {
+    return {
+      id: `local-workbuddy-${Date.now()}`,
+      sessionId: input.sessionId,
+      plannerEndpointId: 'local-workbuddy-fast-path',
+      visibleText: input.executorStatus || 'WorkBuddy execution connector is not ready. Channel is reachable but no real executor is connected.',
+      intent: 'blocked',
+      requiredInputs: ['executor'],
+      createdAt: now,
+    };
+  }
+
   return {
     id: `local-workbuddy-${Date.now()}`,
     sessionId: input.sessionId,
     plannerEndpointId: 'local-workbuddy-fast-path',
-    visibleText: 'Checking WorkBuddy.',
-    intent: 'request_execution',
-    proposedInstruction: {
-      summary: 'Check WorkBuddy',
-      payload: input.text,
-      targetExecutorIds: ['workbuddy'],
-      riskHints: ['pure-transform'],
-    },
+    visibleText: 'WorkBuddy executor is online and ready.',
+    intent: 'answer',
     createdAt: now,
   };
 }
@@ -3268,6 +3295,11 @@ export async function handleBridgeRequest(
         : result.failureReason === 'endpoint-not-found' ? 404 : 400;
       return error(status, result.failureReason ?? 'Heartbeat failed');
     }
+    // ADR-0034: Also record heartbeat for WorkBuddy execution adapter.
+    const endpoint = runtime.endpointRegistry.get(heartbeatMatch.id);
+    if (endpoint?.transport === 'workbuddy') {
+      runtime.workbuddyExecution.recordHeartbeat();
+    }
     return ok({ status: 'online', endpointId: heartbeatMatch.id });
   }
 
@@ -3671,11 +3703,20 @@ export async function handleBridgeRequest(
 
       const sessionId = `conversation:${key}`;
       const pairingId = `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`;
+
+      // ADR-0034: Resolve executor readiness for fast-path status queries.
+      const executorReady = runtime.workbuddyExecution.getExecutorReady();
+      const executorStatus = executorReady
+        ? 'WorkBuddy executor is online and ready.'
+        : 'WorkBuddy execution connector is not ready. Channel is reachable but no real executor is connected.';
+
       const localEnvelope = createLocalWorkBuddyEnvelope({
         sessionId,
         projectId: key,
         text,
         pairing,
+        executorReady,
+        executorStatus,
       });
 
       // ADR-0031 Step 1: Resolve planner unless a deterministic local
@@ -3695,17 +3736,42 @@ export async function handleBridgeRequest(
         routeKind: pairing.targetRouteKind,
       });
 
-      // ADR-0031 Step 3: Call planner.
+      // ADR-0031 Step 3: Call planner with timeout (ADR-0034).
+      const PLANNER_TIMEOUT_MS = 15_000;
       let envelope;
       try {
-        envelope = localEnvelope ?? await planner!.plan({
-          sessionId,
-          projectId: key,
-          userText: text,
-          history: [],
-        });
+        if (localEnvelope) {
+          envelope = localEnvelope;
+        } else {
+          const plannerPromise = planner!.plan({
+            sessionId,
+            projectId: key,
+            userText: text,
+            history: [],
+          });
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Planner timed out')), PLANNER_TIMEOUT_MS),
+          );
+          envelope = await Promise.race([plannerPromise, timeoutPromise]);
+        }
       } catch (err) {
-        return error(500, `Planner error: ${String(err)}`);
+        // ADR-0034: On planner timeout, return a user-visible error without blocking UI.
+        const errMsg = String(err);
+        if (errMsg.includes('timed out') || errMsg.includes('Planner timed out')) {
+          const timeoutEvent = runtime.conversationTranscriptStore.append({
+            projectId: key,
+            pairingId,
+            role: 'bridge',
+            text: 'Planner timed out after ' + (PLANNER_TIMEOUT_MS / 1000) + 's. The execution planner is not responding. Please try again or check the planner configuration.',
+            status: 'failed',
+            routeKind: pairing.targetRouteKind,
+            kind: 'status',
+            visibility: 'user',
+          });
+          runtime.persist();
+          return error(504, `Planner timed out after ${PLANNER_TIMEOUT_MS / 1000}s`);
+        }
+        return error(500, `Planner error: ${errMsg}`);
       }
 
       // ADR-0031 Step 4: Validate envelope.
@@ -3728,12 +3794,13 @@ export async function handleBridgeRequest(
 
       // ADR-0031 Step 6: Resolve executor availability.
       const targetEndpoint = runtime.endpointRegistry.get(pairing.targetEndpointId);
-      const workbuddyReady = runtime.workbuddyExecution.isReady();
+      const realExecutorReady = runtime.workbuddyExecution.getExecutorReady();
       const availabilityList: ExecutorAvailability[] = [];
       if (targetEndpoint) {
         availabilityList.push(resolveExecutorAvailability({
           endpoint: targetEndpoint,
-          workbuddyReady,
+          workbuddyReady: realExecutorReady,
+          executorReady: realExecutorReady,
           lastSeenAt: runtime.workbuddyExecution.getLastClaimedAt(),
           now: Date.now(),
         }));

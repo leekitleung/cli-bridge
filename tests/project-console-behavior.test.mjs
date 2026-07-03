@@ -2434,7 +2434,7 @@ test('renderWorkBuddyConversation hides diagnostic echo text without route inter
     }],
   });
 
-  assert.match(html, /WorkBuddy Conversation/);
+  assert.match(html, /Execution Conversation/);
   assert.match(html, /触发 workbuddy 让我测试/);
   assert.match(html, /Connector diagnostic completed/);
   assert.doesNotMatch(html, /diagnostic worker received/);

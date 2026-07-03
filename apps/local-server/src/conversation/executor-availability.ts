@@ -1,5 +1,7 @@
-// Executor availability model (ADR-0031 Task 2).
+// Executor availability model (ADR-0031 Task 2, updated ADR-0034).
 // Determines whether an executor endpoint is ready to receive tasks before dispatch.
+// ADR-0034: Distinguishes diagnostic readiness (channel reachable) from
+// executor readiness (real worker registered and claiming tasks).
 
 export interface ExecutorAvailability {
   endpointId: string;
@@ -7,6 +9,8 @@ export interface ExecutorAvailability {
   lastSeenAt?: number;
   capabilities: string[];
   claimMode: 'push' | 'pull';
+  /** ADR-0034: Real executor worker is registered and actively polling. */
+  executorReady?: boolean;
 }
 
 export interface ResolveExecutorAvailabilityInput {
@@ -16,6 +20,8 @@ export interface ResolveExecutorAvailabilityInput {
     capabilities?: Record<string, boolean>;
   };
   workbuddyReady?: boolean;
+  /** ADR-0034: Real executor has declared capabilities and is claiming tasks. */
+  executorReady?: boolean;
   lastSeenAt?: number;
   now: number;
 }
@@ -31,10 +37,13 @@ export function resolveExecutorAvailability(
   if (claimMode === 'pull') {
     return {
       endpointId: input.endpoint.id,
-      status: input.workbuddyReady ? 'online' : 'unknown',
+      // ADR-0034: 'online' only when executorReady is true (real worker connected).
+      // 'unknown' when channel is reachable but no real executor.
+      status: input.executorReady ? 'online' : 'unknown',
       lastSeenAt: input.lastSeenAt,
       capabilities,
       claimMode,
+      executorReady: input.executorReady ?? false,
     };
   }
 

@@ -66,6 +66,10 @@ export class WorkBuddyExecutionAdapter {
   private readonly results = new Map<string, WorkBuddyExecutionResult>();
   private readonly logs: WorkBuddyExecutionLogEntry[] = [];
   private lastClaimedAt = 0;
+  private lastHeartbeatAt = 0;
+  private lastResultAt = 0;
+  private lastFailureReasonValue: string | undefined;
+  private executorReadyFlag = false;
 
   /**
    * Readiness: true if WorkBuddy has polled recently (claimed a task).
@@ -74,6 +78,46 @@ export class WorkBuddyExecutionAdapter {
    */
   isReady(maxStaleMs = 120_000): boolean {
     return this.lastClaimedAt > 0 && (Date.now() - this.lastClaimedAt < maxStaleMs);
+  }
+
+  /**
+   * ADR-0034: Executor readiness — true only when a real executor worker
+   * has declared capabilities and is actively polling. Distinct from
+   * diagnostic readiness (channel reachable).
+   */
+  getExecutorReady(): boolean {
+    return this.executorReadyFlag;
+  }
+
+  /** ADR-0034: Mark executor as ready when a real worker registers. */
+  markExecutorReady(): void {
+    this.executorReadyFlag = true;
+  }
+
+  /** ADR-0034: Mark executor as not ready. */
+  markExecutorNotReady(): void {
+    this.executorReadyFlag = false;
+  }
+
+  /** ADR-0034: Record a heartbeat ping from the executor. */
+  recordHeartbeat(): void {
+    this.lastHeartbeatAt = Date.now();
+    this.executorReadyFlag = true;
+  }
+
+  /** ADR-0034: Get last heartbeat timestamp. */
+  getLastHeartbeatAt(): number {
+    return this.lastHeartbeatAt;
+  }
+
+  /** ADR-0034: Get last real result timestamp. */
+  getLastResultAt(): number {
+    return this.lastResultAt;
+  }
+
+  /** ADR-0034: Get last failure reason. */
+  getLastFailureReason(): string | undefined {
+    return this.lastFailureReasonValue;
   }
 
   /** Expose readiness timestamp for availability resolution. */
@@ -155,6 +199,15 @@ export class WorkBuddyExecutionAdapter {
     task.status = result.ok ? 'returned' : 'failed';
     task.returnedAt = now;
     this.tasks.set(taskId, clone(task));
+
+    // ADR-0034: Track last result and failure reason.
+    this.lastResultAt = now;
+    if (!result.ok && result.failureReason) {
+      this.lastFailureReasonValue = result.failureReason;
+    } else if (result.ok) {
+      this.lastFailureReasonValue = undefined;
+    }
+
     return clone(full);
   }
 
