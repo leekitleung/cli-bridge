@@ -512,16 +512,20 @@ test('E2E: chatgpt-web source answers without dispatching to WorkBuddy', async (
       body: JSON.stringify({ id: 'workbuddy', transport: 'workbuddy', capabilities: { canExecute: true } }),
     });
 
-    // Send a conversation message — the chatgpt-web source adapter enqueues it
-    // and blocks waiting for the result. Post the message and the result concurrently:
-    // the adapter polls every 500ms, so we give it a moment to enqueue, then post.
-    const msgPromise = fetch(`${handle.url}/bridge/projects/e2e-chatgpt/conversation/messages`, {
+    // Send a conversation message. ChatGPT Web is an async browser source, so
+    // the local POST must enqueue and return without waiting for the browser
+    // reply inside the request lifecycle.
+    const startedAt = Date.now();
+    const msgRes = await fetch(`${handle.url}/bridge/projects/e2e-chatgpt/conversation/messages`, {
       method: 'POST', headers: consoleHeaders,
       body: JSON.stringify({ text: 'hi' }),
     });
+    const msg = await msgRes.json();
+    assert.equal(msgRes.status, 201);
+    assert.equal(msg.source?.status, 'waiting');
+    assert.ok(Date.now() - startedAt < 1000, 'message send should not block on ChatGPT Web result');
 
-    // Wait for the adapter to enqueue the prompt, then poll + return result.
-    await new Promise(r => setTimeout(r, 1000));
+    // Extension polls + returns result after the POST has already completed.
     const nextRes = await fetch(`${handle.url}/bridge/source/chatgpt-web/next`, { headers: extHeaders });
     const next = await nextRes.json();
     assert.equal(nextRes.status, 200);
@@ -537,10 +541,6 @@ test('E2E: chatgpt-web source answers without dispatching to WorkBuddy', async (
       }),
     });
     assert.equal(resultRes.status, 200);
-
-    // Now wait for the conversation message to complete.
-    const msgRes = await msgPromise;
-    const msg = await msgRes.json();
 
     // Verify: ChatGPT answer appeared in the conversation transcript.
     const messagesRes = await fetch(`${handle.url}/bridge/projects/e2e-chatgpt/conversation/messages`, { headers: consoleHeaders });

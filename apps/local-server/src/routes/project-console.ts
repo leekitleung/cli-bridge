@@ -926,6 +926,11 @@ async function refreshConversationMessages(options) {
   const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages');
   if (!res.ok) return;
   store.conversationEvents = res.data?.messages || res.data?.events || [];
+  if (store.conversationPlannerStartedAt && store.conversationEvents.some(event =>
+    event && event.role === 'planner' && (event.createdAt || 0) >= store.conversationPlannerStartedAt
+  )) {
+    store.conversationPlannerStartedAt = 0;
+  }
   store.conversationActions = res.data?.actions || [];
   store.conversationPlans = res.data?.plans || [];
   store.conversationGate = res.data?.gate ?? null;
@@ -3330,6 +3335,7 @@ async function sendConversationMessage(input) {
   $('command-send').disabled = true;
   renderConversationTranscript();
   setCommandStatus('waiting for planner...');
+  let keepPlannerWaiting = false;
   try {
     const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages', 'POST', { text: input });
     store.conversationPlannerStartedAt = 0;
@@ -3340,6 +3346,10 @@ async function sendConversationMessage(input) {
       return;
     }
     store.conversationEvents = (store.conversationEvents || []).concat(res.data?.events || []);
+    if (res.data?.source?.status === 'waiting') {
+      store.conversationPlannerStartedAt = Date.now();
+      keepPlannerWaiting = true;
+    }
     store.conversationGate = res.data?.gate ?? null;
     if (res.data?.plan) {
       store.conversationPlans = mergeConversationPlans(store.conversationPlans || [], [res.data.plan]);
@@ -3354,11 +3364,13 @@ async function sendConversationMessage(input) {
     } else if (store.conversationGate?.type === 'auto_execute') {
       setCommandStatus('waiting for ' + (store.conversationExecutorLabel || 'executor') + '...');
       pollWorkBuddyUntilSettled(Date.now());
+    } else if (res.data?.source?.status === 'waiting') {
+      setCommandStatus('waiting for source...');
     } else {
       setCommandStatus('planner responded');
     }
   } finally {
-    store.conversationPlannerStartedAt = 0;
+    if (!keepPlannerWaiting) store.conversationPlannerStartedAt = 0;
     store.conversationSending = false;
     $('command-send').disabled = false;
     renderConversationTranscript();

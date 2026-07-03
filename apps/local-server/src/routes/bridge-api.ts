@@ -3736,6 +3736,20 @@ export async function handleBridgeRequest(
     if (!requestId || !text) return error(400, 'requestId and text are required');
     const result = runtime.chatGptWebQueue.recordResult(requestId, text);
     if (!result) return error(409, 'Could not record result');
+    const sourceRequest = runtime.chatGptWebQueue.getRequest(requestId);
+    if (sourceRequest?.pairingId && sourceRequest.targetRouteKind) {
+      runtime.conversationTranscriptStore.append({
+        projectId: sourceRequest.projectId,
+        pairingId: sourceRequest.pairingId,
+        role: 'planner',
+        text: result.text,
+        status: 'returned',
+        routeKind: sourceRequest.targetRouteKind,
+        kind: 'planner_output',
+        visibility: 'user',
+      });
+      runtime.persist();
+    }
     return ok({ result });
   }
 
@@ -3837,6 +3851,23 @@ export async function handleBridgeRequest(
         status: 'draft',
         routeKind: pairing.targetRouteKind,
       });
+
+      // ChatGPT Web is a browser-mediated async source. Do not bind the local
+      // Console request lifecycle to the browser response time; enqueue and let
+      // /bridge/source/chatgpt-web/results continue the transcript.
+      if (!localEnvelope && pairing.sourceEndpointId === 'chatgpt-web') {
+        runtime.chatGptWebQueue.enqueue({
+          projectId: key,
+          sessionId,
+          prompt: text,
+          pairingId,
+          userEventId: userEvent.id,
+          targetEndpointId: pairing.targetEndpointId,
+          targetRouteKind: pairing.targetRouteKind,
+        });
+        runtime.persist();
+        return created({ events: [userEvent], source: { status: 'waiting' } });
+      }
 
       // ADR-0035 Step 3: Call source adapter with timeout.
       const SOURCE_TIMEOUT = 15_000;

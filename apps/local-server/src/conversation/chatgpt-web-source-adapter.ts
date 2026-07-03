@@ -6,6 +6,7 @@
 
 import type { ConversationSourceAdapter, SourceAvailabilityInput, PlannerRequest } from './source-adapter.ts';
 import type { PlannerOutputEnvelope } from './planner-output-envelope.ts';
+import type { ConversationRouteKind } from '../storage/conversation-pairing-store.ts';
 
 export interface ChatGptWebSourceConfig {
   /** Maximum time to wait for the extension to claim a prompt (ms). */
@@ -21,6 +22,10 @@ export interface ChatGptSourceRequest {
   prompt: string;
   createdAt: number;
   status: 'pending' | 'claimed' | 'returned' | 'failed';
+  pairingId?: string;
+  userEventId?: string;
+  targetEndpointId?: string;
+  targetRouteKind?: ConversationRouteKind;
   claimedAt?: number;
   returnedAt?: number;
 }
@@ -71,6 +76,10 @@ export class ChatGptWebSourceQueue {
     projectId: string;
     sessionId: string;
     prompt: string;
+    pairingId?: string;
+    userEventId?: string;
+    targetEndpointId?: string;
+    targetRouteKind?: ConversationRouteKind;
   }): ChatGptSourceRequest {
     const id = `chatgpt-src-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const req: ChatGptSourceRequest = {
@@ -80,6 +89,10 @@ export class ChatGptWebSourceQueue {
       prompt: input.prompt,
       createdAt: Date.now(),
       status: 'pending',
+      ...(input.pairingId ? { pairingId: input.pairingId } : {}),
+      ...(input.userEventId ? { userEventId: input.userEventId } : {}),
+      ...(input.targetEndpointId ? { targetEndpointId: input.targetEndpointId } : {}),
+      ...(input.targetRouteKind ? { targetRouteKind: input.targetRouteKind } : {}),
     };
     this.requests.set(id, clone(req));
     return clone(req);
@@ -128,6 +141,12 @@ export class ChatGptWebSourceQueue {
   getResult(requestId: string): ChatGptSourceResult | undefined {
     const result = this.results.get(requestId);
     return result ? clone(result) : undefined;
+  }
+
+  /** Get a request by ID. */
+  getRequest(requestId: string): ChatGptSourceRequest | undefined {
+    const request = this.requests.get(requestId);
+    return request ? clone(request) : undefined;
   }
 
   /** List all requests for a project. */
