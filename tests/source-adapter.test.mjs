@@ -5,6 +5,9 @@ import test from 'node:test';
 import {
   SourceAdapterRegistry,
 } from '../apps/local-server/src/conversation/source-adapter.ts';
+import {
+  ChatGptWebSourceQueue,
+} from '../apps/local-server/src/conversation/chatgpt-web-source-adapter.ts';
 
 test('registry resolves adapter by endpoint id', () => {
   const registry = new SourceAdapterRegistry();
@@ -103,4 +106,16 @@ test('isAvailable is checked per adapter', () => {
   assert.ok(adapter);
   assert.equal(adapter.isAvailable({ projectId: 'p1', endpointId: 'chatgpt-web' }), true);
   assert.equal(checked, true);
+});
+
+test('chatgpt-web source queue atomically claims next request', () => {
+  const queue = new ChatGptWebSourceQueue();
+  queue.enqueue({ projectId: 'p1', sessionId: 's1', prompt: 'hello' });
+
+  const first = queue.claimNext();
+  const second = queue.claimNext();
+
+  assert.ok(first, 'first claim receives pending request');
+  assert.equal(first.status, 'claimed');
+  assert.equal(second, undefined, 'second claim must not receive the same request');
 });

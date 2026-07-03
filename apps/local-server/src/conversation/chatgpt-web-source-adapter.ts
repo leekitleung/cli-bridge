@@ -103,6 +103,15 @@ export class ChatGptWebSourceQueue {
     return clone(req);
   }
 
+  /** Atomically claim the next pending request (for extension polling). */
+  claimNext(): ChatGptSourceRequest | undefined {
+    for (const req of this.requests.values()) {
+      if (req.status !== 'pending') continue;
+      return this.claim(req.id);
+    }
+    return undefined;
+  }
+
   /** Record a result for a claimed request. */
   recordResult(requestId: string, text: string): ChatGptSourceResult | undefined {
     const req = this.requests.get(requestId);

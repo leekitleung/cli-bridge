@@ -3717,7 +3717,7 @@ export async function handleBridgeRequest(
       return error(403, 'ChatGPT Web source relay requires pairing token or extension session');
     }
     if (method !== 'GET') return error(405, 'Method not allowed');
-    const next = runtime.chatGptWebQueue.next();
+    const next = runtime.chatGptWebQueue.claimNext();
     if (!next) return ok({ task: null, message: 'No pending ChatGPT Web source requests' });
     return ok({ task: next });
   }
@@ -3734,8 +3734,6 @@ export async function handleBridgeRequest(
     const requestId = typeof body.requestId === 'string' ? body.requestId : '';
     const text = typeof body.text === 'string' ? body.text : '';
     if (!requestId || !text) return error(400, 'requestId and text are required');
-    const claimed = runtime.chatGptWebQueue.claim(requestId);
-    if (!claimed) return error(409, 'Request not found or already claimed');
     const result = runtime.chatGptWebQueue.recordResult(requestId, text);
     if (!result) return error(409, 'Could not record result');
     return ok({ result });

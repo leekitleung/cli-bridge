@@ -29,6 +29,15 @@ function testConfirmPlanner() {
   };
 }
 
+function asSourceAdapter(planner, endpointId = 'codex-cli') {
+  return {
+    endpointId,
+    kind: endpointId === 'claude-code' ? 'claude-code' : 'codex-cli',
+    isAvailable() { return true; },
+    plan(input) { return planner.plan(input); },
+  };
+}
+
 // ── Unit: store contract ──
 
 test('instruction store creates a packet with all fields', () => {
@@ -140,14 +149,14 @@ test('conversation message API response does not contain instruction packet meta
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
 
   // Setup project and pairing.
   const putPairing = await handleBridgeRequest(
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'claude-code-command', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'claude-code-command', scope: 'project' }),
   );
 
   // Send a conversation message.
@@ -187,14 +196,14 @@ test('instruction packet is created internally only after plan acceptance', asyn
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
 
   // Setup project and pairing.
   await handleBridgeRequest(
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'claude-code-command', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'claude-code-command', scope: 'project' }),
   );
 
   // Before: no instruction packets.
@@ -568,14 +577,14 @@ test('conversation message API response does not contain route metadata', async 
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
 
   // Setup project and pairing.
   await handleBridgeRequest(
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'claude-code-command', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'claude-code-command', scope: 'project' }),
   );
 
   // Send a conversation message.
@@ -611,14 +620,14 @@ test('route IS created internally only after plan acceptance', async () => {
     handleBridgeRequest,
   } = await import('../apps/local-server/src/routes/bridge-api.ts');
 
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
 
   // Setup project and pairing with workbuddy.
   await handleBridgeRequest(
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy', scope: 'project' }),
   );
 
   // Before: no routes.

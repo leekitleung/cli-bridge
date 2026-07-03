@@ -43,6 +43,15 @@ function testConfirmPlanner() {
   };
 }
 
+function asSourceAdapter(planner, endpointId = 'codex-cli') {
+  return {
+    endpointId,
+    kind: endpointId === 'claude-code' ? 'claude-code' : 'codex-cli',
+    isAvailable() { return true; },
+    plan(input) { return planner.plan(input); },
+  };
+}
+
 test('conversation pairing saves ChatGPT Web to Codex CLI route', async () => {
   const runtime = createBridgeRuntime();
   const create = await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
@@ -104,9 +113,9 @@ test('conversation pairing rejects unknown source endpoint', async () => {
 });
 
 test('review-command conversation creates a plan proposal before review action', async () => {
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
+    sourceEndpointId: 'codex-cli',
     targetEndpointId: 'claude-code-command',
     scope: 'project',
   });
@@ -124,9 +133,9 @@ test('review-command conversation creates a plan proposal before review action',
 });
 
 test('workbuddy route creates a plan proposal before executor action', async () => {
-  const runtime = createBridgeRuntime({ plannerAdapters: [testConfirmPlanner()] });
+  const runtime = createBridgeRuntime({ sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
   await call(runtime, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-    sourceEndpointId: 'chatgpt-web',
+    sourceEndpointId: 'codex-cli',
     targetEndpointId: 'workbuddy',
     scope: 'project',
   });
@@ -147,10 +156,10 @@ test('workbuddy route creates a plan proposal before executor action', async () 
 test('conversation pairing and transcript survive snapshot round-trip', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'conversation-pairing-test-'));
   try {
-    const runtimeA = createBridgeRuntime({ dataDir: dir, plannerAdapters: [testConfirmPlanner()] });
+    const runtimeA = createBridgeRuntime({ dataDir: dir, sourceAdapters: [asSourceAdapter(testConfirmPlanner())] });
 
     await call(runtimeA, 'PUT', '/bridge/projects/cli-bridge/conversation-pairing', {
-      sourceEndpointId: 'chatgpt-web',
+      sourceEndpointId: 'codex-cli',
       targetEndpointId: 'workbuddy',
       scope: 'project',
     });
@@ -162,7 +171,7 @@ test('conversation pairing and transcript survive snapshot round-trip', async ()
 
     const readP = await call(runtimeB, 'GET', '/bridge/projects/cli-bridge/conversation-pairing');
     assert.equal(readP.statusCode, 200);
-    assert.equal(readP.payload.pairing.sourceEndpointId, 'chatgpt-web');
+    assert.equal(readP.payload.pairing.sourceEndpointId, 'codex-cli');
     assert.equal(readP.payload.pairing.targetEndpointId, 'workbuddy');
 
     const readM = await call(runtimeB, 'GET', '/bridge/projects/cli-bridge/conversation/messages');
