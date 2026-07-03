@@ -22,6 +22,10 @@ import {
   stopActiveOutboundPoller,
 } from '../content/outbound-poller.ts';
 import {
+  ensureSourceRelayPoller,
+  stopActiveSourceRelayPoller,
+} from '../content/source-relay-poller.ts';
+import {
   cancelActiveRelaySession,
   getActiveRelaySession,
   submitExtractReturn,
@@ -485,8 +489,22 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
           }
         },
       });
+
+      // ADR-0035: Start the source relay poller alongside the outbound poller.
+      // The source relay handles chatgpt-web conversation prompts from the Console.
+      ensureSourceRelayPoller({
+        root,
+        onEvent(event) {
+          if (event.type === 'claimed') {
+            renderStatus({ kind: 'idle', label: 'Source Relay', detail: 'Processing Console prompt' });
+          } else if (event.type === 'returned') {
+            renderStatus({ kind: 'success', label: 'Source Relay', detail: 'Response sent to Console' });
+          } else if (event.type === 'failed') {
+            renderStatus({ kind: 'failed', label: 'Source Relay', detail: event.reason });
+          }
+        },
+      });
     }
-    renderRelayStatus();
   };
 
   // Load any stored token and report connection state (no auto-send involved).
@@ -502,6 +520,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   clearTokenButton.addEventListener('click', async () => {
     await clearPairingTokenFromStorage();
     stopActiveOutboundPoller();
+    stopActiveSourceRelayPoller();
     cancelActiveRelaySession('pairing-cleared');
     renderConnection('unpaired');
     renderRelayStatus();

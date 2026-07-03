@@ -31,6 +31,12 @@ export interface ChatGptSourceResult {
   returnedAt: number;
 }
 
+/** Heartbeat from the extension declaring it is connected and ready. */
+export interface ChatGptSourceHeartbeat {
+  lastHeartbeatAt: number;
+  capabilities?: { canAnswer?: boolean };
+}
+
 /**
  * ADR-0035: In-memory queue for ChatGPT Web source requests.
  * The bridge enqueues prompts; the extension polls for them; results are
@@ -39,6 +45,26 @@ export interface ChatGptSourceResult {
 export class ChatGptWebSourceQueue {
   private readonly requests = new Map<string, ChatGptSourceRequest>();
   private readonly results = new Map<string, ChatGptSourceResult>();
+  private heartbeat: ChatGptSourceHeartbeat | null = null;
+
+  /** Record a heartbeat from the extension. */
+  recordHeartbeat(capabilities?: { canAnswer?: boolean }): void {
+    this.heartbeat = {
+      lastHeartbeatAt: Date.now(),
+      capabilities,
+    };
+  }
+
+  /** Check if the extension has sent a heartbeat recently. */
+  isExtensionConnected(maxStaleMs: number = 60_000): boolean {
+    if (!this.heartbeat) return false;
+    return (Date.now() - this.heartbeat.lastHeartbeatAt) < maxStaleMs;
+  }
+
+  /** Get the last heartbeat. */
+  getHeartbeat(): ChatGptSourceHeartbeat | null {
+    return this.heartbeat ? { ...this.heartbeat } : null;
+  }
 
   /** Enqueue a new source request. Returns the request ID. */
   enqueue(input: {
@@ -122,15 +148,6 @@ export class ChatGptWebSourceQueue {
   }
 }
 
-/** Check if the ChatGPT Web extension has polled recently. */
-function isExtensionActive(queue: ChatGptWebSourceQueue): boolean {
-  const STALE_MS = 60_000; // Extension is considered active if it claimed a request within 60s.
-  for (const req of queue.listRecent(10)) {
-    if (req.claimedAt && (Date.now() - req.claimedAt) < STALE_MS) return true;
-  }
-  return false;
-}
-
 /**
  * ADR-0035: ChatGPT Web source adapter.
  * Uses the source queue to relay prompts to the browser extension and
@@ -148,12 +165,12 @@ export function createChatGptWebSourceAdapter(options: {
     kind: 'chatgpt-web',
 
     isAvailable(_input: SourceAvailabilityInput): boolean {
-      // ADR-0035 REVIEW: Honest availability check.
-      // ChatGPT Web is available if the extension has been active recently
-      // (claimed a request within the last 60s). Otherwise, we still allow
-      // the attempt but the user will see "source unavailable" quickly
-      // if the extension is truly disconnected.
-      return isExtensionActive(queue);
+      // ADR-0035 REVIEW: Honest availability check based on extension heartbeat.
+      // The extension sends a heartbeat via POST /bridge/source/chatgpt-web/heartbeat
+      // to declare its presence. Without a heartbeat, the source is unavailable.
+      // This avoids the deadlock where the first message is blocked because no
+      // request has ever been claimed.
+      return queue.isExtensionConnected();
     },
 
     async plan(input: PlannerRequest): Promise<PlannerOutputEnvelope> {
@@ -182,8 +199,6 @@ export function createChatGptWebSourceAdapter(options: {
       }
 
       // Return the ChatGPT response as a planner output envelope.
-      // The response is treated as an 'answer' by default. The gate evaluator
-      // will determine if execution is also required based on the content.
       return {
         id: `chatgpt-web-${Date.now()}`,
         sessionId: input.sessionId,

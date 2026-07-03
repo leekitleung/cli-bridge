@@ -257,6 +257,10 @@ function isAllowedProxyRoute(path: string, method: string): boolean {
     'GET /bridge/outbound/next',
     'POST /bridge/outbound/ack',
     'POST /bridge/outbound/stage',
+    // ADR-0035: ChatGPT Web source relay endpoints.
+    'POST /bridge/source/chatgpt-web/heartbeat',
+    'GET /bridge/source/chatgpt-web/next',
+    'POST /bridge/source/chatgpt-web/results',
   ]);
   return allowed.has(`${method} ${path}`);
 }

@@ -381,3 +381,44 @@ export async function testPrivateHealth(): Promise<ConnectionProbeResult> {
     return 'network-error';
   }
 }
+
+// ── ADR-0035: ChatGPT Web Source Relay client ──
+
+export interface ChatGptSourceHeartbeatResponse {
+  heartbeat: string;
+}
+
+export interface ChatGptSourceNextResponse {
+  task: {
+    id: string;
+    projectId: string;
+    sessionId: string;
+    prompt: string;
+    createdAt: number;
+    status: 'pending' | 'claimed' | 'returned' | 'failed';
+  } | null;
+  message?: string;
+}
+
+export interface ChatGptSourceResultResponse {
+  result: {
+    requestId: string;
+    text: string;
+    returnedAt: number;
+  };
+}
+
+export async function sendChatGptWebHeartbeat(): Promise<BridgeClientResult<ChatGptSourceHeartbeatResponse>> {
+  return bridgeFetch('/bridge/source/chatgpt-web/heartbeat', 'POST', { canAnswer: true });
+}
+
+export async function pollChatGptWebNext(): Promise<BridgeClientResult<ChatGptSourceNextResponse>> {
+  return bridgeFetch('/bridge/source/chatgpt-web/next', 'GET');
+}
+
+export async function postChatGptWebResult(
+  requestId: string,
+  text: string,
+): Promise<BridgeClientResult<ChatGptSourceResultResponse>> {
+  return bridgeFetch('/bridge/source/chatgpt-web/results', 'POST', { requestId, text });
+}

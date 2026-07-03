@@ -2480,6 +2480,10 @@ export function isBridgePath(pathname: string): boolean {
     pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH ||
     pathname === BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH ||
     pathname === BRIDGE_GOALS_PATH ||
+    // ADR-0035: ChatGPT Web source relay paths.
+    pathname === '/bridge/source/chatgpt-web/heartbeat' ||
+    pathname === '/bridge/source/chatgpt-web/next' ||
+    pathname === '/bridge/source/chatgpt-web/results' ||
     (typeof pathname === 'string' && pathname === BRIDGE_ENDPOINTS_PATH) ||
     (typeof pathname === 'string' && pathname.startsWith(`${BRIDGE_ENDPOINTS_PATH}/`));
 }
@@ -3691,10 +3695,26 @@ export async function handleBridgeRequest(
 
   // ── ADR-0035: ChatGPT Web Source Relay ──
 
+  // Heartbeat: extension declares it is connected and ready.
+  const chatGptWebHeartbeat = pathname === '/bridge/source/chatgpt-web/heartbeat';
+  if (chatGptWebHeartbeat) {
+    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'extension-session') {
+      return error(403, 'ChatGPT Web source relay requires pairing token or extension session');
+    }
+    if (method !== 'POST') return error(405, 'Method not allowed');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const body = parsed.body as Record<string, unknown>;
+    runtime.chatGptWebQueue.recordHeartbeat(
+      typeof body.canAnswer === 'boolean' ? { canAnswer: body.canAnswer } : undefined,
+    );
+    return ok({ heartbeat: 'recorded' });
+  }
+
   const chatGptWebNext = pathname === '/bridge/source/chatgpt-web/next';
   if (chatGptWebNext) {
-    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'console-cookie') {
-      return error(403, 'ChatGPT Web source relay requires local Console session or pairing token');
+    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'extension-session') {
+      return error(403, 'ChatGPT Web source relay requires pairing token or extension session');
     }
     if (method !== 'GET') return error(405, 'Method not allowed');
     const next = runtime.chatGptWebQueue.next();
@@ -3704,8 +3724,8 @@ export async function handleBridgeRequest(
 
   const chatGptWebResults = pathname === '/bridge/source/chatgpt-web/results';
   if (chatGptWebResults) {
-    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'console-cookie') {
-      return error(403, 'ChatGPT Web source relay requires local Console session or pairing token');
+    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'extension-session') {
+      return error(403, 'ChatGPT Web source relay requires pairing token or extension session');
     }
     if (method !== 'POST') return error(405, 'Method not allowed');
     const parsed = await readJsonBody(request);
