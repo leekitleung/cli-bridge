@@ -56,6 +56,8 @@ import {
   createWorkBuddyWorker,
   runWorkBuddyWorker,
 } from '../apps/local-server/src/workbuddy/workbuddy-worker.ts';
+import { createCommandBackend } from '../apps/local-server/src/workbuddy/command-backend.ts';
+import { tmpdir } from 'node:os';
 
 export interface LocalProjectConfig {
   key: string;
@@ -378,17 +380,17 @@ function buildWorkbuddyBackendFromConfig(
   config: WorkbuddyExecutorBackendConfig,
 ): import('../apps/local-server/src/workbuddy/workbuddy-worker.ts').WorkBuddyExecutorBackend | null {
   if (config.kind === 'command') {
-    const { createCommandBackend } = require('../apps/local-server/src/workbuddy/command-backend.ts');
     const cmdCfg = config as WorkbuddyCommandBackendConfig;
+    const backend = createCommandBackend({
+      allowlist: cmdCfg.allowlist,
+      defaultCwd: cmdCfg.defaultCwd || tmpdir(),
+      timeoutMs: cmdCfg.timeoutMs || 30_000,
+      outputCapBytes: cmdCfg.outputCapBytes || 65_536,
+      env: cmdCfg.env,
+    });
     return {
       async execute(task) {
-        const result = await createCommandBackend({
-          allowlist: cmdCfg.allowlist,
-          defaultCwd: cmdCfg.defaultCwd || require('node:os').tmpdir(),
-          timeoutMs: cmdCfg.timeoutMs || 30_000,
-          outputCapBytes: cmdCfg.outputCapBytes || 65_536,
-          env: cmdCfg.env,
-        }).execute(task);
+        const result = await backend.execute(task);
         return {
           ok: result.ok,
           stdout: result.stdout,

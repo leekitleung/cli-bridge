@@ -825,3 +825,54 @@ test('local auto-pair revoke invalidates console and extension credentials', asy
     await closeServer(handle);
   }
 });
+
+// ADR-0034 REVIEW: Configured launcher with command backend starts without crashing.
+
+test('startConfiguredWorkBuddyWorker builds command backend without require() crash', async () => {
+  const { startConfiguredWorkBuddyWorker } = await import('../scripts/start-local-configured.ts');
+
+  const controller = startConfiguredWorkBuddyWorker(
+    { url: 'http://127.0.0.1:31337', pairingToken: 'test-token' },
+    {
+      workbuddyWorker: { enabled: true, endpointId: 'workbuddy', pollIntervalMs: 500 },
+      workbuddyExecutorBackend: { kind: 'command', allowlist: ['echo'] },
+    },
+  );
+
+  assert.ok(controller, 'should return an AbortController when worker is enabled');
+  assert.ok(controller instanceof AbortController, 'should be AbortController');
+
+  // Clean up — abort the worker loop.
+  controller.abort();
+});
+
+test('startConfiguredWorkBuddyWorker returns undefined when worker disabled', async () => {
+  const { startConfiguredWorkBuddyWorker } = await import('../scripts/start-local-configured.ts');
+
+  const result = startConfiguredWorkBuddyWorker(
+    { url: 'http://127.0.0.1:31337', pairingToken: 'test-token' },
+    {
+      workbuddyWorker: { enabled: false },
+      workbuddyExecutorBackend: { kind: 'command', allowlist: ['echo'] },
+    },
+  );
+
+  assert.equal(result, undefined);
+});
+
+test('startConfiguredWorkBuddyWorker with http backend returns null backend (diagnostic-only)', async () => {
+  const { startConfiguredWorkBuddyWorker } = await import('../scripts/start-local-configured.ts');
+
+  const controller = startConfiguredWorkBuddyWorker(
+    { url: 'http://127.0.0.1:31337', pairingToken: 'test-token' },
+    {
+      workbuddyWorker: { enabled: true },
+      workbuddyExecutorBackend: { kind: 'http', url: 'https://example.com/exec' },
+    },
+  );
+
+  // HTTP backend is deferred → backend null → worker runs diagnostic-only.
+  // Should not crash, still returns a controller.
+  assert.ok(controller);
+  controller.abort();
+});
