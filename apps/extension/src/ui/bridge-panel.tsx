@@ -449,6 +449,23 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   // Show an explicit initial state so the pairing area never looks inert.
   renderConnection('unpaired');
 
+  const startSourceRelay = () => {
+    // ADR-0035: Source relay must keep running independently of the legacy
+    // health probe so long-lived ChatGPT pages can pick up refreshed sessions.
+    ensureSourceRelayPoller({
+      root,
+      onEvent(event) {
+        if (event.type === 'claimed') {
+          renderStatus({ kind: 'idle', label: 'Source Relay', detail: 'Processing Console prompt' });
+        } else if (event.type === 'returned') {
+          renderStatus({ kind: 'success', label: 'Source Relay', detail: 'Response sent to Console' });
+        } else if (event.type === 'failed') {
+          renderStatus({ kind: 'failed', label: 'Source Relay', detail: event.reason });
+        }
+      },
+    });
+  };
+
   const refreshConnection = async () => {
     if (!hasPairingToken()) {
       renderConnection('unpaired');
@@ -489,31 +506,20 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
           }
         },
       });
-
-      // ADR-0035: Start the source relay poller alongside the outbound poller.
-      // The source relay handles chatgpt-web conversation prompts from the Console.
-      ensureSourceRelayPoller({
-        root,
-        onEvent(event) {
-          if (event.type === 'claimed') {
-            renderStatus({ kind: 'idle', label: 'Source Relay', detail: 'Processing Console prompt' });
-          } else if (event.type === 'returned') {
-            renderStatus({ kind: 'success', label: 'Source Relay', detail: 'Response sent to Console' });
-          } else if (event.type === 'failed') {
-            renderStatus({ kind: 'failed', label: 'Source Relay', detail: event.reason });
-          }
-        },
-      });
     }
   };
 
   // Load any stored token and report connection state (no auto-send involved).
   loadPairingTokenFromStorage()
-    .then(() => refreshConnection())
+    .then(() => {
+      startSourceRelay();
+      return refreshConnection();
+    })
     .catch(() => renderConnection('unpaired'));
 
   testTokenButton.addEventListener('click', async () => {
     await loadPairingTokenFromStorage();
+    startSourceRelay();
     await refreshConnection();
   });
 

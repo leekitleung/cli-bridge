@@ -9,6 +9,7 @@ import {
   pollChatGptWebNext,
   postChatGptWebResult,
   hasPairingToken,
+  loadPairingTokenFromStorage,
 } from './bridge-client.ts';
 import {
   fillComposerText,
@@ -77,6 +78,9 @@ export function startSourceRelayPoller(
     if (inFlight) {
       options.onEvent?.({ type: 'waiting', reason: 'in-flight' });
       return null;
+    }
+    if (!hasPairingToken()) {
+      await loadPairingTokenFromStorage();
     }
     if (!hasPairingToken()) {
       options.onEvent?.({ type: 'waiting', reason: 'unpaired' });

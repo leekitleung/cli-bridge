@@ -402,3 +402,52 @@ test('extension popup is connection-first with manual token fallback only', asyn
   assert.equal(source.includes('WorkBuddy'), false);
   assert.equal(source.includes('dispatch'), false);
 });
+
+test('chatgpt source relay starts even when the initial health probe is not connected', async () => {
+  const env = setupPanelDom();
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let handle;
+  try {
+    const { mountBridgePanel } = await loadBridgePanelModule();
+    globalThis.chrome = {
+      storage: {
+        session: {
+          get: async () => ({ cliBridgePairingToken: 'tok-123' }),
+          remove: async () => {},
+        },
+      },
+    };
+    const paths = [];
+    globalThis.fetch = async (url, init = {}) => {
+      const path = new URL(String(url)).pathname;
+      paths.push(path);
+      if (path === '/health/private') {
+        return { ok: false, status: 403, json: async () => ({ message: 'unauthorized' }) };
+      }
+      if (path === '/bridge/source/chatgpt-web/heartbeat') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+    globalThis.setInterval = (callback) => {
+      Promise.resolve().then(callback);
+      return 1;
+    };
+    globalThis.clearInterval = () => {};
+
+    handle = mountBridgePanel(env.document);
+
+    await waitForPanel(() => paths.includes('/bridge/source/chatgpt-web/heartbeat'));
+    assert.equal(paths.includes('/health/private'), true);
+  } finally {
+    handle?.element.querySelectorAll('button').forEach((button) => {
+      if (button.textContent === '清除配对') {
+        button.click();
+      }
+    });
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+    env.restore();
+  }
+});
