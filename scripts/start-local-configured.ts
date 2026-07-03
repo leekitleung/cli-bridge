@@ -53,6 +53,10 @@ import {
   createCodexPlannerAdapter,
 } from '../apps/local-server/src/conversation/command-planner-adapter.ts';
 import {
+  createCodexSourceAdapter,
+  createClaudeSourceAdapter,
+} from '../apps/local-server/src/conversation/command-source-adapters.ts';
+import {
   createWorkBuddyWorker,
   runWorkBuddyWorker,
 } from '../apps/local-server/src/workbuddy/workbuddy-worker.ts';
@@ -310,6 +314,33 @@ export function buildRuntimeOptions(
   config: LocalConfig,
   githubTokenStore: GithubTokenStore,
 ): BridgeRuntimeOptions {
+  // ADR-0035: Build source adapters from config. The planner config is now
+  // used to create source adapters registered by endpointId, not a global
+  // default planner.
+  const sourceAdapters: import('../apps/local-server/src/conversation/source-adapter.ts').ConversationSourceAdapter[] = [];
+  if (config.planner) {
+    if (config.planner.kind === 'claude') {
+      sourceAdapters.push(createClaudeSourceAdapter({
+        id: config.planner.id,
+        commandOptions: {
+          timeoutMs: config.planner.timeoutMs,
+          maxOutputBytes: config.planner.maxOutputBytes,
+        },
+      }));
+    } else {
+      sourceAdapters.push(createCodexSourceAdapter({
+        id: config.planner.id,
+        commandOptions: {
+          timeoutMs: config.planner.timeoutMs,
+          maxOutputBytes: config.planner.maxOutputBytes,
+        },
+      }));
+    }
+  }
+
+  // ADR-0035: Backward-compat: also provide plannerAdapters for existing tests
+  // that rely on the old plannerRegistry API. Tests should migrate to
+  // sourceAdapters, but for now both are populated.
   const plannerAdapters = config.planner
     ? [
         config.planner.kind === 'claude'
@@ -337,6 +368,7 @@ export function buildRuntimeOptions(
     githubChecksConfig: config.githubChecksConfig,
     githubTokenStore,
     plannerAdapters,
+    sourceAdapters,
   };
 }
 

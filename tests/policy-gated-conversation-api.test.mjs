@@ -33,6 +33,18 @@ function safeAutoExecutePlanner() {
   };
 }
 
+// ADR-0035: Wrap a PlannerAdapter as a ConversationSourceAdapter for tests.
+function asSourceAdapter(endpointId, kind, planner) {
+  return {
+    endpointId,
+    kind,
+    isAvailable() { return true; },
+    async plan(input) {
+      return planner.plan(input);
+    },
+  };
+}
+
 async function setupPairing(runtime, projectId = 'cli-bridge') {
   const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   return handleBridgeRequest(
@@ -47,7 +59,7 @@ async function setupPairing(runtime, projectId = 'cli-bridge') {
   );
 }
 
-test('conversation message returns planner-unavailable when no real planner is configured', async () => {
+test('conversation message returns source-unavailable when no source adapter is configured', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime();
   await setupPairing(runtime);
@@ -60,7 +72,7 @@ test('conversation message returns planner-unavailable when no real planner is c
   );
 
   assert.equal(res.statusCode, 409);
-  assert.match(res.payload.message, /planner.*unavailable/i);
+  assert.match(res.payload.message, /source.*unavailable/i);
   const packets = runtime.conversationInstructionStore.listByProject('cli-bridge');
   assert.equal(packets.length, 0);
   const routes = runtime.conversationRouteStore.listByProject('cli-bridge');
@@ -69,21 +81,23 @@ test('conversation message returns planner-unavailable when no real planner is c
 
 test('planner answer intent renders planner output without executor task', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const testPlanner = {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: 'Hello from planner',
+        intent: 'answer',
+        createdAt: new Date().toISOString(),
+      };
+    },
+  };
   const runtime = createBridgeRuntime({
-    plannerAdapters: [{
-      id: 'test-planner',
-      mode: 'test-only',
-      async plan(input) {
-        return {
-          id: `out-${Date.now()}`,
-          sessionId: input.sessionId,
-          plannerEndpointId: 'test-planner',
-          visibleText: 'Hello from planner',
-          intent: 'answer',
-          createdAt: new Date().toISOString(),
-        };
-      },
-    }],
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', testPlanner)],
   });
 
   // Setup pairing so messages can be sent.
@@ -108,27 +122,29 @@ test('planner answer intent renders planner output without executor task', async
 
 test('request execution blocks before dispatch when executor unavailable', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const testPlanner = {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: 'Ready to execute.',
+        intent: 'request_execution',
+        proposedInstruction: {
+          summary: 'format text',
+          payload: 'format text',
+          targetExecutorIds: ['workbuddy'],
+          riskHints: ['pure-transform'],
+        },
+        createdAt: new Date().toISOString(),
+      };
+    },
+  };
   const runtime = createBridgeRuntime({
-    plannerAdapters: [{
-      id: 'test-planner',
-      mode: 'test-only',
-      async plan(input) {
-        return {
-          id: `out-${Date.now()}`,
-          sessionId: input.sessionId,
-          plannerEndpointId: 'test-planner',
-          visibleText: 'Ready to execute.',
-          intent: 'request_execution',
-          proposedInstruction: {
-            summary: 'format text',
-            payload: 'format text',
-            targetExecutorIds: ['workbuddy'],
-            riskHints: ['pure-transform'],
-          },
-          createdAt: new Date().toISOString(),
-        };
-      },
-    }],
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', testPlanner)],
   });
 
   // Setup pairing.
@@ -163,15 +179,17 @@ test('request execution blocks before dispatch when executor unavailable', async
 test('workbuddy status-style request uses local fast path instead of slow planner', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   let plannerCalled = false;
+  const slowPlanner = {
+    id: 'slow-planner',
+    mode: 'test-only',
+    async plan() {
+      plannerCalled = true;
+      throw new Error('planner should not run');
+    },
+  };
   const runtime = createBridgeRuntime({
-    plannerAdapters: [{
-      id: 'slow-planner',
-      mode: 'test-only',
-      async plan() {
-        plannerCalled = true;
-        throw new Error('planner should not run');
-      },
-    }],
+    plannerAdapters: [slowPlanner],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', slowPlanner)],
   });
 
   await setupPairing(runtime);
@@ -207,6 +225,7 @@ test('diagnostic workbuddy result stays out of user-visible transcript', async (
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime({
     plannerAdapters: [safeAutoExecutePlanner()],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', safeAutoExecutePlanner())],
   });
 
   await setupPairing(runtime);
@@ -245,7 +264,10 @@ test('diagnostic workbuddy result stays out of user-visible transcript', async (
 
 test('executor raw result returns to transcript without bridge-authored rewrite', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  const runtime = createBridgeRuntime({ plannerAdapters: [safeAutoExecutePlanner()] });
+  const runtime = createBridgeRuntime({
+    plannerAdapters: [safeAutoExecutePlanner()],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', safeAutoExecutePlanner())],
+  });
 
   // Setup pairing.
   const pairRes = await setupPairing(runtime);
@@ -304,38 +326,40 @@ test('executor raw result returns to transcript without bridge-authored rewrite'
 // ADR-0032: WorkBuddy worker online integration.
 test('safe planner execution creates workbuddy task when worker has polled', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  const testPlanner = {
+    id: 'test-planner',
+    mode: 'test-only',
+    async plan(input) {
+      return {
+        id: `out-${Date.now()}`,
+        sessionId: input.sessionId,
+        plannerEndpointId: 'test-planner',
+        visibleText: 'Ready to run a diagnostic task.',
+        intent: 'request_execution',
+        proposedInstruction: {
+          summary: 'diagnostic',
+          payload: 'diagnostic: ping',
+          targetExecutorIds: ['workbuddy'],
+          riskHints: ['pure-transform'],
+        },
+      };
+    },
+  };
   const runtime = createBridgeRuntime({
-    plannerAdapters: [{
-      id: 'test-planner',
-      mode: 'test-only',
-      async plan(input) {
-        return {
-          id: `out-${Date.now()}`,
-          sessionId: input.sessionId,
-          plannerEndpointId: 'test-planner',
-          visibleText: 'Ready to run a diagnostic task.',
-          intent: 'request_execution',
-          proposedInstruction: {
-            summary: 'diagnostic',
-            payload: 'diagnostic: ping',
-            targetExecutorIds: ['workbuddy'],
-            riskHints: ['pure-transform'],
-          },
-        };
-      },
-    }],
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [asSourceAdapter('codex-cli', 'codex-cli', testPlanner)],
   });
 
   // ADR-0034: Simulate worker polling and marking executor as ready.
   runtime.workbuddyExecution.claimNext('workbuddy');
   runtime.workbuddyExecution.markExecutorReady();
 
-  // Setup pairing.
+  // Setup pairing. ADR-0035: Must pair with 'codex-cli' since that's the source adapter we registered.
   const pairRes = await handleBridgeRequest(
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy' }),
   );
   assert.equal(pairRes.statusCode, 200);
 

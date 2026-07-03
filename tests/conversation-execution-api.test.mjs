@@ -42,7 +42,16 @@ function testProposePlanPlanner() {
 
 async function createTestRuntime() {
   const { createBridgeRuntime } = await import('../apps/local-server/src/routes/bridge-api.ts');
-  return createBridgeRuntime({ plannerAdapters: [testProposePlanPlanner()] });
+  const planner = testProposePlanPlanner();
+  return createBridgeRuntime({
+    plannerAdapters: [planner],
+    sourceAdapters: [{
+      endpointId: 'codex-cli',
+      kind: 'codex-cli',
+      isAvailable() { return true; },
+      async plan(input) { return planner.plan(input); },
+    }],
+  });
 }
 
 /**
@@ -72,7 +81,7 @@ async function setupAndClaim(runtime, projectId = 'cli-bridge', text = 'test ins
     runtime,
     'PUT',
     `/bridge/projects/${projectId}/conversation-pairing`,
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy', scope: 'project' }),
   );
 
   const postMsg = await handleBridgeRequest(
@@ -305,7 +314,17 @@ test('persistence roundtrip preserves execution packets', async () => {
   const dir = mkdtempSync(resolve(tmpdir(), 'cli-bridge-test-'));
   try {
     // Phase 1: create runtime, setup, submit result, persist.
-    const first = createBridgeRuntime({ dataDir: dir, plannerAdapters: [testProposePlanPlanner()] });
+    const planner = testProposePlanPlanner();
+    const first = createBridgeRuntime({
+      dataDir: dir,
+      plannerAdapters: [planner],
+      sourceAdapters: [{
+        endpointId: 'codex-cli',
+        kind: 'codex-cli',
+        isAvailable() { return true; },
+        async plan(input) { return planner.plan(input); },
+      }],
+    });
     const { task } = await setupAndClaim(first, 'cli-bridge', 'persistent instruction');
 
     await handleBridgeRequest(
@@ -513,7 +532,7 @@ test('posting messages creates no routes before plan acceptance', async () => {
     runtime,
     'PUT',
     '/bridge/projects/cli-bridge/conversation-pairing',
-    jsonBody({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy', scope: 'project' }),
+    jsonBody({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy', scope: 'project' }),
   );
 
   // First message creates a plan, but no route before acceptance.

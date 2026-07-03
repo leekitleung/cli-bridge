@@ -54,10 +54,10 @@ async function setupConversation(handle, cookie) {
   });
   assert.ok(proj.status === 201 || proj.status === 409);
 
-  // Pair conversation
+  // Pair conversation — ADR-0035: must use codex-cli since that's the source adapter registered.
   const pair = await fetchJson(`${handle.url}/bridge/projects/e2e-test/conversation-pairing`, {
     method: 'PUT', headers,
-    body: JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+    body: JSON.stringify({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy' }),
   });
   assert.equal(pair.status, 200);
   return headers;
@@ -66,7 +66,7 @@ async function setupConversation(handle, cookie) {
 // ── Test 1: No backend → execution blocked ──
 
 test('E2E: no backend — execution request returns blocked', async () => {
-  const handle = await startLocalServer(0, { plannerAdapters: [{
+  const testPlanner = {
     id: 'test-planner',
     mode: 'test-only',
     async plan(input) {
@@ -85,7 +85,16 @@ test('E2E: no backend — execution request returns blocked', async () => {
         createdAt: new Date().toISOString(),
       };
     },
-  }] });
+  };
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [{
+      endpointId: 'codex-cli',
+      kind: 'codex-cli',
+      isAvailable() { return true; },
+      async plan(input) { return testPlanner.plan(input); },
+    }],
+  });
   try {
     const cookie = await getCookie(handle);
     const headers = await setupConversation(handle, cookie);
@@ -118,7 +127,7 @@ test('E2E: no backend — execution request returns blocked', async () => {
 // ── Test 2: Real worker with backend → result in main chat ──
 
 test('E2E: real worker with backend — result appears in main chat', async () => {
-  const handle = await startLocalServer(0, { plannerAdapters: [{
+  const testPlanner = {
     id: 'test-planner',
     mode: 'test-only',
     async plan(input) {
@@ -137,7 +146,16 @@ test('E2E: real worker with backend — result appears in main chat', async () =
         createdAt: new Date().toISOString(),
       };
     },
-  }] });
+  };
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [{
+      endpointId: 'codex-cli',
+      kind: 'codex-cli',
+      isAvailable() { return true; },
+      async plan(input) { return testPlanner.plan(input); },
+    }],
+  });
   try {
     const cookie = await getCookie(handle);
     const headers = await setupConversation(handle, cookie);
@@ -233,7 +251,7 @@ test('E2E: real worker with backend — result appears in main chat', async () =
 // ── Test 3: Diagnostic result filtered from main chat ──
 
 test('E2E: diagnostic result never enters main conversation transcript', async () => {
-  const handle = await startLocalServer(0, { plannerAdapters: [{
+  const testPlanner = {
     id: 'test-planner',
     mode: 'test-only',
     async plan(input) {
@@ -252,7 +270,16 @@ test('E2E: diagnostic result never enters main conversation transcript', async (
         createdAt: new Date().toISOString(),
       };
     },
-  }] });
+  };
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [{
+      endpointId: 'codex-cli',
+      kind: 'codex-cli',
+      isAvailable() { return true; },
+      async plan(input) { return testPlanner.plan(input); },
+    }],
+  });
   try {
     const cookie = await getCookie(handle);
     const headers = await setupConversation(handle, cookie);
@@ -312,7 +339,7 @@ test('E2E: diagnostic result never enters main conversation transcript', async (
 // ADR-0034 REVIEW: E2E with configured command backend — worker starts and returns real result.
 
 test('E2E: configured command backend — worker returns real command output', async () => {
-  const handle = await startLocalServer(0, { plannerAdapters: [{
+  const testPlanner = {
     id: 'test-planner',
     mode: 'test-only',
     async plan(input) {
@@ -331,7 +358,16 @@ test('E2E: configured command backend — worker returns real command output', a
         createdAt: new Date().toISOString(),
       };
     },
-  }] });
+  };
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [testPlanner],
+    sourceAdapters: [{
+      endpointId: 'codex-cli',
+      kind: 'codex-cli',
+      isAvailable() { return true; },
+      async plan(input) { return testPlanner.plan(input); },
+    }],
+  });
   try {
     const cookie = (await fetch(`${handle.url}/console/project`)).headers.getSetCookie?.()?.[0] ?? '';
     const headers = { 'content-type': 'application/json', origin: handle.url, cookie };

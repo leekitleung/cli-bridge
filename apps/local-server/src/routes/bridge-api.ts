@@ -45,6 +45,7 @@ import { InMemoryConversationRouteStore } from '../storage/conversation-route-st
 import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts';
 import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
 import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
+import { SourceAdapterRegistry } from '../conversation/source-adapter.ts';
 import type { PlannerAdapter } from '../conversation/planner-adapter.ts';
 import { resolveExecutorAvailability } from '../conversation/executor-availability.ts';
 import type { ExecutorAvailability } from '../conversation/executor-availability.ts';
@@ -198,6 +199,8 @@ export interface BridgeRuntime {
   workbuddyExecution: WorkBuddyExecutionAdapter;
   /** ADR-0031: planner adapter registry. Default runtime has no planners. */
   plannerRegistry: import('../conversation/planner-adapter.ts').PlannerAdapterRegistry;
+  /** ADR-0035: source adapter registry — resolved by pairing.sourceEndpointId. */
+  sourceAdapterRegistry: import('../conversation/source-adapter.ts').SourceAdapterRegistry;
   /** ADR-0031: gate decision store for audit/debug. */
   gateDecisionStore: InMemoryGateDecisionStore;
   // v2.4a Model API
@@ -261,6 +264,8 @@ export interface BridgeRuntimeOptions {
   additionalEndpoints?: readonly AgentEndpoint[];
   /** ADR-0031: planner adapters to register at runtime. Mock planner must not be default. */
   plannerAdapters?: readonly import('../conversation/planner-adapter.ts').PlannerAdapter[];
+  /** ADR-0035: source adapters registered by endpointId. Conversation routing resolves by pairing.sourceEndpointId. */
+  sourceAdapters?: readonly import('../conversation/source-adapter.ts').ConversationSourceAdapter[];
 }
 
 
@@ -1582,6 +1587,11 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   for (const adapter of options.plannerAdapters ?? []) {
     plannerRegistry.register(adapter);
   }
+  // ADR-0035: Source adapter registry — resolved by pairing.sourceEndpointId.
+  const sourceAdapterRegistry = new SourceAdapterRegistry();
+  for (const adapter of options.sourceAdapters ?? []) {
+    sourceAdapterRegistry.register(adapter);
+  }
   // ADR-0031: gate decision store.
   const gateDecisionStore = new InMemoryGateDecisionStore();
   // v2.4a Model API key store — memory-only, never persisted.
@@ -1778,6 +1788,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     planProposalStore,
     workbuddyExecution,
     plannerRegistry,
+    sourceAdapterRegistry,
     gateDecisionStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -3704,6 +3715,10 @@ export async function handleBridgeRequest(
       const sessionId = `conversation:${key}`;
       const pairingId = `${pairing.sourceEndpointId}→${pairing.targetEndpointId}`;
 
+      // ADR-0035: Resolve source adapter by pairing.sourceEndpointId.
+      // No default planner fallback — the pairing is the single source of truth.
+      const sourceAdapter = runtime.sourceAdapterRegistry.resolve(pairing.sourceEndpointId);
+
       // ADR-0034: Resolve executor readiness for fast-path status queries.
       const executorReady = runtime.workbuddyExecution.getExecutorReady();
       const executorStatus = executorReady
@@ -3719,11 +3734,41 @@ export async function handleBridgeRequest(
         executorStatus,
       });
 
-      // ADR-0031 Step 1: Resolve planner unless a deterministic local
-      // WorkBuddy status/diagnostic path can avoid the slow planner command.
-      const planner = localEnvelope ? undefined : runtime.plannerRegistry.defaultPlanner();
-      if (!localEnvelope && !planner) {
-        return error(409, 'Planner unavailable: no planner adapter configured');
+      // ADR-0035: Source routing — use source adapter resolved from pairing.
+      // Local WorkBuddy status fast-path is the only shortcut; everything else
+      // goes through the source adapter.
+      const SOURCE_TIMEOUT_MS = 15_000;
+
+      // If no source adapter and no local envelope → source unavailable.
+      if (!localEnvelope && !sourceAdapter) {
+        const sourceUnavailableEvent = runtime.conversationTranscriptStore.append({
+          projectId: key,
+          pairingId,
+          role: 'bridge',
+          text: `Source endpoint "${pairing.sourceEndpointId}" is not available. No source adapter is configured for this endpoint. Pair a supported source or configure the corresponding adapter.`,
+          status: 'failed',
+          routeKind: pairing.targetRouteKind,
+          kind: 'status',
+          visibility: 'user',
+        });
+        runtime.persist();
+        return error(409, `Source unavailable: no adapter for endpoint "${pairing.sourceEndpointId}"`);
+      }
+
+      // If source adapter exists but reports unavailable → blocked.
+      if (!localEnvelope && sourceAdapter && !sourceAdapter.isAvailable({ projectId: key, endpointId: pairing.sourceEndpointId })) {
+        const blockedEvent = runtime.conversationTranscriptStore.append({
+          projectId: key,
+          pairingId,
+          role: 'bridge',
+          text: `Source "${pairing.sourceEndpointId}" is currently unavailable.`,
+          status: 'failed',
+          routeKind: pairing.targetRouteKind,
+          kind: 'status',
+          visibility: 'user',
+        });
+        runtime.persist();
+        return error(409, `Source unavailable: "${pairing.sourceEndpointId}" is not available`);
       }
 
       // ADR-0031 Step 2: Append user event.
@@ -3736,42 +3781,42 @@ export async function handleBridgeRequest(
         routeKind: pairing.targetRouteKind,
       });
 
-      // ADR-0031 Step 3: Call planner with timeout (ADR-0034).
-      const PLANNER_TIMEOUT_MS = 15_000;
+      // ADR-0035 Step 3: Call source adapter with timeout.
+      const SOURCE_TIMEOUT = 15_000;
       let envelope;
       try {
         if (localEnvelope) {
           envelope = localEnvelope;
         } else {
-          const plannerPromise = planner!.plan({
+          const planPromise = sourceAdapter!.plan({
             sessionId,
             projectId: key,
             userText: text,
             history: [],
           });
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Planner timed out')), PLANNER_TIMEOUT_MS),
+            setTimeout(() => reject(new Error('Source timed out')), SOURCE_TIMEOUT),
           );
-          envelope = await Promise.race([plannerPromise, timeoutPromise]);
+          envelope = await Promise.race([planPromise, timeoutPromise]);
         }
       } catch (err) {
-        // ADR-0034: On planner timeout, return a user-visible error without blocking UI.
+        // ADR-0034: On source timeout, return a user-visible error without blocking UI.
         const errMsg = String(err);
-        if (errMsg.includes('timed out') || errMsg.includes('Planner timed out')) {
+        if (errMsg.includes('timed out') || errMsg.includes('Source timed out')) {
           const timeoutEvent = runtime.conversationTranscriptStore.append({
             projectId: key,
             pairingId,
             role: 'bridge',
-            text: 'Planner timed out after ' + (PLANNER_TIMEOUT_MS / 1000) + 's. The execution planner is not responding. Please try again or check the planner configuration.',
+            text: 'Source timed out after ' + (SOURCE_TIMEOUT / 1000) + 's. The source endpoint is not responding. Please try again or check the source configuration.',
             status: 'failed',
             routeKind: pairing.targetRouteKind,
             kind: 'status',
             visibility: 'user',
           });
           runtime.persist();
-          return error(504, `Planner timed out after ${PLANNER_TIMEOUT_MS / 1000}s`);
+          return error(504, `Source timed out after ${SOURCE_TIMEOUT / 1000}s`);
         }
-        return error(500, `Planner error: ${errMsg}`);
+        return error(500, `Source error: ${errMsg}`);
       }
 
       // ADR-0031 Step 4: Validate envelope.

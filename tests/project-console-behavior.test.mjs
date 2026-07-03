@@ -2467,7 +2467,7 @@ test('renderConversationTranscript shows planner waiting state while send is pen
   window.renderConversationTranscript();
 
   const text = document.getElementById('conversation-transcript').textContent;
-  assert.match(text, /Waiting for planner/);
+  assert.match(text, /Waiting for source/);
   assert.match(document.getElementById('conversation-transcript').innerHTML, /wait-spinner/);
 });
 

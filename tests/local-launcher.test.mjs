@@ -110,8 +110,7 @@ test('extension claim nonce can be used once to obtain extension session token',
 });
 
 test('extension session token cannot accept planner-gated conversation plans', async () => {
-  const handle = await startLocalServer(0, {
-    plannerAdapters: [{
+    const testPlanner = {
       id: 'test-planner',
       mode: 'test-only',
       async plan(input) {
@@ -130,8 +129,16 @@ test('extension session token cannot accept planner-gated conversation plans', a
           createdAt: new Date().toISOString(),
         };
       },
-    }],
-  });
+    };
+    const handle = await startLocalServer(0, {
+      plannerAdapters: [testPlanner],
+      sourceAdapters: [{
+        endpointId: 'codex-cli',
+        kind: 'codex-cli',
+        isAvailable() { return true; },
+        async plan(input) { return testPlanner.plan(input); },
+      }],
+    });
   try {
     const consoleRes = await fetch(`${handle.url}/console/project`);
     const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
@@ -171,7 +178,7 @@ test('extension session token cannot accept planner-gated conversation plans', a
     const pairing = await fetch(`${handle.url}/bridge/projects/cli-bridge/conversation-pairing`, {
       method: 'PUT',
       headers: consoleHeaders,
-      body: JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+      body: JSON.stringify({ sourceEndpointId: 'codex-cli', targetEndpointId: 'workbuddy' }),
     });
     assert.equal(pairing.status, 200);
 

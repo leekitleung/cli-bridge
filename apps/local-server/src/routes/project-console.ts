@@ -755,6 +755,7 @@ const store = {
   conversationGate: null,
   conversationSending: false,
   conversationPlannerStartedAt: 0,
+  conversationSourceLabel: '',
   conversationExecutorStartedAt: 0,
   conversationExecutorLabel: '',
   workbuddyPollUntil: 0,
@@ -3090,6 +3091,7 @@ function isMainTranscriptEvent(event) {
     && event.visibility === 'user'
     && event.kind !== 'instruction'
     && event.kind !== 'status'
+    && event.role !== 'bridge'
     && !isConversationBridgeAdminEvent(event);
 }
 
@@ -3121,15 +3123,17 @@ function renderConversationTranscript(explicitEvents, explicitGate) {
 
 function renderConversationWaitStates() {
   let html = '';
+  // ADR-0035: Show source-specific waiting states.
   if (store.conversationPlannerStartedAt) {
+    const sourceLabel = store.conversationSourceLabel || 'source';
     html += '<div class="conversation-message bridge conversation-waiting">'
-      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for planner', store.conversationPlannerStartedAt) + '</div>'
+      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for ' + sourceLabel, store.conversationPlannerStartedAt) + '</div>'
       + '</div>';
   }
   if (store.conversationExecutorStartedAt) {
     const label = store.conversationExecutorLabel || 'executor';
     html += '<div class="conversation-message bridge conversation-waiting">'
-      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for ' + label, store.conversationExecutorStartedAt) + '</div>'
+      + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for ' + label + ' result', store.conversationExecutorStartedAt) + '</div>'
       + '</div>';
   }
   return html;
