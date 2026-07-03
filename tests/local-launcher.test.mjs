@@ -561,6 +561,61 @@ test('parseConfig allows workbuddyWorker top-level key with other config', () =>
   assert.equal(config.workbuddyWorker.pollIntervalMs, 500);
 });
 
+// ADR-0034: Workbuddy executor backend config tests.
+
+test('parseConfig accepts command backend with allowlist', () => {
+  const config = parseConfig(JSON.stringify({
+    workbuddyExecutorBackend: { kind: 'command', allowlist: ['node', 'npm'] },
+  }));
+  assert.equal(config.workbuddyExecutorBackend.kind, 'command');
+  assert.deepEqual(config.workbuddyExecutorBackend.allowlist, ['node', 'npm']);
+});
+
+test('parseConfig accepts http backend with url', () => {
+  const config = parseConfig(JSON.stringify({
+    workbuddyExecutorBackend: { kind: 'http', url: 'https://example.com/execute' },
+  }));
+  assert.equal(config.workbuddyExecutorBackend.kind, 'http');
+  assert.equal(config.workbuddyExecutorBackend.url, 'https://example.com/execute');
+});
+
+test('parseConfig rejects backend with unknown kind', () => {
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyExecutorBackend: { kind: 'shell' } })),
+    /workbuddyExecutorBackend\.kind/,
+  );
+});
+
+test('parseConfig rejects command backend with empty allowlist', () => {
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyExecutorBackend: { kind: 'command', allowlist: [] } })),
+    /workbuddyExecutorBackend\.allowlist/,
+  );
+});
+
+test('parseConfig rejects command backend with invalid timeout', () => {
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyExecutorBackend: { kind: 'command', allowlist: ['echo'], timeoutMs: -1 } })),
+    /workbuddyExecutorBackend\.timeoutMs/,
+  );
+});
+
+test('parseConfig rejects http backend without url', () => {
+  assert.throws(
+    () => parseConfig(JSON.stringify({ workbuddyExecutorBackend: { kind: 'http' } })),
+    /workbuddyExecutorBackend\.url/,
+  );
+});
+
+test('parseConfig allows backend with workbuddyWorker disabled', () => {
+  const config = parseConfig(JSON.stringify({
+    workbuddyWorker: { enabled: false },
+    workbuddyExecutorBackend: { kind: 'command', allowlist: ['node'] },
+  }));
+  assert.equal(config.workbuddyWorker.enabled, false);
+  assert.equal(config.workbuddyExecutorBackend.kind, 'command');
+});
+
 test('formatStartupSummary never includes a github token value', () => {
   const lines = formatStartupSummary(
     { url: 'http://127.0.0.1:31337', pairingToken: 'PAIR' },

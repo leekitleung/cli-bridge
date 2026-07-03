@@ -84,6 +84,37 @@ export interface LocalConfig {
     endpointId?: string;
     pollIntervalMs?: number;
   };
+  /** ADR-0034: Real executor backend configuration. Without this, the worker is diagnostic-only. */
+  workbuddyExecutorBackend?: WorkbuddyExecutorBackendConfig;
+}
+
+/** ADR-0034: Supported backend types for real WorkBuddy execution. */
+export type WorkbuddyExecutorBackendConfig =
+  | WorkbuddyCommandBackendConfig
+  | WorkbuddyHttpBackendConfig;
+
+export interface WorkbuddyCommandBackendConfig {
+  kind: 'command';
+  /** Allowlist of command names or absolute paths that may be executed. */
+  allowlist: string[];
+  /** Default working directory (server-owned). Per-task workingDirectory overrides this. */
+  defaultCwd?: string;
+  /** Maximum execution time in ms (default: 30000). */
+  timeoutMs?: number;
+  /** Maximum output size in bytes (default: 65536). */
+  outputCapBytes?: number;
+  /** Environment variables to pass to the command. */
+  env?: Record<string, string>;
+}
+
+export interface WorkbuddyHttpBackendConfig {
+  kind: 'http';
+  /** URL to POST execution requests to. */
+  url: string;
+  /** Authorization header value (Bearer token, etc.). */
+  authHeader?: string;
+  /** Maximum execution time in ms (default: 30000). */
+  timeoutMs?: number;
 }
 
 const CREATE_PROJECT_PATH = '/bridge/projects';
@@ -167,6 +198,40 @@ export function parseConfig(raw: string): LocalConfig {
       && (!Number.isInteger(config.workbuddyWorker.pollIntervalMs) || config.workbuddyWorker.pollIntervalMs <= 0)
     ) {
       throw new Error('config.workbuddyWorker.pollIntervalMs must be a positive integer when present.');
+    }
+  }
+  // ADR-0034: Validate executor backend config.
+  if (config.workbuddyExecutorBackend !== undefined) {
+    if (typeof config.workbuddyExecutorBackend !== 'object' || config.workbuddyExecutorBackend === null || Array.isArray(config.workbuddyExecutorBackend)) {
+      throw new Error('config.workbuddyExecutorBackend must be an object when present.');
+    }
+    const be = config.workbuddyExecutorBackend as Record<string, unknown>;
+    if (be.kind !== 'command' && be.kind !== 'http') {
+      throw new Error('config.workbuddyExecutorBackend.kind must be "command" or "http".');
+    }
+    if (be.kind === 'command') {
+      if (!Array.isArray(be.allowlist) || (be.allowlist as unknown[]).length === 0) {
+        throw new Error('config.workbuddyExecutorBackend.allowlist must be a non-empty array.');
+      }
+      for (const entry of be.allowlist as unknown[]) {
+        if (typeof entry !== 'string' || entry.trim().length === 0) {
+          throw new Error('Each entry in config.workbuddyExecutorBackend.allowlist must be a non-empty string.');
+        }
+      }
+      if (be.timeoutMs !== undefined && (!Number.isInteger(be.timeoutMs) || (be.timeoutMs as number) <= 0)) {
+        throw new Error('config.workbuddyExecutorBackend.timeoutMs must be a positive integer.');
+      }
+      if (be.outputCapBytes !== undefined && (!Number.isInteger(be.outputCapBytes) || (be.outputCapBytes as number) <= 0)) {
+        throw new Error('config.workbuddyExecutorBackend.outputCapBytes must be a positive integer.');
+      }
+    }
+    if (be.kind === 'http') {
+      if (typeof be.url !== 'string' || be.url.trim().length === 0) {
+        throw new Error('config.workbuddyExecutorBackend.url is required for http backend.');
+      }
+      if (be.authHeader !== undefined && typeof be.authHeader !== 'string') {
+        throw new Error('config.workbuddyExecutorBackend.authHeader must be a string when present.');
+      }
     }
   }
   for (const project of config.projects ?? []) {
@@ -285,16 +350,60 @@ export function startConfiguredWorkBuddyWorker(
 ): AbortController | undefined {
   if (!config.workbuddyWorker?.enabled) return undefined;
   const controller = new AbortController();
+
+  // ADR-0034: Build real backend from config, or default to diagnostic-only.
+  let backend = undefined;
+  if (config.workbuddyExecutorBackend) {
+    backend = buildWorkbuddyBackendFromConfig(config.workbuddyExecutorBackend);
+    if (!backend) {
+      console.error('WorkBuddy worker: invalid backend config — running diagnostic-only');
+    }
+  }
+
   const worker = createWorkBuddyWorker({
     endpointId: config.workbuddyWorker.endpointId ?? 'workbuddy',
     baseUrl: handle.url,
     pairingToken: handle.pairingToken,
     pollIntervalMs: config.workbuddyWorker.pollIntervalMs,
+    backend,
   });
   void runWorkBuddyWorker(worker, controller.signal).catch((err: unknown) => {
     console.error(`WorkBuddy worker stopped: ${err instanceof Error ? err.message : String(err)}`);
   });
   return controller;
+}
+
+/** ADR-0034: Build a WorkBuddyExecutorBackend from config. Returns null on invalid config. */
+function buildWorkbuddyBackendFromConfig(
+  config: WorkbuddyExecutorBackendConfig,
+): import('../apps/local-server/src/workbuddy/workbuddy-worker.ts').WorkBuddyExecutorBackend | null {
+  if (config.kind === 'command') {
+    const { createCommandBackend } = require('../apps/local-server/src/workbuddy/command-backend.ts');
+    const cmdCfg = config as WorkbuddyCommandBackendConfig;
+    return {
+      async execute(task) {
+        const result = await createCommandBackend({
+          allowlist: cmdCfg.allowlist,
+          defaultCwd: cmdCfg.defaultCwd || require('node:os').tmpdir(),
+          timeoutMs: cmdCfg.timeoutMs || 30_000,
+          outputCapBytes: cmdCfg.outputCapBytes || 65_536,
+          env: cmdCfg.env,
+        }).execute(task);
+        return {
+          ok: result.ok,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          failureReason: result.failureReason,
+        };
+      },
+    };
+  }
+  if (config.kind === 'http') {
+    // Deferred: implement HTTP backend.
+    return null;
+  }
+  return null;
 }
 
 /**

@@ -1943,10 +1943,22 @@ function renderCommandContext() {
     html += execReady
       ? '✅ Online — real execution worker is connected and responding.'
       : '⚠️ No real executor connected — channel reachable but no worker claims tasks.';
-    if (wb?.lastHeartbeatAt) {
-      html += ' <span style="color:var(--muted);">Last heartbeat: ' + escapeHtml(new Date(wb.lastHeartbeatAt).toLocaleTimeString()) + '</span>';
-    }
     html += '</div>';
+    // ADR-0034: Show detailed execution status.
+    if (wb?.lastHeartbeatAt) {
+      const heartbeatAge = Math.floor((Date.now() - wb.lastHeartbeatAt) / 1000);
+      html += '<div style="margin-top:4px;font-size:11px;color:var(--muted);">'
+        + 'Last heartbeat: ' + escapeHtml(new Date(wb.lastHeartbeatAt).toLocaleTimeString())
+        + ' (' + heartbeatAge + 's ago)</div>';
+    }
+    if (wb?.lastResultAt) {
+      html += '<div style="margin-top:2px;font-size:11px;color:var(--muted);">'
+        + 'Last result: ' + escapeHtml(new Date(wb.lastResultAt).toLocaleTimeString()) + '</div>';
+    }
+    if (wb?.lastFailureReason) {
+      html += '<div style="margin-top:2px;font-size:11px;color:var(--danger);">'
+        + 'Last failure: ' + escapeHtml(wb.lastFailureReason) + '</div>';
+    }
     const wbData = store.cache.workbuddy;
     if (wb && wb.tasks && wb.tasks.length) {
       html += '<h4 style="margin-top:12px;">Tasks</h4><table><thead><tr><th>title</th><th>status</th></tr></thead><tbody>';
@@ -2049,8 +2061,13 @@ function renderWorkBuddyConversation(wb) {
       + '<div class="conversation-bubble">' + escapeHtml(task.prompt || '') + '</div>'
       + '</div>';
     if (result) {
+      const elapsed = result.durationMs ? formatElapsedMs(result.durationMs) : '';
+      const statusClass = result.ok === false ? 'failed' : 'returned';
       html += '<div class="conversation-message target">'
-        + '<div class="conversation-meta">executor</div>'
+        + '<div class="conversation-meta">executor'
+        + (elapsed ? ' · ' + escapeHtml(elapsed) : '')
+        + ' · <span class="pill">' + escapeHtml(statusClass) + '</span>'
+        + '</div>'
         + '<div class="conversation-bubble">' + escapeHtml(formatWorkBuddyResultForDisplay(result)) + '</div>'
         + '</div>';
     } else {
@@ -2068,6 +2085,12 @@ function renderWorkBuddyConversation(wb) {
 function formatElapsed(startedAt) {
   if (!startedAt) return '0s';
   return Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) + 's';
+}
+
+function formatElapsedMs(durationMs) {
+  if (typeof durationMs !== 'number' || durationMs < 0) return '';
+  if (durationMs < 1000) return Math.round(durationMs) + 'ms';
+  return (durationMs / 1000).toFixed(1) + 's';
 }
 
 function renderWaitingLabel(label, startedAt) {

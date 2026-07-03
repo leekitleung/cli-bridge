@@ -46,6 +46,13 @@
     "endpointId": "workbuddy",
     "pollIntervalMs": 1000
   },
+  "workbuddyExecutorBackend": {
+    "kind": "command",
+    "allowlist": ["node", "npm"],
+    "defaultCwd": "/tmp",
+    "timeoutMs": 30000,
+    "outputCapBytes": 65536
+  },
   "projects": [
     {
       "key": "cli-bridge",
