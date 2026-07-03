@@ -112,6 +112,23 @@ export class ChatGptWebSourceQueue {
       }
     }
   }
+
+  /** List recent requests (up to limit, sorted by createdAt desc). */
+  listRecent(limit: number = 10): ChatGptSourceRequest[] {
+    return Array.from(this.requests.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit)
+      .map(clone);
+  }
+}
+
+/** Check if the ChatGPT Web extension has polled recently. */
+function isExtensionActive(queue: ChatGptWebSourceQueue): boolean {
+  const STALE_MS = 60_000; // Extension is considered active if it claimed a request within 60s.
+  for (const req of queue.listRecent(10)) {
+    if (req.claimedAt && (Date.now() - req.claimedAt) < STALE_MS) return true;
+  }
+  return false;
 }
 
 /**
@@ -131,10 +148,12 @@ export function createChatGptWebSourceAdapter(options: {
     kind: 'chatgpt-web',
 
     isAvailable(_input: SourceAvailabilityInput): boolean {
-      // ChatGPT Web is always registered as available. The extension's
-      // actual availability is determined at claim time — if the extension
-      // doesn't poll, the request times out.
-      return true;
+      // ADR-0035 REVIEW: Honest availability check.
+      // ChatGPT Web is available if the extension has been active recently
+      // (claimed a request within the last 60s). Otherwise, we still allow
+      // the attempt but the user will see "source unavailable" quickly
+      // if the extension is truly disconnected.
+      return isExtensionActive(queue);
     },
 
     async plan(input: PlannerRequest): Promise<PlannerOutputEnvelope> {

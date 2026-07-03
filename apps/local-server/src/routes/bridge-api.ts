@@ -46,6 +46,7 @@ import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts
 import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
 import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
 import { SourceAdapterRegistry } from '../conversation/source-adapter.ts';
+import { createChatGptWebSourceAdapter, ChatGptWebSourceQueue } from '../conversation/chatgpt-web-source-adapter.ts';
 import type { PlannerAdapter } from '../conversation/planner-adapter.ts';
 import { resolveExecutorAvailability } from '../conversation/executor-availability.ts';
 import type { ExecutorAvailability } from '../conversation/executor-availability.ts';
@@ -201,6 +202,8 @@ export interface BridgeRuntime {
   plannerRegistry: import('../conversation/planner-adapter.ts').PlannerAdapterRegistry;
   /** ADR-0035: source adapter registry — resolved by pairing.sourceEndpointId. */
   sourceAdapterRegistry: import('../conversation/source-adapter.ts').SourceAdapterRegistry;
+  /** ADR-0035: ChatGPT Web source relay queue — shared with HTTP endpoints. */
+  chatGptWebQueue: import('../conversation/chatgpt-web-source-adapter.ts').ChatGptWebSourceQueue;
   /** ADR-0031: gate decision store for audit/debug. */
   gateDecisionStore: InMemoryGateDecisionStore;
   // v2.4a Model API
@@ -1588,7 +1591,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     plannerRegistry.register(adapter);
   }
   // ADR-0035: Source adapter registry — resolved by pairing.sourceEndpointId.
+  // Always register the ChatGPT Web source adapter so chatgpt-web pairings work.
+  const chatGptWebQueue = new ChatGptWebSourceQueue();
   const sourceAdapterRegistry = new SourceAdapterRegistry();
+  sourceAdapterRegistry.register(createChatGptWebSourceAdapter({ queue: chatGptWebQueue }));
   for (const adapter of options.sourceAdapters ?? []) {
     sourceAdapterRegistry.register(adapter);
   }
@@ -1789,6 +1795,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     workbuddyExecution,
     plannerRegistry,
     sourceAdapterRegistry,
+    chatGptWebQueue,
     gateDecisionStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -3680,6 +3687,38 @@ export async function handleBridgeRequest(
     }
 
     return error(405, 'Method not allowed');
+  }
+
+  // ── ADR-0035: ChatGPT Web Source Relay ──
+
+  const chatGptWebNext = pathname === '/bridge/source/chatgpt-web/next';
+  if (chatGptWebNext) {
+    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'console-cookie') {
+      return error(403, 'ChatGPT Web source relay requires local Console session or pairing token');
+    }
+    if (method !== 'GET') return error(405, 'Method not allowed');
+    const next = runtime.chatGptWebQueue.next();
+    if (!next) return ok({ task: null, message: 'No pending ChatGPT Web source requests' });
+    return ok({ task: next });
+  }
+
+  const chatGptWebResults = pathname === '/bridge/source/chatgpt-web/results';
+  if (chatGptWebResults) {
+    if (authContext?.kind !== 'pairing-token' && authContext?.kind !== 'console-cookie') {
+      return error(403, 'ChatGPT Web source relay requires local Console session or pairing token');
+    }
+    if (method !== 'POST') return error(405, 'Method not allowed');
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return error(400, parsed.message);
+    const body = parsed.body as Record<string, unknown>;
+    const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (!requestId || !text) return error(400, 'requestId and text are required');
+    const claimed = runtime.chatGptWebQueue.claim(requestId);
+    if (!claimed) return error(409, 'Request not found or already claimed');
+    const result = runtime.chatGptWebQueue.recordResult(requestId, text);
+    if (!result) return error(409, 'Could not record result');
+    return ok({ result });
   }
 
   // ── Conversation Messages ──
