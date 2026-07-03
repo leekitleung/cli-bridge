@@ -512,14 +512,6 @@ test('E2E: chatgpt-web source answers without dispatching to WorkBuddy', async (
       body: JSON.stringify({ id: 'workbuddy', transport: 'workbuddy', capabilities: { canExecute: true } }),
     });
 
-    // ADR-0035 REVIEW: Extension sends heartbeat to declare availability.
-    // Without this, isAvailable() returns false and the first message is blocked.
-    const hb = await fetch(`${handle.url}/bridge/source/chatgpt-web/heartbeat`, {
-      method: 'POST', headers: extHeaders,
-      body: JSON.stringify({ canAnswer: true }),
-    });
-    assert.equal(hb.status, 200, 'heartbeat should succeed');
-
     // Send a conversation message — the chatgpt-web source adapter enqueues it
     // and blocks waiting for the result. Post the message and the result concurrently:
     // the adapter polls every 500ms, so we give it a moment to enqueue, then post.

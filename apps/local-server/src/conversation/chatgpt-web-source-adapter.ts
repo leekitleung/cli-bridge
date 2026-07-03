@@ -167,19 +167,17 @@ export function createChatGptWebSourceAdapter(options: {
   config?: ChatGptWebSourceConfig;
 }): ConversationSourceAdapter {
   const queue = options.queue;
-  const resultTimeoutMs = options.config?.resultTimeoutMs ?? 120_000;
+  const resultTimeoutMs = options.config?.resultTimeoutMs ?? 15_000;
 
   return {
     endpointId: 'chatgpt-web',
     kind: 'chatgpt-web',
 
     isAvailable(_input: SourceAvailabilityInput): boolean {
-      // ADR-0035 REVIEW: Honest availability check based on extension heartbeat.
-      // The extension sends a heartbeat via POST /bridge/source/chatgpt-web/heartbeat
-      // to declare its presence. Without a heartbeat, the source is unavailable.
-      // This avoids the deadlock where the first message is blocked because no
-      // request has ever been claimed.
-      return queue.isExtensionConnected();
+      // Do not preflight-block the first turn. The source request itself is the
+      // signal the extension polls for; if no extension responds, plan() times
+      // out and returns a blocked envelope.
+      return true;
     },
 
     async plan(input: PlannerRequest): Promise<PlannerOutputEnvelope> {
