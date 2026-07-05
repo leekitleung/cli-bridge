@@ -14,6 +14,7 @@ import { InMemoryEndpointRegistry } from '../endpoints/endpoint-registry.ts';
 import {
   CLAUDE_CODE_REVIEW_COMMAND_ENDPOINT,
   CODEX_REVIEW_COMMAND_ENDPOINT,
+  CONSOLE_SOURCE_ENDPOINT,
   DEFAULT_AGENT_ENDPOINTS,
   MOCK_INBOUND_AGENT_ENDPOINT,
   WORKBUDDY_ENDPOINT,
@@ -36,24 +37,22 @@ import { InMemoryProjectTeamPresetStore, validateProjectTeamPreset } from '../st
 import { InMemoryConversationPairingStore } from '../storage/conversation-pairing-store.ts';
 import type { ConversationPairing, ConversationRouteKind, ConversationPairingStatus } from '../storage/conversation-pairing-store.ts';
 import { InMemoryConversationTranscriptStore } from '../storage/conversation-transcript-store.ts';
-import type { ConversationTranscriptEvent } from '../storage/conversation-transcript-store.ts';
 import { InMemoryConversationActionStore } from '../storage/conversation-action-store.ts';
 import { InMemoryConversationInstructionStore } from '../storage/conversation-instruction-store.ts';
-import type { ConversationInstructionPacket } from '../storage/conversation-instruction-store.ts';
 import { InMemoryConversationExecutionStore } from '../storage/conversation-execution-store.ts';
 import { InMemoryConversationRouteStore } from '../storage/conversation-route-store.ts';
 import { InMemoryPlanProposalStore } from '../storage/conversation-plan-store.ts';
-import { resolveConversationRouteAdapter, generateMockPlanProposal } from '../conversation/conversation-route-registry.ts';
-import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
-import { SourceAdapterRegistry } from '../conversation/source-adapter.ts';
-import { createChatGptWebSourceAdapter, ChatGptWebSourceQueue } from '../conversation/chatgpt-web-source-adapter.ts';
-import type { PlannerAdapter } from '../conversation/planner-adapter.ts';
-import { resolveExecutorAvailability } from '../conversation/executor-availability.ts';
-import type { ExecutorAvailability } from '../conversation/executor-availability.ts';
-import { evaluateGate } from '../conversation/gate-evaluator.ts';
-import type { GateDecision } from '../conversation/gate-evaluator.ts';
 import { validatePlannerOutputEnvelope } from '../conversation/planner-output-envelope.ts';
 import type { PlannerOutputEnvelope } from '../conversation/planner-output-envelope.ts';
+import { PlannerAdapterRegistry } from '../conversation/planner-adapter.ts';
+import { SourceAdapterRegistry } from '../conversation/source-adapter.ts';
+import { ChatGptWebSourceQueue, createChatGptWebSourceAdapter } from '../conversation/chatgpt-web-source-adapter.ts';
+import { createCodexSourceAdapter, createClaudeSourceAdapter } from '../conversation/command-source-adapters.ts';
+import { createConsoleSourceAdapter } from '../conversation/console-source-adapter.ts';
+import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
+import type { ExecutorAvailability } from '../conversation/executor-availability.ts';
+import { resolveExecutorAvailability } from '../conversation/executor-availability.ts';
+import { evaluateGate } from '../conversation/gate-evaluator.ts';
 import { InMemoryGateDecisionStore } from '../storage/gate-decision-store.ts';
 import { InMemoryGoalBindingSnapshotStore } from '../storage/goal-binding-snapshot-store.ts';
 import { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
@@ -70,11 +69,11 @@ import type { VerifyProfile } from '../../../../packages/shared/src/types.ts';
 import { runVerificationProfile } from '../verification/profile-runner.ts';
 import { readGitStatus } from '../verification/git-status-reader.ts';
 import { fetchGithubChecks } from '../verification/github-checks-provider.ts';
-import type { GitStatusView, GithubChecksConfirmResult } from '../../../../packages/shared/src/types.ts';
+import type { GithubChecksConfirmResult } from '../../../../packages/shared/src/types.ts';
 import type { VerifyProfileMeta } from '../../../../packages/shared/src/types.ts';
 import { redactSensitiveContent } from '../security/redaction.ts';
 import type { ModelProvider } from '../model/provider-interface.ts';
-import { validateTeamSpecCreate, validateSlotArtifact, detectFileConflicts, validateEndpointRegistration } from '../../../../packages/shared/src/schemas.ts';
+import { validateTeamSpecCreate, detectFileConflicts, validateEndpointRegistration } from '../../../../packages/shared/src/schemas.ts';
 import { KNOWN_PROVIDER_CAPABILITIES, validateProviderCapability } from '../storage/provider-capability.ts';
 import { generatePlan } from '../goal/goal-plan-generator.ts';
 import type { GeneratePlanInput } from '../goal/goal-plan-generator.ts';
@@ -119,8 +118,6 @@ import type {
   AutomationExecutionTier,
   AutomationReasoningTier,
   ReasoningArtifactKind,
-  AutomationLoopRun,
-  AutomationLoopCycle,
 } from '../../../../packages/shared/src/types.ts';
 import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
 
@@ -204,6 +201,8 @@ export interface BridgeRuntime {
   sourceAdapterRegistry: import('../conversation/source-adapter.ts').SourceAdapterRegistry;
   /** ADR-0035: ChatGPT Web source relay queue — shared with HTTP endpoints. */
   chatGptWebQueue: import('../conversation/chatgpt-web-source-adapter.ts').ChatGptWebSourceQueue;
+  /** ADR-0035: Timeout for async ChatGPT Web source relay requests. */
+  chatGptWebSourceResultTimeoutMs: number;
   /** ADR-0031: gate decision store for audit/debug. */
   gateDecisionStore: InMemoryGateDecisionStore;
   // v2.4a Model API
@@ -226,6 +225,8 @@ export interface BridgeRuntime {
   readonly githubChecksFetchFn?: typeof fetch;
   readonly projectWorkspaceRoots?: Record<string, string>;
   readonly additionalEndpoints?: readonly AgentEndpoint[];
+  /** ADR-0035: CLI planner for console source adapter. */
+  consolePlanner?: import('../conversation/planner-adapter.ts').PlannerAdapter;
 }
 
 export interface BridgeRuntimeOptions {
@@ -269,6 +270,10 @@ export interface BridgeRuntimeOptions {
   plannerAdapters?: readonly import('../conversation/planner-adapter.ts').PlannerAdapter[];
   /** ADR-0035: source adapters registered by endpointId. Conversation routing resolves by pairing.sourceEndpointId. */
   sourceAdapters?: readonly import('../conversation/source-adapter.ts').ConversationSourceAdapter[];
+  /** ADR-0035: CLI planner for console source adapter. When provided, enables local Console UI to invoke planner. */
+  consolePlanner?: import('../conversation/planner-adapter.ts').PlannerAdapter;
+  /** ADR-0035: async browser source timeout; test-injectable. */
+  chatGptWebSourceResultTimeoutMs?: number;
 }
 
 
@@ -1245,14 +1250,14 @@ async function postWorkBuddyMultiplex(
   if (pidErr) return error(400, pidErr);
 
   // Strip action and projectId, sanitize to whitelisted fields only.
-  const { action: _a, projectId: _pid, ...bodyRest } = parsed.body as Record<string, unknown>;
-  const sanitized = sanitizeWorkBuddyPayload(action, bodyRest);
+  const { action: _action, ...bodyRest } = parsed.body as Record<string, unknown>;
+  const sanitized = sanitizeWorkBuddyPayload(_action as string, bodyRest);
   if (typeof sanitized === 'string') return error(400, sanitized);
 
   const payload: Record<string, unknown> = { ...sanitized, projectId: projectKey };
 
   try {
-    switch (action) {
+    switch (_action) {
       case 'record-task': {
         const task = runtime.workbuddyStore.recordTaskReference(payload as any);
         runtime.persist();
@@ -1274,7 +1279,7 @@ async function postWorkBuddyMultiplex(
         return created({ executionLedgerEvent: event });
       }
       default:
-        return error(400, `Unknown action: ${action}`);
+        return error(400, `Unknown action: ${_action}`);
     }
   } catch (err: any) {
     return error(400, err?.message ?? 'Invalid WorkBuddy payload');
@@ -1541,6 +1546,8 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     CODEX_REVIEW_COMMAND_ENDPOINT,
     MOCK_INBOUND_AGENT_ENDPOINT,
     WORKBUDDY_ENDPOINT,
+    // ADR-0035: Console UI source endpoint — enabled when consolePlanner is provided.
+    ...(options.consolePlanner ? [CONSOLE_SOURCE_ENDPOINT] : []),
     ...(options.additionalEndpoints ?? []),
   ]);
   const inboundRelayEndpointId = options.inboundRelayEndpointId;
@@ -1593,10 +1600,22 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   // ADR-0035: Source adapter registry — resolved by pairing.sourceEndpointId.
   // Always register the ChatGPT Web source adapter so chatgpt-web pairings work.
   const chatGptWebQueue = new ChatGptWebSourceQueue();
+  const chatGptWebSourceResultTimeoutMs = options.chatGptWebSourceResultTimeoutMs ?? 120_000;
   const sourceAdapterRegistry = new SourceAdapterRegistry();
-  sourceAdapterRegistry.register(createChatGptWebSourceAdapter({ queue: chatGptWebQueue }));
+  sourceAdapterRegistry.register(createChatGptWebSourceAdapter({
+    queue: chatGptWebQueue,
+    config: { resultTimeoutMs: chatGptWebSourceResultTimeoutMs },
+  }));
+  sourceAdapterRegistry.register(createCodexSourceAdapter({}));
+  sourceAdapterRegistry.register(createClaudeSourceAdapter({}));
   for (const adapter of options.sourceAdapters ?? []) {
     sourceAdapterRegistry.register(adapter);
+  }
+  // ADR-0035: Register console source adapter if planner provided.
+  if (options.consolePlanner) {
+    sourceAdapterRegistry.register(createConsoleSourceAdapter({
+      planner: options.consolePlanner,
+    }));
   }
   // ADR-0031: gate decision store.
   const gateDecisionStore = new InMemoryGateDecisionStore();
@@ -1630,10 +1649,10 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       webRelayLoopStore.hydrateLoops(read.snapshot.webRelayLoops ?? []);
       webRelayLoopStore.recoverAfterRestart();
       for (const loop of read.snapshot.automationLoopRuns ?? []) {
-        try { automationLoopStore.hydrateLoop(loop); } catch { }
+        try { automationLoopStore.hydrateLoop(loop); } catch { /* skip bad record */ }
       }
       for (const cycle of read.snapshot.automationLoopCycles ?? []) {
-        try { automationLoopStore.hydrateCycle(cycle); } catch { }
+        try { automationLoopStore.hydrateCycle(cycle); } catch { /* skip bad record */ }
       }
       inboundMessageStore.hydrateMessages(read.snapshot.inboundMessages ?? []);
       relayContextStore.hydrateContexts(read.snapshot.relayContexts ?? []);
@@ -1655,56 +1674,56 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
         try { workbuddyStore.recordTaskReference(t); } catch { /* skip bad record */ }
       }
       for (const r of read.snapshot.workbuddyReviewResultSinks ?? []) {
-        try { workbuddyStore.recordReviewResultSink(r); } catch { }
+        try { workbuddyStore.recordReviewResultSink(r); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.workbuddyPromptDraftSinks ?? []) {
-        try { workbuddyStore.recordPromptDraftSink(p); } catch { }
+        try { workbuddyStore.recordPromptDraftSink(p); } catch { /* skip bad record */ }
       }
       for (const t of read.snapshot.teams ?? []) {
         try { teamStore.hydrateTeam(t); } catch { /* skip bad record */ }
       }
       for (const a of read.snapshot.teamArtifacts ?? []) {
-        try { teamStore.hydrateArtifact(a); } catch { }
+        try { teamStore.hydrateArtifact(a); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.teamPresets ?? []) {
-        try { presetStore.hydratePreset(p); } catch { }
+        try { presetStore.hydratePreset(p); } catch { /* skip bad record */ }
       }
       for (const s of read.snapshot.bindingSnapshots ?? []) {
-        try { bindingSnapshotStore.hydrateSnapshot(s); } catch { }
+        try { bindingSnapshotStore.hydrateSnapshot(s); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.conversationPairings ?? []) {
-        try { conversationPairingStore.hydratePairing(p); } catch { }
+        try { conversationPairingStore.hydratePairing(p); } catch { /* skip bad record */ }
       }
       for (const e of read.snapshot.conversationTranscriptEvents ?? []) {
-        try { conversationTranscriptStore.hydrateEvent(e); } catch { }
+        try { conversationTranscriptStore.hydrateEvent(e); } catch { /* skip bad record */ }
       }
       for (const a of read.snapshot.conversationActions ?? []) {
-        try { conversationActionStore.hydrateAction(a); } catch { }
+        try { conversationActionStore.hydrateAction(a); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.conversationInstructionPackets ?? []) {
-        try { conversationInstructionStore.hydratePacket(p); } catch { }
+        try { conversationInstructionStore.hydratePacket(p); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.conversationExecutionPackets ?? []) {
-        try { conversationExecutionStore.hydratePacket(p); } catch { }
+        try { conversationExecutionStore.hydratePacket(p); } catch { /* skip bad record */ }
       }
       for (const r of read.snapshot.conversationRoutes ?? []) {
-        try { conversationRouteStore.hydrateRoute(r); } catch { }
+        try { conversationRouteStore.hydrateRoute(r); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.conversationPlanProposals ?? []) {
-        try { planProposalStore.hydrateProposal(p); } catch { }
+        try { planProposalStore.hydrateProposal(p); } catch { /* skip bad record */ }
       }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
-        try { workbuddyExecution.hydrateTask(t); } catch { }
+        try { workbuddyExecution.hydrateTask(t); } catch { /* skip bad record */ }
       }
       for (const p of read.snapshot.executionProposals ?? []) {
-        try { executionProposalStore.hydrateProposal(p); } catch { }
+        try { executionProposalStore.hydrateProposal(p); } catch { /* skip bad record */ }
       }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
-        try { verificationRunStore.add(r.projectKey, r); } catch { }
+        try { verificationRunStore.add(r.projectKey, r); } catch { /* skip bad record */ }
       }
       for (const e of read.snapshot.workbuddyExecutionLedgerEvents ?? []) {
-        try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { }
+        try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { /* skip bad record */ }
       }
     }
   }
@@ -1796,6 +1815,7 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
     plannerRegistry,
     sourceAdapterRegistry,
     chatGptWebQueue,
+    chatGptWebSourceResultTimeoutMs,
     gateDecisionStore,
     modelApiKeyStore,
     modelProviderFor: options.modelProviderFactory,
@@ -1817,6 +1837,37 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
 function resolveDataDirFromEnv(): string | undefined {
   const dir = process.env.CLI_BRIDGE_DATA_DIR;
   return typeof dir === 'string' && dir.trim().length > 0 ? dir.trim() : undefined;
+}
+
+function scheduleChatGptWebSourceTimeout(
+  runtime: BridgeRuntime,
+  input: {
+    requestId: string;
+    projectId: string;
+    pairingId: string;
+    routeKind: ConversationRouteKind;
+  },
+): void {
+  const timer = setTimeout(() => {
+    const request = runtime.chatGptWebQueue.getRequest(input.requestId);
+    if (!request || request.status === 'returned' || request.status === 'failed') {
+      return;
+    }
+    const failed = runtime.chatGptWebQueue.fail(input.requestId);
+    if (!failed) return;
+    runtime.conversationTranscriptStore.append({
+      projectId: input.projectId,
+      pairingId: input.pairingId,
+      role: 'bridge',
+      text: 'ChatGPT Web did not return a source relay response before the timeout.',
+      status: 'failed',
+      routeKind: input.routeKind,
+      kind: 'status',
+      visibility: 'user',
+    });
+    runtime.persist();
+  }, runtime.chatGptWebSourceResultTimeoutMs);
+  timer.unref?.();
 }
 
 export interface BridgeResult {
@@ -2484,6 +2535,7 @@ export function isBridgePath(pathname: string): boolean {
     pathname === '/bridge/source/chatgpt-web/heartbeat' ||
     pathname === '/bridge/source/chatgpt-web/next' ||
     pathname === '/bridge/source/chatgpt-web/results' ||
+    pathname === '/bridge/source/chatgpt-web/status' ||
     (typeof pathname === 'string' && pathname === BRIDGE_ENDPOINTS_PATH) ||
     (typeof pathname === 'string' && pathname.startsWith(`${BRIDGE_ENDPOINTS_PATH}/`));
 }
@@ -3753,6 +3805,22 @@ export async function handleBridgeRequest(
     return ok({ result });
   }
 
+  // ADR-0035 UX: Source relay status for UI visibility.
+  const chatGptWebStatus = pathname === '/bridge/source/chatgpt-web/status';
+  if (chatGptWebStatus) {
+    if (method !== 'GET') return error(405, 'Method not allowed');
+    const pending = runtime.chatGptWebQueue.getPendingCount();
+    const recent = runtime.chatGptWebQueue.getRecentActivity();
+    const heartbeat = runtime.chatGptWebQueue.getHeartbeat();
+    return ok({
+      pending,
+      recent,
+      lastHeartbeatAt: heartbeat?.lastHeartbeatAt ?? null,
+      heartbeatAgeMs: heartbeat ? Date.now() - heartbeat.lastHeartbeatAt : null,
+      connected: runtime.chatGptWebQueue.isExtensionConnected(),
+    });
+  }
+
   // ── Conversation Messages ──
 
   const conversationMessagesPath = projectActionPathKey(pathname, 'conversation/messages');
@@ -3808,11 +3876,10 @@ export async function handleBridgeRequest(
       // ADR-0035: Source routing — use source adapter resolved from pairing.
       // Local WorkBuddy status fast-path is the only shortcut; everything else
       // goes through the source adapter.
-      const SOURCE_TIMEOUT_MS = 15_000;
 
       // If no source adapter and no local envelope → source unavailable.
       if (!localEnvelope && !sourceAdapter) {
-        const sourceUnavailableEvent = runtime.conversationTranscriptStore.append({
+        runtime.conversationTranscriptStore.append({
           projectId: key,
           pairingId,
           role: 'bridge',
@@ -3828,7 +3895,7 @@ export async function handleBridgeRequest(
 
       // If source adapter exists but reports unavailable → blocked.
       if (!localEnvelope && sourceAdapter && !sourceAdapter.isAvailable({ projectId: key, endpointId: pairing.sourceEndpointId })) {
-        const blockedEvent = runtime.conversationTranscriptStore.append({
+        runtime.conversationTranscriptStore.append({
           projectId: key,
           pairingId,
           role: 'bridge',
@@ -3856,7 +3923,7 @@ export async function handleBridgeRequest(
       // Console request lifecycle to the browser response time; enqueue and let
       // /bridge/source/chatgpt-web/results continue the transcript.
       if (!localEnvelope && pairing.sourceEndpointId === 'chatgpt-web') {
-        runtime.chatGptWebQueue.enqueue({
+        const sourceRequest = runtime.chatGptWebQueue.enqueue({
           projectId: key,
           sessionId,
           prompt: text,
@@ -3865,12 +3932,21 @@ export async function handleBridgeRequest(
           targetEndpointId: pairing.targetEndpointId,
           targetRouteKind: pairing.targetRouteKind,
         });
+        scheduleChatGptWebSourceTimeout(runtime, {
+          requestId: sourceRequest.id,
+          projectId: key,
+          pairingId,
+          routeKind: pairing.targetRouteKind,
+        });
         runtime.persist();
         return created({ events: [userEvent], source: { status: 'waiting' } });
       }
 
-      // ADR-0035 Step 3: Call source adapter with timeout.
-      const SOURCE_TIMEOUT = 15_000;
+      // ADR-0035 Step 3: Load conversation history and call source adapter.
+      const transcriptEvents = runtime.conversationTranscriptStore.listByProject(key);
+      const history = transcriptEvents
+        .filter(e => e.role === 'user' || e.role === 'planner' || e.role === 'target')
+        .map(e => ({ role: (e.role === 'target' ? 'executor' : e.role) as 'user' | 'planner' | 'executor', text: e.text }));
       let envelope;
       try {
         if (localEnvelope) {
@@ -3880,30 +3956,14 @@ export async function handleBridgeRequest(
             sessionId,
             projectId: key,
             userText: text,
-            history: [],
+            history,
           });
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Source timed out')), SOURCE_TIMEOUT),
-          );
-          envelope = await Promise.race([planPromise, timeoutPromise]);
+          envelope = await planPromise;
         }
       } catch (err) {
-        // ADR-0034: On source timeout, return a user-visible error without blocking UI.
+        // ADR-0034: Source adapters own their timeout/failure policy. The
+        // bridge reports adapter failures but does not impose a second 15s cap.
         const errMsg = String(err);
-        if (errMsg.includes('timed out') || errMsg.includes('Source timed out')) {
-          const timeoutEvent = runtime.conversationTranscriptStore.append({
-            projectId: key,
-            pairingId,
-            role: 'bridge',
-            text: 'Source timed out after ' + (SOURCE_TIMEOUT / 1000) + 's. The source endpoint is not responding. Please try again or check the source configuration.',
-            status: 'failed',
-            routeKind: pairing.targetRouteKind,
-            kind: 'status',
-            visibility: 'user',
-          });
-          runtime.persist();
-          return error(504, `Source timed out after ${SOURCE_TIMEOUT / 1000}s`);
-        }
         return error(500, `Source error: ${errMsg}`);
       }
 

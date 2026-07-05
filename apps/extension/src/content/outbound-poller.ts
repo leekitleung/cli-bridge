@@ -153,12 +153,14 @@ export function startOutboundPromptPoller(
               'failed',
               submitResult.reason ?? 'submit-failed',
             );
+            cancelActiveRelaySession('submit-failed');
             return fillResult;
           }
           const submitted = await markOutboundPromptStage(outboundPrompt.id, 'submitted');
           if (!submitted.ok) {
             recordRelaySessionStage('failed', { reason: 'submitted-ack-failed' });
             await markOutboundPromptStage(outboundPrompt.id, 'failed', 'submitted-ack-failed');
+            cancelActiveRelaySession('submitted-ack-failed');
             return fillResult;
           }
           recordRelaySessionStage('submitted', {
@@ -171,6 +173,7 @@ export function startOutboundPromptPoller(
           if (!responding.ok) {
             recordRelaySessionStage('failed', { reason: 'responding-ack-failed' });
             await markOutboundPromptStage(outboundPrompt.id, 'failed', 'responding-ack-failed');
+            cancelActiveRelaySession('responding-ack-failed');
             return fillResult;
           }
           recordRelaySessionStage('responding');
@@ -184,12 +187,14 @@ export function startOutboundPromptPoller(
               'failed',
               response.reason ?? 'response-not-ready',
             );
+            cancelActiveRelaySession(response.reason ?? 'response-not-ready');
             return fillResult;
           }
           const responseReady = await markOutboundPromptStage(outboundPrompt.id, 'response-ready');
           if (!responseReady.ok) {
             recordRelaySessionStage('failed', { reason: 'response-ready-ack-failed' });
             await markOutboundPromptStage(outboundPrompt.id, 'failed', 'response-ready-ack-failed');
+            cancelActiveRelaySession('response-ready-ack-failed');
             return fillResult;
           }
           recordRelaySessionStage('response-ready');
@@ -205,12 +210,14 @@ export function startOutboundPromptPoller(
               'failed',
               returned.error ?? 'return-failed',
             );
+            cancelActiveRelaySession(returned.error ?? 'return-failed');
             return fillResult;
           }
           const returnedStage = await markOutboundPromptStage(outboundPrompt.id, 'returned');
           if (!returnedStage.ok) {
             recordRelaySessionStage('failed', { reason: 'returned-ack-failed' });
             await markOutboundPromptStage(outboundPrompt.id, 'failed', 'returned-ack-failed');
+            cancelActiveRelaySession('returned-ack-failed');
             return fillResult;
           }
           recordRelaySessionStage('returned');
@@ -234,7 +241,10 @@ export function startOutboundPromptPoller(
 
   const timer = setIntervalFn(
     () => {
-      tick().catch(() => options.onEvent?.({ type: 'failed', reason: 'poller-error' }));
+      tick().catch((err) => {
+        console.error('[OutboundPoller] tick failed:', err);
+        options.onEvent?.({ type: 'failed', reason: 'poller-error' });
+      });
     },
     options.intervalMs ?? DEFAULT_OUTBOUND_POLL_INTERVAL_MS,
   );

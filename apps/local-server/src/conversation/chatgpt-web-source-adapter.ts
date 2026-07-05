@@ -28,6 +28,7 @@ export interface ChatGptSourceRequest {
   targetRouteKind?: ConversationRouteKind;
   claimedAt?: number;
   returnedAt?: number;
+  failedAt?: number;
 }
 
 export interface ChatGptSourceResult {
@@ -137,6 +138,16 @@ export class ChatGptWebSourceQueue {
     return clone(result);
   }
 
+  /** Mark a pending or claimed request as failed. */
+  fail(requestId: string): ChatGptSourceRequest | undefined {
+    const req = this.requests.get(requestId);
+    if (!req || req.status === 'returned' || req.status === 'failed') return undefined;
+    req.status = 'failed';
+    req.failedAt = Date.now();
+    this.requests.set(requestId, clone(req));
+    return clone(req);
+  }
+
   /** Get a result by request ID. */
   getResult(requestId: string): ChatGptSourceResult | undefined {
     const result = this.results.get(requestId);
@@ -174,6 +185,34 @@ export class ChatGptWebSourceQueue {
       .slice(0, limit)
       .map(clone);
   }
+
+  /** Get count of pending (unclaimed) requests. */
+  getPendingCount(): number {
+    let count = 0;
+    for (const req of this.requests.values()) {
+      if (req.status === 'pending') count++;
+    }
+    return count;
+  }
+
+  /** Get recent activity summary for UI display. */
+  getRecentActivity(limit: number = 5): Array<{
+    id: string;
+    status: string;
+    prompt: string;
+    createdAt: number;
+    returnedAt?: number;
+    failedAt?: number;
+  }> {
+    return this.listRecent(limit).map(req => ({
+      id: req.id,
+      status: req.status,
+      prompt: req.prompt.length > 50 ? req.prompt.slice(0, 47) + '...' : req.prompt,
+      createdAt: req.createdAt,
+      returnedAt: req.returnedAt,
+      failedAt: req.failedAt,
+    }));
+  }
 }
 
 /**
@@ -186,7 +225,7 @@ export function createChatGptWebSourceAdapter(options: {
   config?: ChatGptWebSourceConfig;
 }): ConversationSourceAdapter {
   const queue = options.queue;
-  const resultTimeoutMs = options.config?.resultTimeoutMs ?? 15_000;
+  const resultTimeoutMs = options.config?.resultTimeoutMs ?? 120_000;
 
   return {
     endpointId: 'chatgpt-web',
@@ -213,6 +252,7 @@ export function createChatGptWebSourceAdapter(options: {
       const result = await waitForResult(queue, request.id, resultTimeoutMs);
 
       if (!result) {
+        queue.fail(request.id);
         return {
           id: `chatgpt-web-${Date.now()}`,
           sessionId: input.sessionId,
