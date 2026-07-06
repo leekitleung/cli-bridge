@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolveConversationRouteAdapter } from '../conversation/conversation-route-registry.ts';
-import type { BridgeRuntime, BridgeAuthKind } from '../routes/bridge-api.ts';
+import type { BridgeRuntime } from '../routes/bridge-api.ts';
 import type { AutomationLoopRun, AutomationLoopCycle } from '../../../../packages/shared/src/types.ts';
 
 export type TickAuthKind = 'console-cookie' | 'extension-session';

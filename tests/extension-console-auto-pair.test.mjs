@@ -34,3 +34,20 @@ test('console auto-pair source uses only claim nonce, postMessage revoke bridge,
   assert.equal(source.includes('localStorage'), false);
   assert.equal(source.includes('cliBridgePairingToken'), false);
 });
+
+test('console auto-pair source wakes ChatGPT Web source relay owner when prompts are pending', () => {
+  const source = readFileSync(
+    resolve(root, 'apps/extension/src/content/console-auto-pair.ts'),
+    'utf8',
+  );
+  const messages = readFileSync(
+    resolve(root, 'apps/extension/src/source-relay-messages.ts'),
+    'utf8',
+  );
+
+  assert.match(source, /bridge\/source\/chatgpt-web\/status/);
+  assert.match(source, /pending/);
+  assert.match(source, /SOURCE_RELAY_WAKE_OWNER_MESSAGE/);
+  assert.match(messages, /cli-bridge-source-relay-wake-owner/);
+  assert.match(source, /setInterval/);
+});

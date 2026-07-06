@@ -457,6 +457,7 @@ test('outbound poller marks Stage B prompt failed when response never stabilizes
       ['failed', 'streaming'],
     ],
   );
+  assert.equal(getActiveRelaySession(), null, 'failed auto relay must not leave a 10-minute active session');
 });
 
 test('outbound poller does not record an active relay session while streaming', async () => {

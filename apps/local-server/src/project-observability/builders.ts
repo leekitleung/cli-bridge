@@ -243,7 +243,7 @@ export function buildProjectAuditView(
   limit?: number,
   type?: string,
 ): ProjectAuditView {
-  let filtered = input.auditEvents
+  const filtered = input.auditEvents
     .filter(e => type === undefined || e.type === type)
     .map(e => ({
       id: e.id,

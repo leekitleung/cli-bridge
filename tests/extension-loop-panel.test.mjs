@@ -111,9 +111,9 @@ test('loop panel status maps bridge loop stages into user-visible status text', 
     detail: '可以填入下一条交接内容',
   });
   assert.deepEqual(createLoopPanelStatus('chatgpt-awaiting-user-send'), {
-    kind: 'blocked',
-    label: '等待发送',
-    detail: '手动发送后，选择回复并点击预览回传',
+    kind: 'idle',
+    label: '自动处理中',
+    detail: '已提交至 ChatGPT，等待自动回传',
   });
   assert.deepEqual(createLoopPanelStatus('pending-prompt-ready'), {
     kind: 'success',
@@ -131,7 +131,7 @@ test('fill panel status maps results into user-understandable guidance', () => {
   }), {
     kind: 'success',
     label: '已填入',
-    detail: '内容已写入 ChatGPT 输入框，请手动点击发送',
+    detail: '内容已写入 ChatGPT，等待自动提交',
   });
 
   const notFoundWithClipboard = createFillPanelStatus({
@@ -216,13 +216,13 @@ test('Bridge Panel exposes connection status without page-DOM token controls', a
   assert.equal(source.includes('clearPairingTokenFromStorage'), true);
   assert.equal(source.includes('testPrivateHealth'), true);
 
-  // The security boundary still holds: no auto-send affordance of any kind.
+  // The panel does not expose raw ChatGPT DOM send selectors.
   assert.equal(source.includes('send-button'), false);
   assert.equal(source.includes('requestSubmit'), false);
   assert.equal(source.includes('KeyboardEvent'), false);
 });
 
-test('Bridge Panel exposes loop status without adding auto-send controls', async () => {
+test('Bridge Panel exposes loop status without raw DOM send controls', async () => {
   const source = await readFile(resolve(root, 'apps/extension/src/ui/bridge-panel.tsx'), 'utf8');
 
   assert.equal(source.includes('data-cli-bridge-loop-status'), true);
@@ -298,6 +298,10 @@ test('Legacy relay tools: unpaired guards disabled, collapse works, connected wo
     ].includes(button.textContent ?? ''));
     assert.equal(actionButtons.length >= 2, true, 'should find at least 2 legacy action buttons');
     assert.deepEqual(actionButtons.map((button) => button.disabled), actionButtons.map(() => true));
+    Array.from(handle.element.querySelectorAll('button'))
+      .find((button) => button.textContent === '清除配对')
+      ?.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     // 2) Collapse still works
     const collapse = handle.element.querySelector('button[aria-label="收起面板"]');
@@ -320,6 +324,9 @@ test('Legacy relay tools: unpaired guards disabled, collapse works, connected wo
       }
       if (path === '/bridge/outbound/next') {
         return { ok: true, status: 200, json: async () => ({ outboundPrompt: null }) };
+      }
+      if (path === '/bridge/source/chatgpt-web/heartbeat') {
+        return { ok: true, status: 200, json: async () => ({ heartbeat: 'recorded' }) };
       }
       if (path === '/bridge/extract-return') {
         await new Promise((resolve) => { releaseReturn = resolve; });

@@ -9,8 +9,6 @@
 // first reference, and the store tracks the set of known project keys.
 // No delete or rename is exposed — these are future slices.
 
-import { randomUUID } from 'node:crypto';
-
 import {
   assertProject,
 } from '../../../../packages/shared/src/schemas.ts';

@@ -4,7 +4,12 @@ import test from 'node:test';
 import {
   allowContentScriptSessionStorage,
   handleProxyFetch,
+  handleSourceRelayOwnerRegister,
+  handleSourceRelayOwnerWake,
 } from '../apps/extension/src/background/index.ts';
+import {
+  SOURCE_RELAY_TICK_MESSAGE,
+} from '../apps/extension/src/source-relay-messages.ts';
 import { PAIRING_TOKEN_HEADER, LOCAL_SERVER_BASE_URL } from '../packages/shared/src/constants.ts';
 
 function stubFetch(impl) {
@@ -219,6 +224,48 @@ test('background clears local session token on revoke', async () => {
   const result = await handleClearLocalSession();
   assert.equal(result.ok, true);
   assert.equal(stored.cliBridgePairingToken, undefined);
+});
+
+test('background wakes the registered ChatGPT source relay owner tab', async () => {
+  const sentMessages = [];
+  const chromeApi = {
+    tabs: {
+      async sendMessage(tabId, message) {
+        sentMessages.push({ tabId, message });
+        return { ok: true };
+      },
+    },
+  };
+
+  const registered = handleSourceRelayOwnerRegister({ tab: { id: 42 } });
+  assert.deepEqual(registered, { ok: true, registered: true });
+
+  const wake = await handleSourceRelayOwnerWake(chromeApi);
+
+  assert.deepEqual(wake, { ok: true });
+  assert.deepEqual(sentMessages, [
+    { tabId: 42, message: { type: SOURCE_RELAY_TICK_MESSAGE } },
+  ]);
+});
+
+test('background reports no source relay owner before a ChatGPT tab registers', async () => {
+  handleSourceRelayOwnerRegister({ tab: { id: 77 } });
+  const chromeApi = {
+    tabs: {
+      async sendMessage() {
+        throw new Error('closed');
+      },
+    },
+  };
+
+  assert.deepEqual(await handleSourceRelayOwnerWake(chromeApi), {
+    ok: false,
+    reason: 'send-failed',
+  });
+  assert.deepEqual(await handleSourceRelayOwnerWake(chromeApi), {
+    ok: false,
+    reason: 'no-owner',
+  });
 });
 
 // ── ADR-0033: Extension proxy must not expose WorkBuddy executor routes ──

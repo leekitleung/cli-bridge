@@ -66,6 +66,35 @@ test('local auto-pair store rejects unknown tokens', () => {
   assert.equal(claim.ok, false);
 });
 
+test('local auto-pair diagnostics report claim lifecycle without tokens', () => {
+  let now = 1000;
+  const store = createLocalAutoPairSessionStore({ now: () => now });
+  const session = store.createConsoleSession();
+
+  now = 1001;
+  const claimed = store.claimExtensionSession(session.extensionClaimNonce);
+  assert.equal(claimed.ok, true);
+
+  now = 1002;
+  const replay = store.claimExtensionSession(session.extensionClaimNonce);
+  assert.equal(replay.ok, false);
+
+  const diagnostics = store.getDiagnostics();
+  assert.equal(diagnostics.consoleSessionsCreated, 1);
+  assert.equal(diagnostics.extensionClaimsAttempted, 2);
+  assert.equal(diagnostics.extensionClaimsSucceeded, 1);
+  assert.equal(diagnostics.extensionClaimsRejected, 1);
+  assert.equal(diagnostics.activeConsoleSessions, 1);
+  assert.equal(diagnostics.activeExtensionSessions, 1);
+  assert.equal(diagnostics.lastConsoleSessionCreatedAt, 1000);
+  assert.equal(diagnostics.lastExtensionClaimSucceededAt, 1001);
+  assert.equal(diagnostics.lastExtensionClaimRejectedAt, 1002);
+  assert.match(diagnostics.lastExtensionClaimRejectedReason, /invalid or expired/);
+  assert.equal(JSON.stringify(diagnostics).includes(session.consoleSessionToken), false);
+  assert.equal(JSON.stringify(diagnostics).includes(session.extensionClaimNonce), false);
+  assert.equal(JSON.stringify(diagnostics).includes(claimed.extensionSessionToken), false);
+});
+
 test('local auto-pair store rejects expired extension session', () => {
   let now = 1000;
   const store = createLocalAutoPairSessionStore({

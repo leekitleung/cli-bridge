@@ -108,7 +108,6 @@ export type ReadFilePreviewResult =
 
 // ── Path containment ─────────────────────────────────────────────
 
-const ESCAPE_SEGMENTS = ['..'];
 const FORBIDDEN_PREFIXES = [/^[a-zA-Z]:/, /^\\\\/, /^\/\//]; // drive letters, UNC, protocol-like
 
 /** Normalize and validate a single path. Returns null if invalid/escaping. */

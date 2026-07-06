@@ -221,7 +221,7 @@ export function resolveConversationRouteAdapter(endpoint: AgentEndpoint): Conver
     return { kind: 'managed-pty', status: 'not-implemented', adapter: null };
   }
   if (endpoint.transport === 'web-dom' && endpoint.capabilities.canAcceptPrompt && endpoint.capabilities.canReturnOutput) {
-    return { kind: 'web-relay', status: 'needs-manual-confirmation', adapter: null };
+    return { kind: 'web-relay', status: 'ready', adapter: null };
   }
   return { kind: 'unavailable', status: 'not-implemented', adapter: null };
 }

@@ -65,7 +65,7 @@ export async function runReviewWorkflow(
         try {
           data = await response.json();
         } catch {
-          data = null;
+          // JSON parse failed — return null data.
         }
         return { response, data };
       };

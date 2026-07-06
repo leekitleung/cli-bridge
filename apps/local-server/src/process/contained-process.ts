@@ -67,6 +67,7 @@ export async function runContainedProcess(
           process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
         }
       } catch {
+        // Process group signal failed — process may have already exited; try direct kill
         try { child.kill(force ? 'SIGKILL' : 'SIGTERM'); } catch { /* already closed */ }
       }
     };

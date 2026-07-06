@@ -38,5 +38,6 @@ declare namespace chrome {
 
   namespace tabs {
     function create(options: { url: string }): Promise<unknown>;
+    function sendMessage(tabId: number, message: unknown): Promise<unknown>;
   }
 }

@@ -3,7 +3,7 @@
 // Output is advisory-only. Never attached to a goal without human approval.
 // Schema/policy rejection fails closed — no 200 with invalid draft.
 
-import type { ModelProvider, PlanResult, PlanError } from './provider-interface.ts';
+import type { ModelProvider } from './provider-interface.ts';
 import type {
   ExecutionTier,
   PlanStepKind,
@@ -66,7 +66,6 @@ export async function generateModelPlan(
   // ════════════════════════════════════════════════
   // Schema validate + PolicyEngine check — FAIL CLOSED
   // ════════════════════════════════════════════════
-  const issues: string[] = [];
   const validTiers = EXECUTION_TIERS as readonly string[];
   const validKinds = PLAN_STEP_KINDS as readonly string[];
   const allowedTiers = input.permittedTiers;

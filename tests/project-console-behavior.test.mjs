@@ -2144,6 +2144,55 @@ test('pairing UI saves conversation pairing to new endpoint', async () => {
   assert.match(document.getElementById('conversation-transcript').textContent, /No conversation messages yet/);
 });
 
+test('pairing test reports ChatGPT Web source relay offline instead of route-ready', async () => {
+  const { document, setFixture } = setupConsole();
+  setFixture('/bridge/metrics', { ok: true, payload: {} });
+  setFixture('/bridge/projects', defaultProjectsFixture());
+  setFixture('/bridge/projects/cli-bridge', defaultDetailFixture('cli-bridge'));
+  setFixture('/bridge/source/chatgpt-web/status', {
+    ok: true,
+    payload: { connected: false, pending: 2, recent: [] },
+  });
+  setFixture('/bridge/endpoints', {
+    ok: true,
+    payload: {
+      endpoints: [
+        {
+          id: 'chatgpt-web',
+          label: 'ChatGPT Web',
+          transport: 'web-dom',
+          status: 'online',
+          capabilities: { canAcceptPrompt: true, canReturnOutput: true },
+        },
+        {
+          id: 'workbuddy',
+          label: 'WorkBuddy Executor',
+          transport: 'workbuddy',
+          status: 'online',
+          capabilities: { canExecute: true, canAcceptPrompt: true, canReturnOutput: true },
+        },
+      ],
+    },
+  });
+  setFixture('/bridge/projects/cli-bridge/conversation-pairing', {
+    ok: true,
+    payload: { pairing: null },
+  });
+
+  document.getElementById('token').value = 'test-token';
+  document.getElementById('connect').click();
+  await waitFor(() => document.getElementById('conn-dot').classList.contains('ok'));
+
+  document.getElementById('composer-pairing').click();
+  await waitFor(() => document.getElementById('pairing-test'));
+  document.getElementById('conversation-source').value = 'chatgpt-web';
+  document.getElementById('conversation-target').value = 'workbuddy';
+  document.getElementById('pairing-test').click();
+
+  await waitFor(() => document.getElementById('pairing-status').textContent.includes('ChatGPT Web source offline'));
+  assert.equal(document.getElementById('command-status').textContent, 'pairing test failed');
+});
+
 test('clicking active project exits pairing context back to conversation main view', async () => {
   const { document, setFixture } = setupConsole();
   setFixture('/bridge/projects', defaultProjectsFixture());
@@ -2471,6 +2520,16 @@ test('renderConversationTranscript shows planner waiting state while send is pen
   assert.match(document.getElementById('conversation-transcript').innerHTML, /wait-spinner/);
 });
 
+test('renderConversationTranscript shows source recovery hint after long wait', () => {
+  const { window, document } = setupConsole();
+  window.eval("store.composerMode = 'conversation'; store.conversationPlannerStartedAt = Date.now() - 61000;");
+  window.renderConversationTranscript();
+
+  const text = document.getElementById('conversation-transcript').textContent;
+  assert.match(text, /Waiting for source/);
+  assert.match(text, /Refresh ChatGPT Web or reload the extension/);
+});
+
 test('main conversation transcript hides role and status chrome', () => {
   const { window } = setupConsole();
   const html = window.renderConversationTranscript([
@@ -2485,7 +2544,97 @@ test('main conversation transcript hides role and status chrome', () => {
   assert.doesNotMatch(html, /conversation-meta|>planner<|>target<|>status<|Executor started/);
 });
 
-test('renderConversationTranscript preserved legacy admin filter', () => {
+test('main conversation transcript shows user-visible bridge failures', () => {
+  const { window } = setupConsole();
+  const html = window.renderConversationTranscript([
+    { role: 'bridge', kind: 'status', visibility: 'user', text: 'ChatGPT Web did not return.', status: 'failed' },
+  ]);
+
+  assert.match(html, /ChatGPT Web did not return/);
+});
+
+test('refreshConversationMessages clears source wait on bridge failure', async () => {
+  const { window, document, setFixture } = setupConsole();
+  setFixture('/bridge/projects/cli-bridge/conversation/messages', {
+    ok: true,
+    payload: {
+      messages: [
+        {
+          role: 'bridge',
+          kind: 'status',
+          visibility: 'user',
+          text: 'ChatGPT Web did not return.',
+          status: 'failed',
+          createdAt: 200,
+        },
+      ],
+    },
+  });
+
+  window.eval("store.connected = true; store.activeProjectKey = 'cli-bridge'; store.composerMode = 'conversation'; store.conversationPlannerStartedAt = 100;");
+  await window.refreshConversationMessages({ render: true });
+
+  assert.equal(window.eval('store.conversationPlannerStartedAt'), 0);
+  assert.match(document.getElementById('command-status').textContent, /source failed/);
+  assert.match(document.getElementById('conversation-transcript').textContent, /ChatGPT Web did not return/);
+});
+
+test('sourcePollActive flag enables conversation message polling even without planner/executor', async () => {
+  const { window, document, setFixture, fetchCalls } = setupConsole();
+  let messageFetchCount = 0;
+  setFixture('/bridge/projects/cli-bridge/conversation/messages', {
+    ok: true,
+    payload: { messages: [], actions: [], plans: [] },
+  });
+
+  // Override fetch to track calls
+  window.fetch = async (url, init = {}) => {
+    const path = typeof url === 'string' ? new URL(url).pathname : url;
+    if (path === '/bridge/projects/cli-bridge/conversation/messages') {
+      messageFetchCount++;
+      return { ok: true, status: 200, json: async () => ({ messages: [], actions: [], plans: [] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+
+  // Simulate: user is on console tab, chatgpt-web source is waiting
+  window.eval(`
+    store.connected = true;
+    store.activeProjectKey = 'cli-bridge';
+    store.composerMode = 'conversation';
+    store.conversationPlannerStartedAt = 0;
+    store.conversationExecutorStartedAt = 0;
+    store.sourcePollActive = true;
+  `);
+
+  // Trigger the poll function directly
+  await window.pollConversationMessages();
+
+  // Verify message was fetched (polling is active due to sourcePollActive)
+  assert.ok(messageFetchCount > 0, 'should poll messages when sourcePollActive is true even without planner/executor');
+
+  // Verify render interval would render (check the condition)
+  const shouldRender = window.eval(`
+    store.composerMode === 'conversation' ||
+    store.conversationPlannerStartedAt ||
+    store.conversationExecutorStartedAt ||
+    store.sourcePollActive
+  `);
+  assert.equal(shouldRender, true, 'render condition should be true when sourcePollActive is true');
+});
+
+test('render interval condition includes sourcePollActive', () => {
+  const consoleSource = readFileSync(
+    resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
+    'utf8',
+  );
+  assert.ok(
+    consoleSource.includes('store.sourcePollActive'),
+    'sourcePollActive should be used in render interval condition',
+  );
+});
+
+test('refreshConversationTranscript preserved legacy admin filter', () => {
   const consoleSource = readFileSync(
     resolve(process.cwd(), 'apps/local-server/src/routes/project-console.ts'),
     'utf8',

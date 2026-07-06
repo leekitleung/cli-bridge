@@ -1,10 +1,12 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
-const root = process.cwd();
-const extensionRoot = resolve(root, 'apps/extension');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const extensionRoot = resolve(__dirname, '..', 'apps/extension');
 const distRoot = resolve(extensionRoot, 'dist');
 
 await rm(distRoot, { recursive: true, force: true });

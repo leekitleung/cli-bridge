@@ -13,11 +13,9 @@ import {
 import { resolve } from 'node:path';
 
 import type {
-  AgentSlot,
   SlotArtifact,
   TeamSpec,
   WorkBuddyExecutionLedgerEvent,
-  WorkBuddyProjectSnapshot,
   WorkBuddyPromptDraftSink,
   WorkBuddyReviewResultSink,
   WorkBuddyTaskReference,
@@ -47,8 +45,6 @@ import {
   assertRunEndpointBinding,
   assertWebRelayLoop,
   assertExecutionProposal,
-  assertAutomationLoopRun,
-  assertAutomationLoopCycle,
 } from '../../../../packages/shared/src/schemas.ts';
 
 export const SNAPSHOT_VERSION = 3;

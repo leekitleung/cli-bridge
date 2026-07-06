@@ -122,6 +122,7 @@ test('project console is a thin client over only allowlisted bridge endpoints', 
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
     '/bridge/local-auto-pair/revoke',
+    '/bridge/source/chatgpt-web/status',
   ]));
 
   assert.equal(/\/(exec|shell|run|command)['"`]/.test(html), false);
@@ -136,6 +137,22 @@ test('project console does not call /console/project for data loading', () => {
   // data endpoint by fetch() or the bridge api() helper.
   assert.doesNotMatch(html, /api\(['"`]\/console\/project/);
   assert.doesNotMatch(html, /fetch\(['"`]\/console\/project/);
+});
+
+test('project console refreshes conversation state when a throttled tab returns to foreground', () => {
+  const html = renderProjectConsoleHtml();
+
+  assert.match(html, /addEventListener\('visibilitychange'/);
+  assert.match(html, /addEventListener\('focus'/);
+  assert.match(html, /addEventListener\('pageshow'/);
+  assert.match(html, /refreshConversationMessages\(\{ render: true \}\)/);
+});
+
+test('project console source relay polling window covers the server timeout', () => {
+  const html = renderProjectConsoleHtml();
+
+  assert.match(html, /store\.sourcePollUntil = startedAt \+ 130_000/);
+  assert.doesNotMatch(html, /store\.sourcePollUntil = startedAt \+ 95_000/);
 });
 
 test('project console keeps pairing token in memory only and sends it only via header', () => {
@@ -268,6 +285,7 @@ test('project switch loading still only fetches /bridge/projects*', () => {
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
     '/bridge/local-auto-pair/revoke',
+    '/bridge/source/chatgpt-web/status',
   ]));
 });
 
@@ -337,6 +355,7 @@ test('all bridge paths in console are within the allowed set', () => {
     '/bridge/execution-proposals?planId=',
     '/bridge/execution-proposals/',
     '/bridge/local-auto-pair/revoke',
+    '/bridge/source/chatgpt-web/status',
   ]);
   const paths = extractBridgePaths(html);
   const outside = paths.filter(p => !allowed.has(p));

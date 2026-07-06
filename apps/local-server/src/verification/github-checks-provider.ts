@@ -80,6 +80,7 @@ function validateOwnerRepo(value: string, field: string): string | null {
 
 function validateRef(ref: string): string | null {
   if (!ref || ref.trim().length === 0) return 'invalid ref: empty';
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(ref)) return 'invalid ref: control characters';
   if (ref.includes('..')) return 'invalid ref: path traversal';
   return null;

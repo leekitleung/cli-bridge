@@ -179,27 +179,37 @@ export function startSourceRelayPoller(
 
   const tick = async (): Promise<FillComposerResult | null> => {
     if (stopped) {
+      console.debug('[SourceRelayPoller] tick skipped: stopped');
       options.onEvent?.({ type: 'waiting', reason: 'stopped' });
       return null;
     }
     if (inFlight) {
+      console.debug('[SourceRelayPoller] tick skipped: in-flight');
       options.onEvent?.({ type: 'waiting', reason: 'in-flight' });
       return null;
     }
     if (!hasPairingToken()) {
+      console.debug('[SourceRelayPoller] no pairing token, attempting to load from storage');
       await loadPairingTokenFromStorage();
     }
     if (!hasPairingToken()) {
+      console.debug('[SourceRelayPoller] tick skipped: unpaired (no token after load attempt)');
       options.onEvent?.({ type: 'waiting', reason: 'unpaired' });
       return null;
     }
+    console.debug('[SourceRelayPoller] checking canClaim...');
     const claimAllowed = await canClaim();
+    console.debug(`[SourceRelayPoller] canClaim result: ${claimAllowed}`);
 
     // Send heartbeat periodically to keep the source adapter availability alive.
     const now = Date.now();
+    const timeSinceLastHeartbeat = now - lastHeartbeatTime;
+    console.debug(`[SourceRelayPoller] heartbeat check: last=${lastHeartbeatTime}, now=${now}, elapsed=${timeSinceLastHeartbeat}ms, interval=${HEARTBEAT_INTERVAL_MS}ms`);
     if (now - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS) {
+      console.debug('[SourceRelayPoller] sending heartbeat...');
       try {
         const hb = await sendHeartbeat();
+        console.debug(`[SourceRelayPoller] heartbeat result:`, hb);
         lastHeartbeatTime = now;
         if (hb.ok) {
           consecutiveHeartbeatFailures = 0;

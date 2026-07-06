@@ -5,6 +5,11 @@ import {
   PUBLIC_HEALTH_PATH,
   PROTECTED_HEALTH_PATH,
 } from '../../../../packages/shared/src/constants.ts';
+import {
+  SOURCE_RELAY_REGISTER_OWNER_MESSAGE,
+  SOURCE_RELAY_TICK_MESSAGE,
+  SOURCE_RELAY_WAKE_OWNER_MESSAGE,
+} from '../source-relay-messages.ts';
 
 export type HealthCheckStatus = 'ok' | 'error';
 
@@ -203,6 +208,12 @@ interface ChromeStorageAccessApi {
   };
 }
 
+interface ChromeTabsMessageApi {
+  tabs?: {
+    sendMessage?: (tabId: number, message: unknown) => Promise<unknown>;
+  };
+}
+
 export async function allowContentScriptSessionStorage(
   chromeApi: ChromeStorageAccessApi | undefined,
 ): Promise<boolean> {
@@ -223,6 +234,8 @@ export async function allowContentScriptSessionStorage(
 }
 
 export const PROXY_FETCH_TIMEOUT_MS = 10_000;
+
+console.log('[Background] script loaded at', new Date().toISOString());
 
 if (typeof chrome !== 'undefined') {
   void allowContentScriptSessionStorage(chrome as unknown as ChromeStorageAccessApi);
@@ -261,6 +274,7 @@ function isAllowedProxyRoute(path: string, method: string): boolean {
     'POST /bridge/source/chatgpt-web/heartbeat',
     'GET /bridge/source/chatgpt-web/next',
     'POST /bridge/source/chatgpt-web/results',
+    'GET /bridge/source/chatgpt-web/status',
   ]);
   return allowed.has(`${method} ${path}`);
 }
@@ -274,9 +288,11 @@ export async function handleProxyFetch(
     return { ok: false, status: 0, error: 'invalid-method' };
   }
   if (!isAllowedProxyPath(request?.path)) {
+    console.log('[Background] handleProxyFetch: invalid path', request?.path);
     return { ok: false, status: 0, error: 'invalid-path' };
   }
   if (!isAllowedProxyRoute(request.path, method)) {
+    console.log('[Background] handleProxyFetch: invalid route', method, request.path);
     return { ok: false, status: 0, error: 'invalid-path' };
   }
 
@@ -288,6 +304,8 @@ export async function handleProxyFetch(
   if (hasBody) {
     headers['content-type'] = 'application/json';
   }
+
+  console.log('[Background] handleProxyFetch: forwarding', method, request.path, 'token present:', Boolean(headers[PAIRING_TOKEN_HEADER]));
 
   try {
     const controller = typeof AbortController === 'function'
@@ -306,6 +324,7 @@ export async function handleProxyFetch(
     if (timeout) {
       globalThis.clearTimeout?.(timeout);
     }
+    console.log('[Background] handleProxyFetch: response', method, request.path, response.status, data);
     if (!response.ok) {
       const message = data && typeof data === 'object'
         && typeof (data as { message?: unknown }).message === 'string'
@@ -314,7 +333,8 @@ export async function handleProxyFetch(
       return { ok: false, status: response.status, error: message };
     }
     return { ok: true, status: response.status, data };
-  } catch {
+  } catch (err) {
+    console.log('[Background] handleProxyFetch: error', method, request.path, err);
     return { ok: false, status: 0, error: 'network-error' };
   }
 }
@@ -366,6 +386,40 @@ export async function handleClearLocalSession(): Promise<{ ok: boolean }> {
   }
 }
 
+let sourceRelayOwnerTabId: number | null = null;
+
+export function handleSourceRelayOwnerRegister(
+  sender: { tab?: { id?: number } },
+): { ok: boolean; registered: boolean } {
+  const tabId = sender?.tab?.id;
+  if (typeof tabId !== 'number') {
+    return { ok: false, registered: false };
+  }
+  sourceRelayOwnerTabId = tabId;
+  return { ok: true, registered: true };
+}
+
+export async function handleSourceRelayOwnerWake(
+  chromeApi: ChromeTabsMessageApi | undefined = typeof chrome !== 'undefined'
+    ? chrome as unknown as ChromeTabsMessageApi
+    : undefined,
+): Promise<{ ok: boolean; reason?: 'no-owner' | 'send-failed' }> {
+  if (sourceRelayOwnerTabId === null) {
+    return { ok: false, reason: 'no-owner' };
+  }
+  const sendMessage = chromeApi?.tabs?.sendMessage;
+  if (typeof sendMessage !== 'function') {
+    return { ok: false, reason: 'send-failed' };
+  }
+  try {
+    await sendMessage(sourceRelayOwnerTabId, { type: SOURCE_RELAY_TICK_MESSAGE });
+    return { ok: true };
+  } catch {
+    sourceRelayOwnerTabId = null;
+    return { ok: false, reason: 'send-failed' };
+  }
+}
+
 // --- Pairing token management ---
 // The background script provides a message-based API for the content script
 // and popup to set/get the memory-only pairing token for this browser session.
@@ -376,13 +430,22 @@ interface PairingMessage {
 }
 
 if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
+  console.log('[Background] message listener installing...');
   chrome.runtime.onMessage.addListener(
-    (msg: unknown, _sender, sendResponse) => {
+    (msg: unknown, sender, sendResponse) => {
+      console.log('[Background] message received:', msg);
       const proxyMessage = msg as { type?: string } & ProxyFetchRequest;
       if (proxyMessage?.type === 'cli-bridge-proxy-fetch') {
+        console.log('[Background] handling proxy-fetch:', proxyMessage.path, proxyMessage.method);
         handleProxyFetch(proxyMessage)
-          .then((result) => sendResponse(result))
-          .catch(() => sendResponse({ ok: false, status: 0, error: 'network-error' }));
+          .then((result) => {
+            console.log('[Background] proxy-fetch result:', result);
+            sendResponse(result);
+          })
+          .catch((err) => {
+            console.log('[Background] proxy-fetch error:', err);
+            sendResponse({ ok: false, status: 0, error: 'network-error' });
+          });
         return true; // async response
       }
 
@@ -420,6 +483,19 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
         handleClearLocalSession()
           .then((result) => sendResponse(result))
           .catch(() => sendResponse({ ok: false }));
+        return true; // async response
+      }
+
+      const sourceRelayMessage = msg as { type?: string };
+      if (sourceRelayMessage?.type === SOURCE_RELAY_REGISTER_OWNER_MESSAGE) {
+        sendResponse(handleSourceRelayOwnerRegister(sender));
+        return false;
+      }
+
+      if (sourceRelayMessage?.type === SOURCE_RELAY_WAKE_OWNER_MESSAGE) {
+        handleSourceRelayOwnerWake()
+          .then((result) => sendResponse(result))
+          .catch(() => sendResponse({ ok: false, reason: 'send-failed' }));
         return true; // async response
       }
 

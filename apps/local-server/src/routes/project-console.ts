@@ -547,6 +547,37 @@ footer .command-status {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+footer .composer-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  pointer-events: none;
+  transition: color 0.2s;
+}
+footer .composer-status.error { color: #f87171; }
+footer .composer-status.success { color: var(--accent); }
+footer .composer-status.busy { color: var(--subtle); }
+#composer-spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--composer-send-text);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+footer #command-send.sending { background: var(--muted); }
+footer #command-send.sending .btn-icon { display: none; }
+footer #command-send.sending #composer-spinner { display: block; }
 footer .command-hints { display: none; }
 .command-log { display: grid; gap: 10px; max-width: 780px; }
 .command-message { background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
@@ -653,6 +684,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <div data-fact-source="fact-verify">Verification: not available</div>
     <div data-fact-source="fact-audit">Audit: not available</div>
     <div data-fact-source="fact-last-event">Last event: none</div>
+    <div data-fact-source="fact-source-relay">Source relay: not available</div>
   </div>
 </nav>
 
@@ -685,6 +717,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <div class="fact"><div class="fact-label">Verification</div><div class="fact-value" id="fact-verify">not available</div></div>
   <div class="fact"><div class="fact-label">Audit</div><div class="fact-value" id="fact-audit">not available</div></div>
   <div class="fact"><div class="fact-label">Last event</div><div class="fact-value" id="fact-last-event">none</div></div>
+  <div class="fact"><div class="fact-label">Source relay</div><div class="fact-value" id="fact-source-relay">not available</div></div>
 </aside>
 
 <!-- Internal context store. Hidden DOM preserves existing render targets without
@@ -717,6 +750,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
 
 <!-- Bottom Command Bar -->
 <footer>
+  <div class="composer-status" id="composer-status" aria-live="polite"></div>
   <div class="composer-shell" aria-label="Project command composer">
     <input id="command-input" type="text" placeholder="要求后续变更" aria-label="Project command" />
     <div class="composer-toolbar">
@@ -726,7 +760,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
       <button type="button" class="composer-mode" id="composer-mode-toggle" aria-label="Toggle composer mode" title="Click to switch between Project and Conversation mode">Project</button>
       <button type="button" class="composer-pairing" id="conversation-auto-dispatch" aria-label="Toggle conversation auto dispatch">Auto dispatch</button>
       <button type="button" class="composer-pairing" id="composer-pairing" aria-label="Open pairing controls">Pairing</button>
-      <button id="command-send" aria-label="Send project command">↑</button>
+      <button id="command-send" aria-label="Send project command"><span class="btn-icon">↑</span><span id="composer-spinner"></span></button>
     </div>
   </div>
   <span class="command-hints">/goals · /reviews · /project · pairing · help</span>
@@ -758,6 +792,12 @@ const store = {
   conversationSourceLabel: '',
   conversationExecutorStartedAt: 0,
   conversationExecutorLabel: '',
+  sourcePollUntil: 0,
+  sourcePollActive: false,
+  /** @type {number|null} */
+  messagePollIntervalId: null,
+  /** @type {number|null} */
+  renderIntervalId: null,
   workbuddyPollUntil: 0,
   workbuddyPollActive: false,
   conversationAutoDispatch: sessionStorage.getItem('cli-bridge-conversation-auto-dispatch') !== '0',
@@ -790,7 +830,9 @@ async function api(path, method, body) {
   if (body) headers['content-type'] = 'application/json';
   const res = await fetch(store.base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
-  try { data = await res.json(); } catch {}
+  try { data = await res.json(); } catch {
+    // Response body is not JSON — return null data, caller handles missing data gracefully
+  }
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -819,6 +861,7 @@ $('connect').addEventListener('click', async () => {
     if (store.contextView === 'pairing') await openPairingContext();
   } else {
     store.connected = false;
+    clearPollingIntervals();
     $('conn-dot').classList.remove('ok');
     $('access-pill').classList.remove('pending');
     $('access-pill').classList.add('error');
@@ -861,6 +904,7 @@ $('revoke-local-session').addEventListener('click', async () => {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       store.connected = false;
+      clearPollingIntervals();
       store.token = '';
       $('conn-dot').classList.remove('ok');
       $('access-pill').classList.remove('pending');
@@ -916,6 +960,9 @@ async function refreshAll() {
   if (wbR.status === 'fulfilled' && wbR.value.ok) store.cache.workbuddy = wbR.value.data;
   if (tsR.status === 'fulfilled' && tsR.value.ok) store.cache.teams = tsR.value.data;
   if (alR.status === 'fulfilled' && alR.value.ok) store.cache.automationLoops = alR.value.data.loops || [];
+  // ADR-0035: Fetch source relay status for facts rail visibility.
+  const srRes = await api('/bridge/source/chatgpt-web/status', 'GET');
+  if (srRes.ok) store.cache.sourceRelay = srRes.data;
   await refreshConversationMessages({ render: false });
   renderAll();
 }
@@ -923,13 +970,19 @@ async function refreshAll() {
 async function refreshConversationMessages(options) {
   if (options === undefined) options = {};
   if (!store.connected) return;
+  const waitingSince = store.conversationPlannerStartedAt;
   const res = await api('/bridge/projects/' + encodeURIComponent(store.activeProjectKey) + '/conversation/messages');
   if (!res.ok) return;
   store.conversationEvents = res.data?.messages || res.data?.events || [];
-  if (store.conversationPlannerStartedAt && store.conversationEvents.some(event =>
+  const plannerReturned = waitingSince && store.conversationEvents.some(event =>
     event && event.role === 'planner' && (event.createdAt || 0) >= store.conversationPlannerStartedAt
-  )) {
+  );
+  const sourceFailed = waitingSince && store.conversationEvents.some(event =>
+    event && event.role === 'bridge' && event.status === 'failed' && (event.createdAt || 0) >= store.conversationPlannerStartedAt
+  );
+  if (plannerReturned || sourceFailed) {
     store.conversationPlannerStartedAt = 0;
+    setCommandStatus(plannerReturned ? 'planner responded' : 'source failed', !!sourceFailed);
   }
   store.conversationActions = res.data?.actions || [];
   store.conversationPlans = res.data?.plans || [];
@@ -1002,20 +1055,75 @@ async function pollWorkBuddyUntilSettled(startedAt) {
   }
 }
 
+async function pollSourceUntilSettled(startedAt) {
+  if (store.sourcePollActive) return;
+  store.sourcePollActive = true;
+  store.sourcePollUntil = startedAt + 130_000;
+  console.debug('[SourceRelay] pollSourceUntilSettled started, sourcePollActive=true');
+  try {
+    while (Date.now() < store.sourcePollUntil) {
+      await refreshConversationMessages({ render: true });
+      console.debug('[SourceRelay] pollSourceUntilSettled iteration, plannerStartedAt:', store.conversationPlannerStartedAt);
+      if (!store.conversationPlannerStartedAt) {
+        console.debug('[SourceRelay] plannerStartedAt cleared, breaking poll loop');
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+  } finally {
+    store.sourcePollActive = false;
+    console.debug('[SourceRelay] pollSourceUntilSettled finished, sourcePollActive=false');
+  }
+}
+
 async function pollConversationMessages() {
-  if (store.connected && store.composerMode === 'conversation') {
+  if (!store.connected) return;
+  // Always poll in conversation mode, when planner/executor is active, or when waiting for source relay
+  if (store.composerMode === 'conversation' || store.conversationPlannerStartedAt || store.conversationExecutorStartedAt || store.sourcePollActive) {
     await refreshConversationMessages();
   }
 }
 
+async function refreshForegroundConversationState() {
+  if (!store.connected || document.visibilityState === 'hidden') return;
+  await refreshConversationMessages({ render: true });
+  const srRes = await api('/bridge/source/chatgpt-web/status', 'GET');
+  if (srRes.ok) {
+    store.cache.sourceRelay = srRes.data;
+    renderWorkspace();
+  }
+}
+
 if (!/jsdom/i.test(navigator.userAgent || '')) {
-  window.setInterval(pollConversationMessages, 3000);
-  window.setInterval(() => {
-    if (store.conversationPlannerStartedAt || store.conversationExecutorStartedAt) {
+  store.messagePollIntervalId = window.setInterval(pollConversationMessages, 3000);
+  store.renderIntervalId = window.setInterval(() => {
+    const shouldRender = store.composerMode === 'conversation' || store.conversationPlannerStartedAt || store.conversationExecutorStartedAt || store.sourcePollActive;
+    if (shouldRender) {
+      console.debug('[Render] rendering transcript, composerMode:', store.composerMode, 'plannerStartedAt:', store.conversationPlannerStartedAt, 'executorStartedAt:', store.conversationExecutorStartedAt, 'sourcePollActive:', store.sourcePollActive);
       renderConversationTranscript();
       if (store.contextView === 'workbuddy') renderWorkspace();
     }
   }, 1000);
+  document.addEventListener('visibilitychange', () => {
+    void refreshForegroundConversationState();
+  });
+  window.addEventListener('focus', () => {
+    void refreshForegroundConversationState();
+  });
+  window.addEventListener('pageshow', () => {
+    void refreshForegroundConversationState();
+  });
+}
+
+function clearPollingIntervals() {
+  if (store.messagePollIntervalId !== null) {
+    clearInterval(store.messagePollIntervalId);
+    store.messagePollIntervalId = null;
+  }
+  if (store.renderIntervalId !== null) {
+    clearInterval(store.renderIntervalId);
+    store.renderIntervalId = null;
+  }
 }
 
 // ─── Render ───
@@ -1287,7 +1395,7 @@ function conversationRouteKindLabel(endpoint) {
   if (endpoint.transport === 'workbuddy' && caps.canExecute) return { kind: 'workbuddy-execution', status: 'ready' };
   if (endpoint.transport === 'command' && caps.canReview) return { kind: 'review-command', status: 'ready for review route' };
   if (endpoint.transport === 'managed-pty' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'managed-pty', status: 'not implemented' };
-  if (endpoint.transport === 'web-dom' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'web-relay', status: 'manual confirmation' };
+  if (endpoint.transport === 'web-dom' && caps.canAcceptPrompt && caps.canReturnOutput) return { kind: 'web-relay', status: 'automatic relay' };
   return { kind: 'unavailable', status: 'not available' };
 }
 
@@ -1399,6 +1507,25 @@ function renderFactsRail() {
     $('fact-last-event').innerHTML = escapeHtml(String(label).slice(0, 96));
   } else {
     $('fact-last-event').innerHTML = '<span class="unavailable">none</span>';
+  }
+
+  // ADR-0035: Render source relay status.
+  const sourceRelay = store.cache.sourceRelay;
+  if (sourceRelay) {
+    const { pending, connected, recent } = sourceRelay;
+    const connectedClass = connected ? 'ok' : 'failed';
+    let html = '<span class="pill ' + connectedClass + '">' + (connected ? 'connected' : 'offline') + '</span>';
+    if (pending > 0) {
+      html += ' ' + pending + ' pending';
+    }
+    if (recent && recent.length > 0) {
+      const latest = recent[0];
+      const time = new Date(latest.createdAt).toLocaleTimeString();
+      html += '<br><span class="unavailable">' + time + ' ' + latest.status + '</span>';
+    }
+    $('fact-source-relay').innerHTML = html;
+  } else {
+    $('fact-source-relay').innerHTML = '<span class="unavailable">not available</span>';
   }
 }
 
@@ -2100,9 +2227,14 @@ function formatElapsedMs(durationMs) {
 }
 
 function renderWaitingLabel(label, startedAt) {
+  const elapsedMs = startedAt ? Date.now() - startedAt : 0;
+  const recoveryHint = elapsedMs >= 60_000
+    ? '<span class="wait-recovery">Refresh ChatGPT Web or reload the extension.</span>'
+    : '';
   return '<span class="wait-spinner" aria-hidden="true"></span>'
     + '<span>' + escapeHtml(label) + '…</span>'
-    + '<span class="wait-elapsed">' + escapeHtml(formatElapsed(startedAt)) + '</span>';
+    + '<span class="wait-elapsed">' + escapeHtml(formatElapsed(startedAt)) + '</span>'
+    + recoveryHint;
 }
 
 function renderLoopActionButton(label, url, body) {
@@ -2240,11 +2372,18 @@ function bindPairingContext() {
     const sourceOk = source && canBeConversationSource(source);
     const route = target ? conversationRouteKindLabel(target) : { kind: 'unavailable', status: 'not available' };
     const targetOk = route.kind !== 'unavailable';
-    if (sourceOk && targetOk) {
+    const chatGptSourceOffline = body.sourceEndpointId === 'chatgpt-web'
+      && store.cache.sourceRelay
+      && store.cache.sourceRelay.connected !== true;
+    if (sourceOk && targetOk && !chatGptSourceOffline) {
       $('pairing-status').textContent = route.kind + ' · ' + route.status;
       setCommandStatus('pairing route: ' + route.kind);
     } else {
-      $('pairing-status').textContent = (sourceOk ? '' : 'source invalid; ') + (!targetOk ? 'target has no supported conversation route' : '');
+      $('pairing-status').textContent = [
+        sourceOk ? '' : 'source invalid',
+        targetOk ? '' : 'target has no supported conversation route',
+        chatGptSourceOffline ? 'ChatGPT Web source offline' : '',
+      ].filter(Boolean).join('; ');
       setCommandStatus('pairing test failed', true);
     }
   });
@@ -2611,9 +2750,15 @@ async function openPairingContext() {
 
 function setCommandStatus(message, isError) {
   const el = $('command-status');
-  if (!el) return;
-  el.textContent = message || '';
-  el.style.color = isError ? '#f87171' : 'var(--muted)';
+  if (el) {
+    el.textContent = message || '';
+    el.style.color = isError ? '#f87171' : 'var(--muted)';
+  }
+  const composerEl = $('composer-status');
+  if (composerEl) {
+    composerEl.textContent = message || '';
+    composerEl.className = 'composer-status' + (isError ? ' error' : message ? ' busy' : '');
+  }
 }
 
 async function confirmVerificationCommand(input) {
@@ -3094,10 +3239,20 @@ function toggleConversationAutoDispatch() {
 function isMainTranscriptEvent(event) {
   return event
     && event.visibility === 'user'
-    && event.kind !== 'instruction'
-    && event.kind !== 'status'
-    && event.role !== 'bridge'
-    && !isConversationBridgeAdminEvent(event);
+    && (isConversationUserVisibleBridgeFailure(event)
+      || (
+        event.kind !== 'instruction'
+        && event.kind !== 'status'
+        && event.role !== 'bridge'
+        && !isConversationBridgeAdminEvent(event)
+      ));
+}
+
+function isConversationUserVisibleBridgeFailure(event) {
+  return event
+    && event.role === 'bridge'
+    && event.status === 'failed'
+    && event.visibility === 'user';
 }
 
 function renderConversationTranscript(explicitEvents, explicitGate) {
@@ -3333,6 +3488,7 @@ async function sendConversationMessage(input) {
   store.conversationExecutorStartedAt = 0;
   store.conversationExecutorLabel = '';
   $('command-send').disabled = true;
+  $('command-send').classList.add('sending');
   renderConversationTranscript();
   setCommandStatus('waiting for planner...');
   let keepPlannerWaiting = false;
@@ -3366,6 +3522,8 @@ async function sendConversationMessage(input) {
       pollWorkBuddyUntilSettled(Date.now());
     } else if (res.data?.source?.status === 'waiting') {
       setCommandStatus('waiting for source...');
+      await pollSourceUntilSettled(Date.now());
+      renderConversationTranscript();
     } else {
       setCommandStatus('planner responded');
     }
@@ -3373,6 +3531,7 @@ async function sendConversationMessage(input) {
     if (!keepPlannerWaiting) store.conversationPlannerStartedAt = 0;
     store.conversationSending = false;
     $('command-send').disabled = false;
+    $('command-send').classList.remove('sending');
     renderConversationTranscript();
   }
 }

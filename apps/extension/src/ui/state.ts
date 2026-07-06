@@ -57,7 +57,7 @@ export function createFillPanelStatus(result: FillComposerResult): BridgePanelSt
       return {
         kind: 'success',
         label: '已填入',
-        detail: '内容已写入 ChatGPT 输入框，请手动点击发送',
+        detail: '内容已写入 ChatGPT，等待自动提交',
     };
   }
 
@@ -256,9 +256,9 @@ export function createLoopPanelStatus(stage: BridgePanelLoopStage): BridgePanelS
       };
     case 'chatgpt-awaiting-user-send':
       return {
-        kind: 'blocked',
-        label: '等待发送',
-        detail: '手动发送后，选择回复并点击预览回传',
+        kind: 'idle',
+        label: '自动处理中',
+        detail: '已提交至 ChatGPT，等待自动回传',
       };
     case 'pending-prompt-ready':
       return {

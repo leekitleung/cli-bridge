@@ -361,6 +361,26 @@ export function buildRuntimeOptions(
       ]
     : undefined;
 
+  // ADR-0035: Create a console planner adapter for the Console UI.
+  // The console source adapter wraps this planner to provide local UI support.
+  const consolePlanner = config.planner
+    ? config.planner.kind === 'claude'
+      ? createClaudePlannerAdapter({
+          id: config.planner.id,
+          commandOptions: {
+            timeoutMs: config.planner.timeoutMs,
+            maxOutputBytes: config.planner.maxOutputBytes,
+          },
+        })
+      : createCodexPlannerAdapter({
+          id: config.planner.id,
+          commandOptions: {
+            timeoutMs: config.planner.timeoutMs,
+            maxOutputBytes: config.planner.maxOutputBytes,
+          },
+        })
+    : undefined;
+
   return {
     baselineRoot: config.baselineRoot,
     projectWorkspaceRoots: config.projectWorkspaceRoots,
@@ -369,6 +389,7 @@ export function buildRuntimeOptions(
     githubTokenStore,
     plannerAdapters,
     sourceAdapters,
+    consolePlanner,
   };
 }
 

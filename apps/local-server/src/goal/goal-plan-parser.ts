@@ -168,7 +168,6 @@ function extractPlanCandidate(text: string): string | null {
 
   let depth = 0;
   let start = -1;
-  let end = -1;
   for (let i = 0; i < trimmed.length; i += 1) {
     const ch = trimmed[i];
     if (ch === '{') {
@@ -177,7 +176,7 @@ function extractPlanCandidate(text: string): string | null {
     } else if (ch === '}') {
       depth -= 1;
       if (depth === 0) {
-        end = i + 1;
+        const end = i + 1;
         const candidate = trimmed.slice(start, end);
         try {
           const parsed = JSON.parse(candidate);

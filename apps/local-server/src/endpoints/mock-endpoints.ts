@@ -113,14 +113,28 @@ export const WORKBUDDY_ENDPOINT: AgentEndpoint = {
   transport: 'workbuddy',
   risk: 'medium',
   capabilities: {
-    canAcceptPrompt: true,
-    canReturnOutput: true,
+    canAcceptPrompt: false,
+    canReturnOutput: false,
     canReview: true,
     canExecute: true,
     canSummarize: false,
   },
   adapterName: 'workbuddy-execution',
   experimental: true,
+};
+
+export const CONSOLE_SOURCE_ENDPOINT: AgentEndpoint = {
+  id: 'console',
+  label: 'Console UI',
+  transport: 'mock',
+  risk: 'low',
+  capabilities: {
+    canAcceptPrompt: true,
+    canReturnOutput: true,
+    canReview: false,
+    canExecute: false,
+    canSummarize: false,
+  },
 };
 
 export const DEFAULT_AGENT_ENDPOINTS: AgentEndpoint[] = [

@@ -72,6 +72,7 @@ function sanitizeBranch(raw: string): string | null {
   const trimmed = (raw ?? '').split('\n')[0].trim();
   // sanitize: reject empty, control chars, over-length, or obviously non-branch.
   if (trimmed.length === 0 || trimmed.length > 256) return null;
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(trimmed)) return null;
   return trimmed;
 }
@@ -106,7 +107,7 @@ function decodeOutput(chunks: Buffer[]): string {
 // ── Reader ────────────────────────────────────────────────────────
 
 export async function readGitStatus(opts: GitReaderOptions): Promise<GitReaderResult> {
-  const { projectKey, workspaceRoot, spawnFn } = opts;
+  const { workspaceRoot, spawnFn } = opts;
   const startedAt = Date.now();
 
   const cwd = workspaceRoot;

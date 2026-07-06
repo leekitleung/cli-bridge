@@ -124,7 +124,7 @@ export async function dispatchExecutionProposal(
     }
     const endpoint = input.binding.executionEndpointId;
     input.store.markDispatching(proposal.id, now);
-    const task = input.workbuddyAdapter.enqueue({
+    input.workbuddyAdapter.enqueue({
       projectId: proposal.projectId,
       endpointId: endpoint,
       proposalId: proposal.id,

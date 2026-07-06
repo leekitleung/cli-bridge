@@ -3788,6 +3788,7 @@ export async function handleBridgeRequest(
     if (!requestId || !text) return error(400, 'requestId and text are required');
     const result = runtime.chatGptWebQueue.recordResult(requestId, text);
     if (!result) return error(409, 'Could not record result');
+    console.debug('[BridgeAPI] /results recorded for', requestId, ':', text.substring(0, 50));
     const sourceRequest = runtime.chatGptWebQueue.getRequest(requestId);
     if (sourceRequest?.pairingId && sourceRequest.targetRouteKind) {
       runtime.conversationTranscriptStore.append({
@@ -3800,6 +3801,7 @@ export async function handleBridgeRequest(
         kind: 'planner_output',
         visibility: 'user',
       });
+      console.debug('[BridgeAPI] Appended planner_output message to transcript for project', sourceRequest.projectId);
       runtime.persist();
     }
     return ok({ result });
@@ -3832,8 +3834,10 @@ export async function handleBridgeRequest(
 
     if (method === 'GET') {
       const gateDecisions = runtime.gateDecisionStore.listByProject(key);
+      const messages = runtime.conversationTranscriptStore.listByProject(key);
+      console.debug('[BridgeAPI] /conversation/messages returning', messages.length, 'messages');
       return ok({
-        messages: runtime.conversationTranscriptStore.listByProject(key),
+        messages,
         actions: runtime.conversationActionStore.listByProject(key),
         plans: runtime.planProposalStore.listByProject(key),
         gateDecisions,
@@ -3932,6 +3936,7 @@ export async function handleBridgeRequest(
           targetEndpointId: pairing.targetEndpointId,
           targetRouteKind: pairing.targetRouteKind,
         });
+        console.debug('[BridgeAPI] Enqueued source request', sourceRequest.id, 'for project', key);
         scheduleChatGptWebSourceTimeout(runtime, {
           requestId: sourceRequest.id,
           projectId: key,

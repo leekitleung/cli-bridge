@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { spawn } from 'node:child_process';
 
 const root = process.cwd();
 
@@ -73,7 +74,7 @@ const requiredPaths = [
   'docs/planning/CLI-BRIDGE-v1.5b-VALIDATION-HANDOFF.md',
   'docs/planning/CLI-BRIDGE-v1.6-VALIDATION-HANDOFF.md',
   'docs/planning/PLAN-LAYERED-ORCHESTRATION-AND-CONSOLE.md',
-  'docs/planning/PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md'
+  'docs/planning/PLAN-GOAL-DRIVEN-DYNAMIC-WORKFLOW.md',
 ];
 
 const forbiddenPaths = [
@@ -92,3 +93,37 @@ if (presentForbidden.length > 0) {
   console.error(`Forbidden paths are present:\n${presentForbidden.map((path) => `- ${path}`).join('\n')}`);
   process.exit(1);
 }
+
+function runEslint() {
+  return new Promise((resolve) => {
+    const eslint = spawn('npx', ['eslint', 'apps', 'packages', '--ext', '.ts,.tsx,.js,.mjs', '--max-warnings', '0'], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    eslint.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    eslint.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    eslint.on('close', (code) => {
+      if (stdout) process.stdout.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+      resolve(code);
+    });
+  });
+}
+
+console.log('Running ESLint...');
+const exitCode = await runEslint();
+if (exitCode !== 0) {
+  console.error('\nESLint found issues. Fix them before committing.');
+  process.exit(1);
+}
+console.log('ESLint passed.\n');

@@ -1,6 +1,7 @@
 import {
   PROTECTED_HEALTH_PATH,
 } from '../../../../packages/shared/src/constants.ts';
+import { getChatGptWebSourceStatus, setBridgeClientConfig } from '../content/bridge-client.ts';
 
 type ProxyResult = {
   ok: boolean;
@@ -56,6 +57,38 @@ Object.assign(connectionLine.style, {
   fontWeight: '600',
   minHeight: '18px',
 });
+
+const sourceStatusSection = document.createElement('div');
+Object.assign(sourceStatusSection.style, {
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  padding: '8px',
+  background: 'var(--surface)',
+  display: 'grid',
+  gap: '4px',
+});
+const sourceStatusHeader = document.createElement('div');
+sourceStatusHeader.textContent = 'ChatGPT Web Source';
+Object.assign(sourceStatusHeader.style, {
+  fontSize: '11px',
+  color: 'var(--muted)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+});
+const sourceStatusLine = document.createElement('div');
+sourceStatusLine.textContent = 'Loading...';
+Object.assign(sourceStatusLine.style, {
+  fontSize: '12px',
+  minHeight: '18px',
+});
+const sourceActivityList = document.createElement('div');
+Object.assign(sourceActivityList.style, {
+  fontSize: '11px',
+  color: 'var(--muted)',
+  maxHeight: '80px',
+  overflowY: 'auto',
+});
+sourceStatusSection.append(sourceStatusHeader, sourceStatusLine, sourceActivityList);
 
 const actions = document.createElement('div');
 Object.assign(actions.style, {
@@ -200,30 +233,6 @@ saveButton.addEventListener('click', async () => {
 fallbackBody.append(input, saveButton);
 fallback.append(fallbackBody);
 
-// --- Connection state ---
-
-async function loadSavedToken() {
-  const stored = await chrome.storage.session.get('cliBridgePairingToken');
-  const token = typeof stored?.cliBridgePairingToken === 'string' ? stored.cliBridgePairingToken : '';
-  if (token.length === 0) {
-    connectionLine.textContent = 'Browser session not paired';
-    renderStatus('Open Project Console to pair automatically, or use manual fallback.');
-    return;
-  }
-
-  const result = await proxyHealth(token);
-  if (result.ok) {
-    connectionLine.textContent = 'Local Bridge connected';
-    renderStatus('Connected session available for ChatGPT Web.', 'success');
-  } else if (result.status === 401 || result.status === 403) {
-    connectionLine.textContent = 'Session invalid';
-    renderStatus('Token expired or revoked. Open Project Console to re-pair.', 'failed');
-  } else {
-    connectionLine.textContent = 'Local Bridge offline';
-    renderStatus('Cannot reach local server. Ensure local server is running.', 'failed');
-  }
-}
-
 openConsoleButton.addEventListener('click', async () => {
   await chrome.tabs.create({ url: 'http://127.0.0.1:31337/console/project' });
 });
@@ -242,7 +251,66 @@ clearButton.addEventListener('click', async () => {
 });
 
 actions.append(openConsoleButton, refreshButton, clearButton);
-root.append(title, help, connectionLine, actions, fallback, status);
+root.append(title, help, connectionLine, actions, sourceStatusSection, fallback, status);
 document.body.append(root);
+
+async function loadSourceRelayStatus(): Promise<void> {
+  sourceStatusLine.textContent = 'Loading...';
+  sourceActivityList.innerHTML = '';
+
+  const result = await getChatGptWebSourceStatus();
+  if (!result.ok) {
+    sourceStatusLine.textContent = 'Source status unavailable';
+    return;
+  }
+
+  const { pending = 0, connected = false, recent = [] } = result.data ?? {};
+  sourceStatusLine.textContent = connected
+    ? (pending > 0 ? `${pending} task(s) pending` : 'Extension connected, idle')
+    : 'Extension not connected';
+  sourceStatusLine.style.color = connected ? '#15803d' : '#b45309';
+
+  if (recent && recent.length > 0) {
+    const html = recent.map(r => {
+      const time = new Date(r.createdAt).toLocaleTimeString();
+      const statusColor = r.status === 'returned' ? '#15803d' : r.status === 'failed' ? '#b91c1c' : '#374151';
+      return `<div style="color:${statusColor}">${time} ${r.status}: "${r.prompt}"</div>`;
+    }).join('');
+    sourceActivityList.innerHTML = html;
+  } else {
+    sourceActivityList.innerHTML = '<div style="color:var(--muted)">No recent activity</div>';
+  }
+}
+
+async function loadSavedToken() {
+  const stored = await chrome.storage.session.get('cliBridgePairingToken');
+  const token = typeof stored?.cliBridgePairingToken === 'string' ? stored.cliBridgePairingToken : '';
+  if (token.length === 0) {
+    setBridgeClientConfig({ pairingToken: null });
+    connectionLine.textContent = 'Browser session not paired';
+    sourceStatusLine.textContent = 'Not paired';
+    sourceActivityList.innerHTML = '';
+    renderStatus('Open Project Console to pair automatically, or use manual fallback.');
+    return;
+  }
+
+  setBridgeClientConfig({ pairingToken: token });
+  const result = await proxyHealth(token);
+  if (result.ok) {
+    connectionLine.textContent = 'Local Bridge connected';
+    renderStatus('Connected session available for ChatGPT Web.', 'success');
+    await loadSourceRelayStatus();
+  } else if (result.status === 401 || result.status === 403) {
+    connectionLine.textContent = 'Session invalid';
+    sourceStatusLine.textContent = 'Token invalid';
+    sourceActivityList.innerHTML = '';
+    renderStatus('Token expired or revoked. Open Project Console to re-pair.', 'failed');
+  } else {
+    connectionLine.textContent = 'Local Bridge offline';
+    sourceStatusLine.textContent = 'Server unreachable';
+    sourceActivityList.innerHTML = '';
+    renderStatus('Cannot reach local server. Ensure local server is running.', 'failed');
+  }
+}
 
 void loadSavedToken();

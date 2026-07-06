@@ -45,6 +45,30 @@ function canUseBackgroundProxy(): boolean {
   return typeof chrome !== 'undefined' && typeof chrome.runtime?.sendMessage === 'function';
 }
 
+function requestPairingTokenFromBackground(): Promise<string | null> {
+  if (!canUseBackgroundProxy()) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'cli-bridge-get-token' },
+        (response: unknown) => {
+          if (chrome.runtime?.lastError || !response) {
+            resolve(null);
+            return;
+          }
+          const token = (response as { token?: unknown }).token;
+          resolve(typeof token === 'string' && token.length > 0 ? token : null);
+        },
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 function sendProxyFetch<T>(
   path: string,
   method: 'GET' | 'POST',
@@ -52,7 +76,9 @@ function sendProxyFetch<T>(
   token: string,
 ): Promise<BridgeClientResult<T>> {
   return new Promise((resolve) => {
+    console.debug('[BridgeClient] sendProxyFetch:', method, path, 'token present:', token.length > 0);
     const timeout = globalThis.setTimeout?.(() => {
+      console.debug('[BridgeClient] sendProxyFetch timeout for:', path);
       resolve({ ok: false, status: 0, error: 'network-error' });
     }, BRIDGE_FETCH_TIMEOUT_MS);
     try {
@@ -62,17 +88,20 @@ function sendProxyFetch<T>(
           if (timeout) {
             globalThis.clearTimeout?.(timeout);
           }
+          console.debug('[BridgeClient] sendProxyFetch response for', path, ':', response);
           if (chrome.runtime?.lastError || !response) {
+            console.debug('[BridgeClient] sendProxyFetch lastError:', chrome.runtime?.lastError);
             resolve({ ok: false, status: 0, error: 'network-error' });
             return;
           }
           resolve(response as BridgeClientResult<T>);
         },
       );
-    } catch {
+    } catch (err) {
       if (timeout) {
         globalThis.clearTimeout?.(timeout);
       }
+      console.debug('[BridgeClient] sendProxyFetch exception for', path, ':', err);
       resolve({ ok: false, status: 0, error: 'network-error' });
     }
   });
@@ -282,11 +311,18 @@ export async function loadPairingTokenFromStorage(): Promise<string | null> {
         cachedConfig.pairingToken = token;
         return token;
       }
-      cachedConfig.pairingToken = null;
     }
   } catch {
-    // storage unavailable — test or non-extension environment
+    // storage unavailable — fall through to the background-owned session.
   }
+
+  const backgroundToken = await requestPairingTokenFromBackground();
+  if (backgroundToken) {
+    cachedConfig.pairingToken = backgroundToken;
+    return backgroundToken;
+  }
+
+  cachedConfig.pairingToken = null;
   return null;
 }
 
@@ -409,6 +445,7 @@ export interface ChatGptSourceResultResponse {
 }
 
 export async function sendChatGptWebHeartbeat(): Promise<BridgeClientResult<ChatGptSourceHeartbeatResponse>> {
+  console.debug('[BridgeClient] sendChatGptWebHeartbeat called, token:', hasPairingToken() ? 'present' : 'missing');
   return bridgeFetch('/bridge/source/chatgpt-web/heartbeat', 'POST', { canAnswer: true });
 }
 
@@ -421,4 +458,20 @@ export async function postChatGptWebResult(
   text: string,
 ): Promise<BridgeClientResult<ChatGptSourceResultResponse>> {
   return bridgeFetch('/bridge/source/chatgpt-web/results', 'POST', { requestId, text });
+}
+
+export interface ChatGptSourceStatusResponse {
+  pending: number;
+  recent: Array<{
+    id: string;
+    status: string;
+    prompt: string;
+    createdAt: number;
+    returnedAt?: number;
+  }>;
+  connected: boolean;
+}
+
+export async function getChatGptWebSourceStatus(): Promise<BridgeClientResult<ChatGptSourceStatusResponse>> {
+  return bridgeFetch('/bridge/source/chatgpt-web/status', 'GET');
 }

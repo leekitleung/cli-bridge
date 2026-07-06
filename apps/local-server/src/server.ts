@@ -55,6 +55,26 @@ export interface LocalServerHandle {
   pairingToken: string;
 }
 
+interface SourceRelayBridgeDiagnostics {
+  requests: number;
+  authSucceeded: number;
+  authFailed: number;
+  byPath: Record<string, {
+    requests: number;
+    authSucceeded: number;
+    authFailed: number;
+    methods: Record<string, number>;
+    resultStatus: Record<string, number>;
+  }>;
+  lastPath: string | null;
+  lastMethod: string | null;
+  lastResultStatus: number | null;
+  lastRequestAt: number | null;
+  lastAuthSucceededAt: number | null;
+  lastAuthFailedAt: number | null;
+  lastResultAt: number | null;
+}
+
 function isMainModule(): boolean {
   const entryPoint = process.argv[1];
   if (!entryPoint) {
@@ -92,6 +112,10 @@ function isTestEnvironment(): boolean {
   return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'node:test';
 }
 
+function isChatGptWebSourceRelayPath(pathname: string): boolean {
+  return pathname.startsWith('/bridge/source/chatgpt-web/');
+}
+
 export async function startLocalServer(
   port: number = DEFAULT_LOCAL_SERVER_PORT,
   runtimeOptions?: BridgeRuntimeOptions,
@@ -99,7 +123,58 @@ export async function startLocalServer(
   const pairingToken = createPairingToken();
   const autoPairStore: LocalAutoPairSessionStore = createLocalAutoPairSessionStore();
   const bridgeRuntime: BridgeRuntime = createBridgeRuntime(runtimeOptions);
+  const sourceRelayBridgeDiagnostics: SourceRelayBridgeDiagnostics = {
+    requests: 0,
+    authSucceeded: 0,
+    authFailed: 0,
+    byPath: {},
+    lastPath: null,
+    lastMethod: null,
+    lastResultStatus: null,
+    lastRequestAt: null,
+    lastAuthSucceededAt: null,
+    lastAuthFailedAt: null,
+    lastResultAt: null,
+  };
   let boundPort = port;
+
+  function recordSourceRelayBridgeRequest(
+    pathname: string,
+    input?: { method?: string; authResult?: 'succeeded' | 'failed'; resultStatus?: number },
+  ): void {
+    const now = Date.now();
+    const pathStats = sourceRelayBridgeDiagnostics.byPath[pathname] ?? {
+      requests: 0,
+      authSucceeded: 0,
+      authFailed: 0,
+      methods: {},
+      resultStatus: {},
+    };
+    if (input?.resultStatus !== undefined) {
+      const key = String(input.resultStatus);
+      sourceRelayBridgeDiagnostics.lastResultStatus = input.resultStatus;
+      sourceRelayBridgeDiagnostics.lastResultAt = now;
+      pathStats.resultStatus[key] = (pathStats.resultStatus[key] ?? 0) + 1;
+    } else if (!input?.authResult) {
+      sourceRelayBridgeDiagnostics.requests++;
+      sourceRelayBridgeDiagnostics.lastPath = pathname;
+      sourceRelayBridgeDiagnostics.lastMethod = input?.method ?? null;
+      sourceRelayBridgeDiagnostics.lastRequestAt = now;
+      pathStats.requests++;
+      if (input?.method) {
+        pathStats.methods[input.method] = (pathStats.methods[input.method] ?? 0) + 1;
+      }
+    } else if (input.authResult === 'succeeded') {
+      sourceRelayBridgeDiagnostics.authSucceeded++;
+      sourceRelayBridgeDiagnostics.lastAuthSucceededAt = now;
+      pathStats.authSucceeded++;
+    } else {
+      sourceRelayBridgeDiagnostics.authFailed++;
+      sourceRelayBridgeDiagnostics.lastAuthFailedAt = now;
+      pathStats.authFailed++;
+    }
+    sourceRelayBridgeDiagnostics.byPath[pathname] = pathStats;
+  }
 
   function checkAuth(
     request: IncomingMessage,
@@ -116,34 +191,37 @@ export async function startLocalServer(
       return undefined;
     }
 
-    // 1. Console cookie auth (same-origin Console requests)
-    const consoleSessionToken = parseConsoleSessionCookie(request);
-    if (consoleSessionToken && autoPairStore.verifyConsoleSession(consoleSessionToken)) {
-      return { kind: 'console-cookie' };
-    }
-
-    // 2. Pairing token header auth (printed pairing token or extension session token)
+    // 1. Pairing token header auth (printed pairing token or extension session token).
+    // Prefer explicit credentials over the Console cookie: extension background
+    // fetches to 127.0.0.1 may carry Console cookies automatically, but source
+    // relay endpoints must authenticate as an extension session.
     const receivedToken = extractPairingTokenFromRequest(request);
-    if (!receivedToken) {
+    if (receivedToken) {
+      if (verifyPairingToken(receivedToken, pairingToken)) {
+        return { kind: 'pairing-token' };
+      }
+
+      if (autoPairStore.verifyExtensionSession(receivedToken)) {
+        return { kind: 'extension-session' };
+      }
+
       writeJson(
-        401,
-        { status: 'error', message: 'Missing pairing token' },
+        403,
+        { status: 'error', message: 'Invalid pairing token' },
         response,
       );
       return undefined;
     }
 
-    if (verifyPairingToken(receivedToken, pairingToken)) {
-      return { kind: 'pairing-token' };
-    }
-
-    if (autoPairStore.verifyExtensionSession(receivedToken)) {
-      return { kind: 'extension-session' };
+    // 2. Console cookie auth (same-origin Console requests)
+    const consoleSessionToken = parseConsoleSessionCookie(request);
+    if (consoleSessionToken && autoPairStore.verifyConsoleSession(consoleSessionToken)) {
+      return { kind: 'console-cookie' };
     }
 
     writeJson(
-      403,
-      { status: 'error', message: 'Invalid pairing token' },
+      401,
+      { status: 'error', message: 'Missing pairing token' },
       response,
     );
     return undefined;
@@ -193,13 +271,26 @@ export async function startLocalServer(
     }
 
     if (isBridgePath(url.pathname)) {
+      const sourceRelayPath = isChatGptWebSourceRelayPath(url.pathname);
+      if (sourceRelayPath) {
+        recordSourceRelayBridgeRequest(url.pathname, { method: request.method ?? 'GET' });
+      }
       const authContext = checkAuth(request, response);
       if (!authContext) {
+        if (sourceRelayPath) {
+          recordSourceRelayBridgeRequest(url.pathname, { authResult: 'failed' });
+        }
         return;
+      }
+      if (sourceRelayPath) {
+        recordSourceRelayBridgeRequest(url.pathname, { authResult: 'succeeded' });
       }
 
       handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams, authContext)
         .then((result) => {
+          if (sourceRelayPath) {
+            recordSourceRelayBridgeRequest(url.pathname, { resultStatus: result.statusCode });
+          }
           writeBridgeResult(result, response);
         })
         .catch(() => {
@@ -209,6 +300,18 @@ export async function startLocalServer(
     }
 
     // ── Local auto-pair routes (narrow, loopback-only) ──
+
+    if (request.method === 'GET' && url.pathname === '/bridge/local-auto-pair/status') {
+      if (!checkAuth(request, response)) {
+        return;
+      }
+      writeJson(200, {
+        status: 'ok',
+        diagnostics: autoPairStore.getDiagnostics(),
+        sourceRelayBridge: sourceRelayBridgeDiagnostics,
+      }, response);
+      return;
+    }
 
     if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/extension-claim') {
       const origin = getRequestOrigin(request);

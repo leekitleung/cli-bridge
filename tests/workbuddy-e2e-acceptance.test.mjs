@@ -561,3 +561,44 @@ test('E2E: chatgpt-web source answers without dispatching to WorkBuddy', async (
     await closeServer(handle);
   }
 });
+
+test('E2E: chatgpt-web source timeout marks async request failed', async () => {
+  const handle = await startLocalServer(0, {
+    plannerAdapters: [],
+    chatGptWebSourceResultTimeoutMs: 5,
+  });
+  try {
+    const cookie = (await fetch(`${handle.url}/console/project`)).headers.getSetCookie?.()?.[0] ?? '';
+    const consoleHeaders = { 'content-type': 'application/json', origin: handle.url, cookie };
+
+    await fetch(`${handle.url}/bridge/projects`, {
+      method: 'POST', headers: consoleHeaders, body: JSON.stringify({ key: 'e2e-chatgpt-timeout' }),
+    });
+    await fetch(`${handle.url}/bridge/projects/e2e-chatgpt-timeout/conversation-pairing`, {
+      method: 'PUT', headers: consoleHeaders,
+      body: JSON.stringify({ sourceEndpointId: 'chatgpt-web', targetEndpointId: 'workbuddy' }),
+    });
+
+    const msgRes = await fetch(`${handle.url}/bridge/projects/e2e-chatgpt-timeout/conversation/messages`, {
+      method: 'POST', headers: consoleHeaders,
+      body: JSON.stringify({ text: 'hi' }),
+    });
+    assert.equal(msgRes.status, 201);
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+
+    const sourceStatusRes = await fetch(`${handle.url}/bridge/source/chatgpt-web/status`, { headers: consoleHeaders });
+    const sourceStatus = await sourceStatusRes.json();
+    assert.equal(sourceStatus.recent[0]?.status, 'failed');
+    assert.equal(typeof sourceStatus.recent[0]?.failedAt, 'number');
+
+    const messagesRes = await fetch(`${handle.url}/bridge/projects/e2e-chatgpt-timeout/conversation/messages`, { headers: consoleHeaders });
+    const messages = await messagesRes.json();
+    assert.ok(
+      messages.messages.some(event => event.role === 'bridge' && event.status === 'failed' && /did not return/.test(event.text)),
+      'timeout should append a visible bridge failure event',
+    );
+  } finally {
+    await closeServer(handle);
+  }
+});

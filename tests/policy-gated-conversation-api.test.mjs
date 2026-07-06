@@ -45,7 +45,7 @@ function asSourceAdapter(endpointId, kind, planner) {
   };
 }
 
-async function setupPairing(runtime, projectId = 'cli-bridge') {
+async function setupPairing(runtime, projectId = 'cli-bridge', overrides = {}) {
   const { handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   return handleBridgeRequest(
     runtime,
@@ -55,6 +55,7 @@ async function setupPairing(runtime, projectId = 'cli-bridge') {
       sourceEndpointId: 'codex-cli',
       targetEndpointId: 'workbuddy',
       targetRouteKind: 'workbuddy-execution',
+      ...overrides,
     }),
   );
 }
@@ -62,7 +63,15 @@ async function setupPairing(runtime, projectId = 'cli-bridge') {
 test('conversation message returns source-unavailable when no source adapter is configured', async () => {
   const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
   const runtime = createBridgeRuntime();
-  await setupPairing(runtime);
+  runtime.conversationPairingStore.upsert({
+    projectId: 'cli-bridge',
+    sourceEndpointId: 'missing-source',
+    targetEndpointId: 'workbuddy',
+    targetRouteKind: 'workbuddy-execution',
+    status: 'ready',
+    scope: 'project',
+    updatedAt: 0,
+  });
 
   const res = await handleBridgeRequest(
     runtime,
@@ -118,6 +127,57 @@ test('planner answer intent renders planner output without executor task', async
   assert.equal(packets.length, 0);
   const tasks = runtime.workbuddyExecution.exportTasks();
   assert.equal(tasks.length, 0);
+});
+
+test('command source planning is not failed by bridge-owned 15s timeout wrapper', async () => {
+  const { createBridgeRuntime, handleBridgeRequest } = await import('../apps/local-server/src/routes/bridge-api.ts');
+  let resolvePlan;
+  const slowCommandSource = {
+    endpointId: 'codex-cli',
+    kind: 'codex-cli',
+    isAvailable() { return true; },
+    async plan(input) {
+      return new Promise((resolve) => {
+        resolvePlan = () => resolve({
+          id: `out-${Date.now()}`,
+          sessionId: input.sessionId,
+          plannerEndpointId: 'codex-cli',
+          visibleText: 'Delayed Codex answer',
+          intent: 'answer',
+          createdAt: new Date().toISOString(),
+        });
+      });
+    },
+  };
+  const runtime = createBridgeRuntime({ sourceAdapters: [slowCommandSource] });
+  await setupPairing(runtime);
+
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms === 15_000) {
+      fn(...args);
+      return 1;
+    }
+    return originalSetTimeout(fn, ms, ...args);
+  };
+
+  try {
+    const resPromise = handleBridgeRequest(
+      runtime,
+      'POST',
+      '/bridge/projects/cli-bridge/conversation/messages',
+      jsonBody({ text: 'explain the project architecture' }),
+    );
+    await new Promise(resolve => originalSetTimeout(resolve, 0));
+    assert.equal(typeof resolvePlan, 'function');
+    resolvePlan();
+    const res = await resPromise;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.payload.events.at(-1).text, 'Delayed Codex answer');
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
 });
 
 test('request execution blocks before dispatch when executor unavailable', async () => {

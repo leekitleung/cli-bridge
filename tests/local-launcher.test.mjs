@@ -109,6 +109,92 @@ test('extension claim nonce can be used once to obtain extension session token',
   }
 });
 
+test('local auto-pair status exposes diagnostic counters to console session', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce, 'expected extension claim nonce');
+    assert.match(cookie, /cli_bridge_console_session=/);
+
+    const initial = await fetch(`${handle.url}/bridge/local-auto-pair/status`, {
+      headers: { cookie, origin: handle.url },
+    });
+    assert.equal(initial.status, 200);
+    const initialPayload = await initial.json();
+    assert.equal(initialPayload.diagnostics.consoleSessionsCreated, 1);
+    assert.equal(initialPayload.diagnostics.extensionClaimsAttempted, 0);
+    assert.equal(initialPayload.diagnostics.activeConsoleSessions, 1);
+    assert.equal(initialPayload.sourceRelayBridge.requests, 0);
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+
+    const status = await fetch(`${handle.url}/bridge/local-auto-pair/status`, {
+      headers: { cookie, origin: handle.url },
+    });
+    assert.equal(status.status, 200);
+    const payload = await status.json();
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.diagnostics.extensionClaimsAttempted, 1);
+    assert.equal(payload.diagnostics.extensionClaimsSucceeded, 1);
+    assert.equal(payload.diagnostics.activeExtensionSessions, 1);
+    assert.equal(payload.sourceRelayBridge.authFailed, 0);
+    assert.equal(JSON.stringify(payload).includes(nonce), false);
+  } finally {
+    await closeServer(handle);
+  }
+});
+
+test('source relay prefers extension token over incidental console cookie', async () => {
+  const handle = await startLocalServer(0);
+  try {
+    const consoleRes = await fetch(`${handle.url}/console/project`);
+    const html = await consoleRes.text();
+    const cookie = consoleRes.headers.getSetCookie?.()?.[0] ?? '';
+    const nonce = html.match(/data-extension-claim-nonce="([^"]+)"/)?.[1];
+    assert.ok(nonce, 'expected extension claim nonce');
+    assert.match(cookie, /cli_bridge_console_session=/);
+
+    const claim = await fetch(`${handle.url}/bridge/local-auto-pair/extension-claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: handle.url },
+      body: JSON.stringify({ nonce }),
+    });
+    assert.equal(claim.status, 200);
+    const { extensionSessionToken } = await claim.json();
+    assert.equal(typeof extensionSessionToken, 'string');
+
+    const heartbeat = await fetch(`${handle.url}/bridge/source/chatgpt-web/heartbeat`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: handle.url,
+        'content-type': 'application/json',
+        'x-cli-bridge-pairing-token': extensionSessionToken,
+      },
+      body: JSON.stringify({ canAnswer: true }),
+    });
+    assert.equal(heartbeat.status, 200);
+
+    const status = await fetch(`${handle.url}/bridge/source/chatgpt-web/status`, {
+      headers: { cookie, origin: handle.url },
+    });
+    assert.equal(status.status, 200);
+    const payload = await status.json();
+    assert.equal(payload.connected, true);
+    assert.equal(typeof payload.lastHeartbeatAt, 'number');
+  } finally {
+    await closeServer(handle);
+  }
+});
+
 test('extension session token cannot accept planner-gated conversation plans', async () => {
     const testPlanner = {
       id: 'test-planner',

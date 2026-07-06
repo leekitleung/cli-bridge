@@ -12,6 +12,9 @@
     "dual-endpoint:e2e": "node --experimental-strip-types scripts/dual-endpoint-release-e2e.ts",
     "build-extension": "node ./scripts/build-extension.mjs",
     "lint": "node ./scripts/lint.mjs",
+    "lint:eslint": "eslint apps packages --ext .ts,.tsx,.js,.mjs",
+    "format": "prettier --write \"{apps,packages,scripts}/**/*.{ts,tsx,js,mjs}\"",
+    "format:check": "prettier --check \"{apps,packages,scripts}/**/*.{ts,tsx,js,mjs}\"",
     "remote-review-gate": "node ./scripts/remote-review-gate.mjs --pretty",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test",
@@ -20,9 +23,15 @@
     "review": "node --experimental-strip-types apps/local-server/src/cli/review.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.13.0",
     "esbuild": "^0.28.0",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
     "jsdom": "^29.1.1",
-    "typescript": "^5.8.3"
+    "prettier": "^3.9.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.62.1"
   }
 }

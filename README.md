@@ -7,18 +7,18 @@ execution and terminal control out of the product surface.
 
 It is **not** a terminal controller. It does not expose shell endpoints. As of
 ADR-0001 and ADR-0002, automation is allowed only in staged, auditable slices:
-v1.5a can queue an outbound prompt and let the browser extension fill the
-ChatGPT composer, while v1.5b is planned as fixed review-only local CLI command
-transport. It still does not auto-click ChatGPT send or run unattended agent
-loops.
+v1.5a can queue an outbound prompt and let the browser extension drive ChatGPT
+Web as an automatic source relay, while v1.5b is planned as fixed review-only
+local CLI command transport. It still does not expose terminal control or run
+unattended agent loops.
 
 ## What works today
 
 - **Local Server**: binds `127.0.0.1` only, exposes `GET /health` (public) and
   `GET /health/private` (origin guard + pairing token).
 - **Browser extension**: mounts a collapsible, host-theme-aware Bridge Panel on
-  ChatGPT Web with four explicit stages: connect, fill for ChatGPT, select and
-  preview, then confirm return. It never clicks ChatGPT Send.
+  ChatGPT Web, maintains the ChatGPT Web source relay connection, submits
+  queued source prompts, waits for the response, and returns it to the Console.
 - **In-memory core relay, wired over local HTTP** (`/bridge/*`, authenticated):
   BridgePacket + redaction + audit log, Pending Prompt lifecycle
   (create / confirm / send-via-mock / cancel), and a metrics summary.
@@ -27,7 +27,7 @@ loops.
   (token-gated, best-effort; falls back to local-only when unpaired).
 - **v1.5a outbound prompt queue**: authenticated `/bridge/outbound*` endpoints
   can queue redacted Codex output for ChatGPT Web. The extension polls, fills the
-  composer, and records an acknowledgement. It does **not** submit the prompt.
+  composer, submits the prompt, waits for the answer, and records the return.
 - **Optional JSON persistence**: set `CLI_BRIDGE_DATA_DIR` to make packets,
   audit events, prompts, inbound returns, and relay context survive a restart. Off by default
   (in-memory). Raw content is never written to disk; only redacted
@@ -107,9 +107,9 @@ loops.
   read-only constraints, and ReviewResult parsing. Web-DOM automatic send is
   superseded for v1.5b.
 
-> Status caveat: real Codex Managed PTY delivery remains experimental. The
-> browser relay remains intentionally manual at ChatGPT Send and return
-> confirmation; this is a safety boundary, not an incomplete automation step.
+> Status caveat: real Codex Managed PTY delivery remains experimental. ChatGPT
+> Web source relay is automatic when the extension is connected; Console UI
+> remains the control plane for pairing, routing, gates, and execution status.
 
 ## Requirements
 
@@ -221,8 +221,9 @@ auto-executed.
    output — not the source directory).
 4. Start with `npm start`, click the CLI Bridge extension icon, paste the
    printed pairing token, and choose **保存并测试**.
-5. On ChatGPT, follow the numbered panel stages. Composer fill is automatic;
-   sending and confirmed return are always manual.
+5. On ChatGPT, keep a ChatGPT conversation page open with the panel connected.
+   The extension automatically submits queued source prompts and returns the
+   response to Project Console.
 
 Recovery notes:
 

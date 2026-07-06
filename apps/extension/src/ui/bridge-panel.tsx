@@ -459,6 +459,12 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
           renderStatus({ kind: 'idle', label: 'Source Relay', detail: 'Processing Console prompt' });
         } else if (event.type === 'returned') {
           renderStatus({ kind: 'success', label: 'Source Relay', detail: 'Response sent to Console' });
+        } else if (event.type === 'heartbeat') {
+          renderStatus({
+            kind: event.ok ? 'success' : 'failed',
+            label: 'Source Relay',
+            detail: event.ok ? 'Heartbeat recorded' : 'Heartbeat failed',
+          });
         } else if (event.type === 'failed') {
           renderStatus({ kind: 'failed', label: 'Source Relay', detail: event.reason });
         }
@@ -484,7 +490,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
           if (event.type === 'claimed') {
             renderStatus({ kind: 'idle', label: '正在填入', detail: '已领取本地交接内容' });
           } else if (event.type === 'delivered') {
-            renderStatus({ kind: 'success', label: '已填入', detail: '请在 ChatGPT 中手动发送' });
+            renderStatus({ kind: 'success', label: '已填入', detail: '等待自动提交至 ChatGPT' });
             renderLoopStatus('chatgpt-awaiting-user-send');
             renderRelayStatus();
           } else if (event.type === 'waiting') {
@@ -509,7 +515,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     }
   };
 
-  // Load any stored token and report connection state (no auto-send involved).
+  // Load any stored token and report connection state before the relay polls.
   loadPairingTokenFromStorage()
     .then(() => {
       startSourceRelay();

@@ -2,7 +2,6 @@ import type { IncomingMessage } from 'node:http';
 
 import {
   ALLOWED_ORIGINS,
-  TEST_NO_ORIGIN_ALLOWED,
 } from '../../../../packages/shared/src/constants.ts';
 
 export const ORIGIN_HEADER = 'origin';
@@ -32,7 +31,7 @@ export function getRequestOrigin(
   return null;
 }
 
-export function isAllowedOrigin(origin: string | null, isTestEnvironment = false): boolean {
+export function isAllowedOrigin(origin: string | null, _isTestEnvironment = false): boolean {
   // A missing Origin header is allowed: browsers always attach Origin to
   // cross-origin requests (which the allowlist below blocks), so an absent
   // Origin can only come from a same-origin page (the local console) or a
@@ -59,9 +58,9 @@ export function isAllowedOrigin(origin: string | null, isTestEnvironment = false
 
 export function assertAllowedOrigin(
   origin: string | null,
-  isTestEnvironment = false,
+  _isTestEnvironment = false,
 ): { ok: true } | { ok: false; statusCode: 403; message: string } {
-  if (isAllowedOrigin(origin, isTestEnvironment)) {
+  if (isAllowedOrigin(origin, _isTestEnvironment)) {
     return { ok: true };
   }
 

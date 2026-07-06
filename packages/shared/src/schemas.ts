@@ -1290,12 +1290,6 @@ export function validateWorkBuddyExecutionLedgerEvent(value: unknown): SchemaVal
 
 // --- v2.3 TeamSpec validation ---
 
-const TEAMSPEC_ALLOWED_FIELDS: Record<string, string[]> = {
-  team: ['id', 'projectId', 'goalId', 'planId', 'logicalSlots', 'maxConcurrentBridgeSlots', 'mode', 'isolation', 'provider', 'endpointId', 'policyRequirements', 'status', 'currentSlotIndex', 'createdAt', 'updatedAt', 'approvedAt'],
-  slot: ['id', 'role', 'stepIndex', 'tier', 'isolation', 'providerId', 'endpointId', 'status'],
-  artifact: ['teamId', 'slotId', 'planStepId', 'providerId', 'endpointId', 'bridgeRunId', 'externalSessionId', 'summary', 'proposedFiles', 'verificationNotes', 'verificationEvidence', 'rawProviderOutput', 'outputRedacted', 'createdAt'],
-};
-
 export interface TeamSpecValidationResult { ok: boolean; errors: string[]; }
 
 export function validateTeamSpecCreate(value: Record<string, unknown>): TeamSpecValidationResult {

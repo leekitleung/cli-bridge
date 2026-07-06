@@ -301,6 +301,20 @@ test('loadPairingTokenFromStorage clears a stale cached token when storage is em
   }
 });
 
+test('loadPairingTokenFromStorage falls back to the background session token', async () => {
+  setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: 'stale-token' });
+  const fake = withFakeChromeRuntime((message, cb) => {
+    assert.equal(message.type, 'cli-bridge-get-token');
+    cb({ ok: true, token: 'background-session-token' });
+  });
+  try {
+    assert.equal(await loadPairingTokenFromStorage(), 'background-session-token');
+    assert.equal(getBridgeClientConfig().pairingToken, 'background-session-token');
+  } finally {
+    fake.restore();
+  }
+});
+
 test('testPrivateHealth maps unpaired, connected, unauthorized, and network-error', async () => {
   setBridgeClientConfig({ baseUrl: 'http://127.0.0.1:31337', pairingToken: null });
   assert.equal(await testPrivateHealth(), 'unpaired');
