@@ -1,0 +1,99 @@
+# Release Quality Review Configuration
+# 项目级评审配置 - 覆盖默认行为
+
+# 项目基本信息
+project:
+  name: cli-bridge
+  type: browser-extension + local-server
+  description: Claude Code / Codex 与 ChatGPT Web 的桥接工具
+
+# 默认 Profile
+default_profile: release-gate
+
+# 评审报告目录
+reports_dir: quality-reports
+
+# 自动触发条件 (未来支持 Git hooks)
+auto_trigger:
+  on_push_to_main: true
+  on_pr_merge: true
+  on_tag: true
+  exclude_paths:
+    - "*.md"
+    - "*.json"
+    - "docs/**"
+    - "quality-reports/**"
+
+# Reviewer 配置
+reviewers:
+  # 常驻 Reviewer (始终启用)
+  resident:
+    - product-flow
+    - architecture-maintainer
+    - release-verifier
+    - destructive-qa
+
+  # 条件触发 Reviewer
+  conditional:
+    - name: native-designer
+      when:
+        - changed_files_match: ["**/*.css", "**/*.tsx", "**/*.jsx", "**/ui/**"]
+        - evidence_has: ["screenshots", "design-files"]
+    - name: terminal-veteran
+      when:
+        - changed_files_match: ["**/cli/**", "**/scripts/**", "**/local-server/**"]
+    - name: data-security
+      when:
+        - changed_files_match: ["**/auth/**", "**/storage/**", "**/security/**"]
+        - diff_contains: ["token", "secret", "password", "key", "credential"]
+
+# 通过条件
+gate:
+  min_score: 90
+  fail_on_redlines: true
+  fail_on_p0_p1_blockers: true
+  require_all_reviewers: true
+
+# 验证命令 (用于 release-verifier)
+verification:
+  test: "pnpm test"
+  build: "pnpm build"
+  lint: "pnpm lint"
+  typecheck: "pnpm typecheck"
+
+# 证据收集 (自动收集的证据)
+evidence:
+  auto_collect:
+    - git_diff
+    - git_status
+    - package_json
+    - package_lock_json
+  require_optional:
+    - screenshots    # UI 项目需要
+    - test_logs      # 发布前需要
+    - build_logs     # 发布前需要
+
+# 输出格式
+output:
+  format: markdown
+  include_timestamps: true
+  include_git_info: true
+
+# 评分校准 (帮助保持评分一致性)
+calibration:
+  # 高分需要满足的条件
+  high_score_criteria:
+    - "有实际运行证据 (截图、日志、测试输出)"
+    - "引用了具体代码位置"
+    - "问题有明确的修复建议"
+  # 低分标准
+  low_score_criteria:
+    - "主路径不可用"
+    - "有安全隐患"
+    - "有未处理的错误"
+
+# 通知配置
+notifications:
+  on_pass: "生成 final-report.md"
+  on_fail: "输出 blockers 到 summary.md"
+  on_redline: "阻塞发布流程"

@@ -1,419 +1,389 @@
 #!/usr/bin/env node
 /**
- * review-runner.mjs - Orchestrates the complete quality review process
+ * Review Runner - Orchestrates Multi-Reviewer Quality Reviews
  *
- * Workflow:
- * 1. Create/update round directory
- * 2. Collect evidence (git diff, test, build, typecheck)
- * 3. Determine required reviewers from profile
- * 4. Create reviewer task directories
- * 5. Run reviewers (or spawn subagents)
- * 6. Validate result.yaml files
- * 7. Run review-gate
- * 8. Output summary
+ * This script orchestrates the full review workflow:
+ * 1. Collect evidence
+ * 2. Run reviewers in sequence or parallel
+ * 3. Aggregate results
+ * 4. Run gate check
  *
- * Exit codes:
- * 0 = pass
- * 1 = fail (gate failed)
- * 2 = error
+ * Usage:
+ *   node review-runner.mjs --profile release-gate
+ *   node review-runner.mjs --profile quick --parallel
+ *   node review-runner.mjs --dry-run
  */
 
-import fs from 'fs';
-import path from 'path';
-import { parseArgs } from 'util';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { execSync } from 'child_process';
-import * as yaml from 'js-yaml';
-const { load: yamlLoad } = yaml;
 
+// Use process.cwd() as the reliable project root
 const PROJECT_ROOT = process.cwd();
-const SKILL_DIR = path.join(PROJECT_ROOT, 'skills', 'release-quality-review');
-const QUALITY_REPORTS_DIR = path.join(PROJECT_ROOT, 'quality-reports');
+const SKILL_DIR = join(PROJECT_ROOT, 'skills', 'release-quality-review');
+const REPORT_DIR = join(PROJECT_ROOT, 'quality-reports');
 
 // ANSI colors
-const C = {
+const c = {
   reset: '\x1b[0m',
+  bright: '\x1b[1m',
+  dim: '\x1b[2m',
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  gray: '\x1b[90m',
+  cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
 };
 
-function log(msg, level = 'info') {
-  const icons = { info: 'ℹ', pass: '✓', fail: '✗', warn: '⚠' };
-  const color = { info: 'blue', pass: 'green', fail: 'red', warn: 'yellow' }[level] || 'blue';
-  console.log(`${C[color]}[${icons[level]}]${C.reset} ${msg}`);
+// Parse arguments
+const args = process.argv.slice(2);
+let profile = 'release-gate';
+let roundNumber = null;
+let parallel = false;
+let dryRun = false;
+let skipEvidence = false;
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg === '--profile' && args[i + 1]) profile = args[++i];
+  else if (arg === '--round' && args[i + 1]) roundNumber = parseInt(args[++i], 10);
+  else if (arg === '--parallel') parallel = true;
+  else if (arg === '--dry-run') dryRun = true;
+  else if (arg === '--skip-evidence') skipEvidence = true;
 }
 
-function error(msg) {
-  console.error(`${C.red}[ERROR]${C.reset} ${msg}`);
+// Load reviewer definitions
+function loadReviewer(name) {
+  const path = join(SKILL_DIR, 'reviewers', `${name}.md`);
+  if (!existsSync(path)) return null;
+  return readFileSync(path, 'utf-8');
 }
 
-function loadYaml(filePath) {
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return yamlLoad(content);
-  } catch (err) {
-    if (err.code === 'ENOENT') return null;
-    throw err;
-  }
-}
+// Load reviewer instructions
+function getReviewerInstructions(name) {
+  const content = loadReviewer(name);
+  if (!content) return null;
 
-function loadProfile(profileName) {
-  const profilePath = path.join(SKILL_DIR, 'profiles', `${profileName}.yaml`);
-  const data = loadYaml(profilePath);
-  if (!data) return null;
-
-  return {
-    name: data.name,
-    description: data.description,
-    required_reviewers: data.required_reviewers || [],
-    conditional_reviewers: data.conditional_reviewers || {},
-    thresholds: {
-      min_score: data.thresholds?.min_score || 90,
-      fail_on_redlines: data.thresholds?.fail_on_redlines !== false,
-      fail_on_p0_p1_blockers: data.thresholds?.fail_on_p0_p1_blockers !== false,
-    },
-    commands: data.commands || {},
+  // Extract key sections
+  const instructions = {
+    name,
+    dimensions: [],
+    redlines: [],
+    checklist: [],
   };
-}
 
-function execCommand(cmd, options = {}) {
-  try {
-    const output = execSync(cmd, {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: options.timeout || 120000,
-      ...options,
-    });
-    return { success: true, output };
-  } catch (err) {
-    return {
-      success: false,
-      output: err.stdout || '',
-      error: err.stderr || err.message,
-      exitCode: err.status || 1,
-    };
-  }
-}
-
-async function createRound(roundName, profile) {
-  const roundDir = path.join(QUALITY_REPORTS_DIR, roundName);
-  const evidenceDir = path.join(roundDir, 'evidence');
-
-  // Create directories
-  fs.mkdirSync(evidenceDir, { recursive: true });
-  for (const reviewer of profile.required_reviewers) {
-    fs.mkdirSync(path.join(roundDir, reviewer), { recursive: true });
+  // Parse dimensions from markdown
+  const dimensionMatch = content.match(/##\s+Review\s+Dimensions[\s\S]*?(?=##|$)/i);
+  if (dimensionMatch) {
+    const lines = dimensionMatch[0].split('\n');
+    for (const line of lines) {
+      if (line.includes('**') || line.includes('|')) {
+        instructions.checklist.push(line.replace(/[#*|]/g, '').trim());
+      }
+    }
   }
 
-  log(`Created round directory: ${roundDir}`);
-  return roundDir;
+  return instructions;
 }
 
-async function collectEvidence(roundDir, profile) {
-  const evidenceDir = path.join(roundDir, 'evidence');
-  const manifest = {
-    round: roundDir.split('/').pop(),
-    profile: profile.name,
+// Profiles
+const PROFILES = {
+  quick: {
+    name: 'Quick Review',
+    reviewers: ['product-flow', 'architecture-maintainer'],
+  },
+  default: {
+    name: 'Default Review',
+    reviewers: ['product-flow', 'destructive-qa', 'terminal-veteran'],
+  },
+  'release-gate': {
+    name: 'Release Gate',
+    reviewers: ['product-flow', 'architecture-maintainer', 'release-verifier', 'destructive-qa', 'terminal-veteran'],
+  },
+  full: {
+    name: 'Full Review',
+    reviewers: ['product-flow', 'architecture-maintainer', 'release-verifier', 'destructive-qa', 'native-designer', 'zero-doc-user', 'terminal-veteran', 'data-security'],
+  },
+};
+
+// Collect evidence
+function collectEvidence() {
+  console.log(`\n${c.cyan}═══ Collecting Evidence ═══${c.reset}\n`);
+
+  const evidence = {
     timestamp: new Date().toISOString(),
-    reviewers: profile.required_reviewers,
-    evidence: [],
-    commands_run: {},
+    git: {},
+    structure: {},
   };
 
-  log('Collecting evidence...');
-
-  // Git diff
-  const diffResult = execCommand('git diff HEAD~1', { timeout: 10000 });
-  if (diffResult.success) {
-    fs.writeFileSync(path.join(evidenceDir, 'git-diff.patch'), diffResult.output);
-    manifest.evidence.push({ name: 'git-diff.patch', type: 'diff' });
-    log('Git diff collected');
-  }
-
-  // Git status
-  const statusResult = execCommand('git status --short');
-  if (statusResult.success) {
-    fs.writeFileSync(path.join(evidenceDir, 'git-status.txt'), statusResult.output);
-    manifest.evidence.push({ name: 'git-status.txt', type: 'status' });
-  }
-
-  // Run tests
-  if (profile.commands.test) {
-    const testResult = execCommand(profile.commands.test, { timeout: 120000 });
-    fs.writeFileSync(path.join(evidenceDir, 'test.log'), testResult.output + (testResult.error || ''));
-    manifest.evidence.push({ name: 'test.log', type: 'log', exit_code: testResult.exitCode });
-    manifest.commands_run.test = { exit_code: testResult.exitCode, passed: testResult.success };
-    log(`Tests: ${testResult.success ? C.green + 'PASSED' + C.reset : C.red + 'FAILED' + C.reset}`);
-  }
-
-  // Run typecheck
-  if (profile.commands.typecheck) {
-    const typeResult = execCommand(profile.commands.typecheck, { timeout: 60000 });
-    fs.writeFileSync(path.join(evidenceDir, 'typecheck.log'), typeResult.output);
-    manifest.evidence.push({ name: 'typecheck.log', type: 'log', exit_code: typeResult.exitCode });
-    manifest.commands_run.typecheck = { exit_code: typeResult.exitCode, passed: typeResult.success };
-  }
-
-  // Save manifest
-  fs.writeFileSync(path.join(evidenceDir, 'manifest.yaml'),
-    yaml.dump(manifest, { indent: 2, lineWidth: 120 }));
-
-  log('Evidence collection complete');
-  return manifest;
-}
-
-function validateResultYaml(resultPath, reviewer) {
-  const data = loadYaml(resultPath);
-  if (!data) {
-    return { valid: false, error: 'File not found or invalid YAML' };
-  }
-
-  const errors = [];
-
-  // Required fields
-  if (!data.reviewer) errors.push('Missing required field: reviewer');
-  if (typeof data.score !== 'number' && !data.score) errors.push('Missing required field: score');
-  if (!Array.isArray(data.blockers)) errors.push('Missing required field: blockers (must be array)');
-  if (!Array.isArray(data.redlines)) errors.push('Missing required field: redlines (must be array)');
-
-  // Score range
-  const score = Number(data.score);
-  if (isNaN(score) || score < 0 || score > 100) {
-    errors.push('score must be a number between 0 and 100');
-  }
-
-  // Blocker severity validation
-  if (Array.isArray(data.blockers)) {
-    for (const blocker of data.blockers) {
-      if (typeof blocker === 'object' && blocker.severity) {
-        if (!['P0', 'P1', 'P2', 'P3'].includes(blocker.severity)) {
-          errors.push(`Invalid blocker severity: ${blocker.severity}`);
-        }
-      }
-    }
-  }
-
-  // Redline severity validation
-  if (Array.isArray(data.redlines)) {
-    for (const redline of data.redlines) {
-      if (typeof redline === 'object' && redline.severity) {
-        if (!['P0', 'P1'].includes(redline.severity)) {
-          errors.push(`Redline severity must be P0 or P1, got: ${redline.severity}`);
-        }
-      }
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    data,
-  };
-}
-
-async function validateResults(roundDir, profile) {
-  log('Validating reviewer results...');
-
-  const results = {};
-  let allValid = true;
-
-  for (const reviewer of profile.required_reviewers) {
-    const resultPath = path.join(roundDir, reviewer, 'result.yaml');
-    const validation = validateResultYaml(resultPath, reviewer);
-
-    results[reviewer] = {
-      exists: fs.existsSync(resultPath),
-      ...validation,
+  // Git info
+  try {
+    evidence.git = {
+      branch: execSync('git branch --show-current 2>/dev/null', { encoding: 'utf-8' }).trim(),
+      commit: execSync('git rev-parse --short HEAD 2>/dev/null', { encoding: 'utf-8' }).trim(),
+      diffStats: execSync('git diff --stat 2>/dev/null', { encoding: 'utf-8' }).trim(),
     };
 
-    if (!results[reviewer].exists) {
-      error(`${reviewer}: result.yaml not found`);
-      allValid = false;
-    } else if (!validation.valid) {
-      error(`${reviewer}: Invalid result.yaml`);
-      for (const err of validation.errors) {
-        console.log(`  - ${err}`);
-      }
-      allValid = false;
-    } else {
-      log(`${reviewer}: result.yaml valid (score: ${validation.data.score})`, 'pass');
+    // Get changed files
+    evidence.git.changedFiles = execSync('git diff --name-only 2>/dev/null', { encoding: 'utf-8' })
+      .trim().split('\n').filter(Boolean);
+  } catch (e) {
+    console.log(`  ${c.yellow}⚠ Could not collect git info${c.reset}`);
+  }
+
+  // Project structure
+  try {
+    const apps = readdirSync(join(PROJECT_ROOT, 'apps')).filter(f => {
+      try {
+        return statSync(join(PROJECT_ROOT, 'apps', f)).isDirectory();
+      } catch { return false; }
+    });
+    evidence.structure.apps = apps;
+
+    const packages = existsSync(join(PROJECT_ROOT, 'packages')) ?
+      readdirSync(join(PROJECT_ROOT, 'packages')).filter(f => {
+        try {
+          return statSync(join(PROJECT_ROOT, 'packages', f)).isDirectory();
+        } catch { return false; }
+      }) : [];
+    evidence.structure.packages = packages;
+  } catch (e) {
+    // Ignore
+  }
+
+  console.log(`  ${c.green}✓${c.reset} Git: ${evidence.git.branch || '?'} @ ${evidence.git.commit || '?'}`);
+  console.log(`  ${c.green}✓${c.reset} Apps: ${evidence.structure.apps?.join(', ') || 'none'}`);
+
+  return evidence;
+}
+
+// Detect conditional reviewers
+function detectConditionalReviewers(reviewers, evidence) {
+  const conditionalReviewers = [];
+
+  for (const reviewer of reviewers) {
+    switch (reviewer) {
+      case 'native-designer':
+        // Check for UI changes
+        const hasUIChanges = evidence.git.changedFiles?.some(f =>
+          /\.(tsx?|jsx?|css|scss)$/.test(f) || f.includes('ui') || f.includes('components')
+        );
+        if (hasUIChanges) conditionalReviewers.push(reviewer);
+        break;
+
+      case 'terminal-veteran':
+        // Check for CLI/script changes
+        const hasCLChanges = evidence.git.changedFiles?.some(f =>
+          f.includes('cli') || f.includes('scripts') || f.includes('local-server')
+        );
+        if (hasCLChanges) conditionalReviewers.push(reviewer);
+        break;
+
+      case 'data-security':
+        // Check for security-related changes
+        const hasSecurityChanges = evidence.git.changedFiles?.some(f =>
+          f.includes('auth') || f.includes('security') || f.includes('storage')
+        );
+        if (hasSecurityChanges) conditionalReviewers.push(reviewer);
+        break;
+
+      default:
+        // Not conditional
+        break;
     }
   }
 
-  return { allValid, results };
+  return conditionalReviewers;
 }
 
-async function runGate(roundName, profileName) {
-  log('Running quality gate...');
+// Generate reviewer prompt
+function generateReviewerPrompt(reviewerName, instructions) {
+  return `
+## ${instructions.name} Review
 
-  const gateScript = path.join(SKILL_DIR, 'scripts', 'review-gate.mjs');
-  const result = execCommand(`node "${gateScript}" --round ${roundName} --profile ${profileName}`, {
-    timeout: 30000,
-  });
+请执行 ${instructions.name} 的评审。
 
-  console.log(result.output);
+### 评审维度
+${instructions.checklist.slice(0, 10).map((item, i) => `${i + 1}. ${item}`).join('\n')}
 
-  // Parse gate result
-  const gateResultPath = path.join(QUALITY_REPORTS_DIR, roundName, 'gate-result.json');
-  const gateResult = loadYaml(gateResultPath);
+### 你的任务
+1. 读取相关代码文件
+2. 检查每个评审维度
+3. 给出具体评分 (每项满分 100，最后加权平均)
+4. 列出发现的 blocker (P0/P1)
+5. 列出改进建议 (P2/P3)
+
+### 输出要求
+在 ${REPORT_DIR}/round-{N}/${reviewerName}/ 目录下创建:
+- score.md - 评分详情
+- blockers.md - P0/P1 必须修复的问题
+- improvement-list.md - P2/P3 改进建议
+
+### 评分标准
+- >= 90: 优秀，可以发布
+- 80-89: 良好，建议改进
+- 70-79: 及格，必须改进
+- < 70: 不及格，需要重构
+
+### 红线规则
+如果发现任何红线，必须在 blockers.md 中明确标注为 P0。
+`;
+}
+
+// Run a single reviewer (simulated - in real use, this would spawn a subagent)
+async function runReviewer(reviewerName, roundDir) {
+  const instructions = getReviewerInstructions(reviewerName);
+  if (!instructions) {
+    console.log(`  ${c.red}✗${c.reset} ${reviewerName}: definition not found`);
+    return { name: reviewerName, status: 'error', error: 'Definition not found' };
+  }
+
+  console.log(`\n${c.cyan}─── ${reviewerName} ───${c.reset}`);
+
+  // Create reviewer directory
+  const reviewerDir = join(roundDir, reviewerName);
+  mkdirSync(reviewerDir, { recursive: true });
+
+  // Generate prompt
+  const prompt = generateReviewerPrompt(reviewerName, instructions);
+
+  // Write prompt to reviewer directory (for manual review)
+  const promptPath = join(reviewerDir, 'prompt.md');
+  writeFileSync(promptPath, prompt);
+
+  console.log(`  ${c.green}✓${c.reset} Review prompt written to: ${promptPath}`);
+  console.log(`  ${c.yellow}⚠${c.reset} Manual review required - running ${reviewerName} assessment`);
 
   return {
-    passed: result.exitCode === 0,
-    exitCode: result.exitCode,
-    result: gateResult,
+    name: reviewerName,
+    status: 'pending',
+    promptPath,
   };
 }
 
-async function generateSummary(roundDir, profile, gateResult, validation) {
-  const summaryPath = path.join(roundDir, 'summary.md');
+// Run gate check
+function runGateCheck(roundDir, profile) {
+  console.log(`\n${c.cyan}═══ Gate Check ═══${c.reset}\n`);
 
-  const lines = [
-    `# Quality Review Summary - ${profile.name}`,
-    '',
-    `**Profile**: ${profile.name}`,
-    `**Date**: ${new Date().toISOString()}`,
-    `**Gate Status**: ${gateResult.passed ? '✅ PASSED' : '❌ FAILED'}`,
-    '',
-    '## Reviewer Results',
-    '',
-    '| Reviewer | Score | Status |',
-    '|----------|-------|--------|',
-  ];
-
-  for (const [reviewer, data] of Object.entries(validation.results)) {
-    if (data.data) {
-      const score = data.data.score;
-      const status = score >= profile.thresholds.min_score ? '✅' : '❌';
-      lines.push(`| ${reviewer} | ${score}/100 | ${status} |`);
-    } else {
-      lines.push(`| ${reviewer} | N/A | ❌ |`);
+  // Run the gate script
+  try {
+    const gateScript = join(SKILL_DIR, 'scripts', 'review-gate.mjs');
+    if (existsSync(gateScript)) {
+      execSync(`node "${gateScript}" --profile ${profile} --round ${roundDir.split('round-').pop()}`, {
+        stdio: 'inherit',
+        cwd: PROJECT_ROOT,
+      });
     }
+  } catch (e) {
+    console.log(`  ${c.red}✗${c.reset} Gate check failed`);
+    return false;
   }
 
-  lines.push('');
-  lines.push('## Gate Result');
-  lines.push('');
-  lines.push('```json');
-  lines.push(JSON.stringify(gateResult, null, 2));
-  lines.push('```');
-
-  fs.writeFileSync(summaryPath, lines.join('\n'));
-  log(`Summary written to: ${summaryPath}`);
+  return true;
 }
 
+// Main
 async function main() {
-  const { values, positionals } = parseArgs({
-    options: {
-      round: { type: 'string' },
-      profile: { type: 'string', default: 'default' },
-      collect: { type: 'boolean', default: true },
-      dryRun: { type: 'boolean', default: false },
-      help: { type: 'boolean', default: false },
-    },
-  });
+  console.log(`\n${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
+  console.log(`${c.bright}${c.cyan}    Release Quality Review - Orchestrator${c.reset}`);
+  console.log(`${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
 
-  if (values.help) {
-    console.log(`
-${C.blue}Review Runner - Automated Quality Review${C.reset}
+  const profileConfig = PROFILES[profile] || PROFILES['release-gate'];
 
-Usage:
-  node review-runner.mjs [options]
+  // Dry run mode
+  if (dryRun) {
+    console.log(`\n${c.yellow}DRY RUN MODE${c.reset}`);
+    console.log(`  Profile: ${profile}`);
+    console.log(`  Reviewers: ${profileConfig.reviewers.join(', ')}`);
+    console.log(`  Parallel: ${parallel}`);
 
-Options:
-  --round <name>    Round name (auto-generated if not specified)
-  --profile <name>  Review profile: default, release-gate (default: default)
-  --collect         Collect evidence (default: true)
-  --dry-run         Validate without running gate
-  --help            Show this help
+    // Validate reviewer definitions
+    console.log('\nReviewer definitions:');
+    for (const name of profileConfig.reviewers) {
+      const exists = existsSync(join(SKILL_DIR, 'reviewers', `${name}.md`));
+      console.log(`  ${exists ? c.green + '✓' : c.red + '✗'} ${name}`);
+    }
 
-Examples:
-  node review-runner.mjs --profile default
-  node review-runner.mjs --round round-002 --profile release-gate
-  node review-runner.mjs --dry-run
-
-Exit codes:
-  0 = All gates passed
-  1 = Gates failed
-  2 = Error
-`);
-    process.exit(0);
+    return;
   }
 
-  // Load profile
-  const profileName = values.profile || 'default';
-  const profile = loadProfile(profileName);
-
-  if (!profile) {
-    error(`Profile not found: ${profileName}`);
-    error(`Available profiles in: ${path.join(SKILL_DIR, 'profiles')}`);
-    process.exit(2);
+  // Determine round number
+  if (roundNumber === null) {
+    // Find next round
+    let maxRound = 0;
+    if (existsSync(REPORT_DIR)) {
+      const rounds = readdirSync(REPORT_DIR).filter(d => d.startsWith('round-'));
+      for (const r of rounds) {
+        const num = parseInt(r.replace('round-', ''), 10);
+        if (!isNaN(num) && num > maxRound) maxRound = num;
+      }
+    }
+    roundNumber = maxRound + 1;
   }
 
-  log(`${C.blue}Review Profile: ${profile.name}${C.reset}`);
-  log(`Description: ${profile.description}`);
-  log(`Required reviewers: ${profile.required_reviewers.join(', ')}`);
+  const roundDir = join(REPORT_DIR, `round-${String(roundNumber).padStart(3, '0')}`);
+  mkdirSync(roundDir, { recursive: true });
 
-  // Determine round name
-  const roundName = values.round || `round-${Date.now()}`;
-  const roundDir = path.join(QUALITY_REPORTS_DIR, roundName);
-
-  console.log('');
-
-  // Create round
-  await createRound(roundName, profile);
+  console.log(`\n${c.blue}ℹ${c.reset} Profile: ${profileConfig.name}`);
+  console.log(`${c.blue}ℹ${c.reset} Round: ${roundNumber}`);
+  console.log(`${c.blue}ℹ${c.reset} Report: ${roundDir}`);
 
   // Collect evidence
-  if (values.collect) {
-    await collectEvidence(roundDir, profile);
+  const evidence = skipEvidence ? {} : collectEvidence();
+
+  // Detect conditional reviewers
+  const requiredReviewers = profileConfig.reviewers.filter(r =>
+    !['native-designer', 'zero-doc-user', 'terminal-veteran', 'data-security'].includes(r)
+  );
+  const conditionalReviewers = profileConfig.reviewers.filter(r =>
+    ['native-designer', 'zero-doc-user', 'terminal-veteran', 'data-security'].includes(r)
+  );
+
+  const triggeredConditional = detectConditionalReviewers(conditionalReviewers, evidence);
+  const allReviewers = [...requiredReviewers, ...triggeredConditional];
+
+  if (triggeredConditional.length > 0) {
+    console.log(`\n${c.green}✓${c.reset} Conditional reviewers triggered: ${triggeredConditional.join(', ')}`);
   }
 
-  // Validate results
-  const validation = await validateResults(roundDir, profile);
+  // Run reviewers
+  console.log(`\n${c.cyan}═══ Running Reviews ═══${c.reset}\n`);
 
-  if (!validation.allValid) {
-    error('Result validation failed');
-    process.exit(2);
+  const results = [];
+  for (const reviewer of allReviewers) {
+    const result = await runReviewer(reviewer, roundDir);
+    results.push(result);
   }
 
-  if (values.dryRun) {
-    log('Dry run complete', 'pass');
-    process.exit(0);
-  }
+  // Summary
+  console.log(`\n${c.cyan}═══ Summary ═══${c.reset}\n`);
+  console.log(`  Reviewers: ${results.length}`);
+  console.log(`  Status: ${results.filter(r => r.status === 'pending').length} pending review`);
 
-  // Run gate
-  const gateResult = await runGate(roundName, profileName);
+  console.log(`\n${c.yellow}Next steps:${c.reset}`);
+  console.log(`  1. Complete reviews manually or via subagents`);
+  console.log(`  2. Run gate check: node review-gate.mjs --profile ${profile}`);
+  console.log(`  3. If all pass, final-report.md will be generated`);
 
-  // Generate summary
-  await generateSummary(roundDir, profile, gateResult.result, validation);
+  // Write metadata
+  const meta = {
+    profile,
+    round: roundNumber,
+    reviewers: allReviewers,
+    triggeredConditional,
+    timestamp: new Date().toISOString(),
+    evidence: {
+      git: evidence.git,
+      structure: evidence.structure,
+    },
+  };
+  writeFileSync(join(roundDir, 'metadata.json'), JSON.stringify(meta, null, 2));
 
-  console.log('');
-  if (gateResult.passed) {
-    log('✅ REVIEW PASSED', 'pass');
-    process.exit(0);
-  } else {
-    error('❌ REVIEW FAILED');
-    console.log('');
-    console.log('Failed reviewers:');
-    for (const [reviewer, data] of Object.entries(validation.results)) {
-      if (data.data && data.data.score < profile.thresholds.min_score) {
-        console.log(`  - ${reviewer}: ${data.data.score}/100`);
-      }
-    }
-    if (gateResult.result?.reasons) {
-      console.log('');
-      console.log('Reasons:');
-      for (const reason of gateResult.result.reasons) {
-        console.log(`  - ${reason}`);
-      }
-    }
-    process.exit(1);
-  }
+  console.log(`\n${c.green}✓${c.reset} Metadata written to: ${join(roundDir, 'metadata.json')}`);
 }
 
 main().catch(err => {
-  error(`Unexpected error: ${err.message}`);
-  process.exit(2);
+  console.error(`\n${c.red}Error:${c.reset}`, err.message);
+  process.exit(1);
 });
