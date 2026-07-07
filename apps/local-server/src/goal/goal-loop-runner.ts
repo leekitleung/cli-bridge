@@ -37,6 +37,8 @@ export interface GoalLoopRunnerOptions {
   verifyTimeoutMs?: number;
   /** 默认执行器 */
   defaultExecutor?: 'workbuddy' | 'opencode' | 'auto';
+  /** 清理间隔 (ms)，默认 5 分钟 */
+  cleanupIntervalMs?: number;
 }
 
 export interface GoalLoopRunnerStatus {
@@ -95,17 +97,25 @@ export class GoalLoopRunner {
   /** 轮询定时器 */
   private pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /** 清理定时器 */
+  private cleanupTimer?: ReturnType<typeof setInterval>;
+
+  /** 清理间隔 (默认 5 分钟) */
+  private readonly cleanupIntervalMs: number;
+
   constructor(
     runtime: BridgeRuntime,
     options: GoalLoopRunnerOptions = {},
   ) {
     this.runtime = runtime;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? 5 * 60 * 1000;
     this.options = {
       stepCeiling: options.stepCeiling ?? 10,
       pollIntervalMs: options.pollIntervalMs ?? 5000,
       autoVerify: options.autoVerify ?? true,
       verifyTimeoutMs: options.verifyTimeoutMs ?? 60_000,
       defaultExecutor: options.defaultExecutor ?? 'auto',
+      cleanupIntervalMs: this.cleanupIntervalMs,
     };
 
     this.orchestrator = new GoalOrchestrator(runtime.goalStore, {
@@ -116,6 +126,7 @@ export class GoalLoopRunner {
     this.dispatcher = createExecutionDispatcher(this.registry);
 
     this.initializeExecutors();
+    this.startCleanupTimer();
   }
 
   /**
@@ -213,6 +224,24 @@ export class GoalLoopRunner {
     this.activeLoops.delete(loopId);
     // 使用 cancel 代替不存在的 stop 方法
     this.runtime.automationLoopStore.cancel(loopId);
+  }
+
+  /**
+   * 停止所有 Goal Loops 并清理资源
+   */
+  dispose(): void {
+    // 停止所有活跃的 loops
+    for (const loopId of this.activeLoops.keys()) {
+      this.stop(loopId);
+    }
+
+    // 停止清理定时器
+    this.stopCleanup();
+
+    // 清理所有 pending gates
+    this.pendingGateApprovals.clear();
+
+    logger.info('[GoalLoopRunner] Disposed all resources');
   }
 
   /**
@@ -482,6 +511,75 @@ export class GoalLoopRunner {
    */
   private shouldVerify(stepKind: string): boolean {
     return ['run-command', 'apply-patch', 'write-file'].includes(stepKind);
+  }
+
+  /**
+   * 启动清理定时器 - 定期清理过期的 pending gates
+   */
+  private startCleanupTimer(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+    }
+
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupStaleGates();
+    }, this.cleanupIntervalMs);
+
+    logger.info('[GoalLoopRunner] Cleanup timer started', { intervalMs: this.cleanupIntervalMs });
+  }
+
+  /**
+   * 清理过期的 pending gates（超过 5 分钟未审批）
+   */
+  private cleanupStaleGates(): number {
+    const now = Date.now();
+    const maxAgeMs = this.cleanupIntervalMs;
+    let cleaned = 0;
+
+    for (const [id, gate] of this.pendingGateApprovals.entries()) {
+      if (now - gate.createdAt > maxAgeMs) {
+        this.pendingGateApprovals.delete(id);
+        cleaned++;
+        logger.warn('[GoalLoopRunner] Stale gate cleaned', { gateId: id, stepId: gate.stepId, ageMs: now - gate.createdAt });
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info('[GoalLoopRunner] Cleaned stale gates', { count: cleaned });
+    }
+
+    return cleaned;
+  }
+
+  /**
+   * 停止清理定时器
+   */
+  public stopCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+      logger.info('[GoalLoopRunner] Cleanup timer stopped');
+    }
+  }
+
+  /**
+   * 获取清理统计
+   */
+  getCleanupStats(): { pendingGates: number; oldestGateMs: number | null } {
+    const now = Date.now();
+    let oldestAgeMs: number | null = null;
+
+    for (const gate of this.pendingGateApprovals.values()) {
+      const age = now - gate.createdAt;
+      if (oldestAgeMs === null || age > oldestAgeMs) {
+        oldestAgeMs = age;
+      }
+    }
+
+    return {
+      pendingGates: this.pendingGateApprovals.size,
+      oldestGateMs: oldestAgeMs,
+    };
   }
 }
 
