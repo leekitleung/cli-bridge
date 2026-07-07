@@ -323,6 +323,20 @@ export class InMemoryGoalStore {
     return Array.from(this.goals.values(), clone);
   }
 
+  /** Get all goals as a read-only array (for diagnostics). */
+  getGoalsArray(): Goal[] {
+    return this.listGoals();
+  }
+
+  /** Get all plans as a read-only array (for diagnostics). */
+  getPlansArray(): Plan[] {
+    return this.listPlans();
+  }
+
+  listPlans(): Plan[] {
+    return Array.from(this.plans.values(), clone);
+  }
+
   /** Export goals for snapshot persistence. */
   exportGoals(): Goal[] {
     return this.listGoals();

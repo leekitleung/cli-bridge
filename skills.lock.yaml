@@ -1,0 +1,12 @@
+version: '1.0'
+updated_at: '2026-07-07T02:19:59.407Z'
+installed:
+  release-quality-review:
+    source: local
+    path: skills/release-quality-review
+    trust_level: L0
+    status: active
+    checksum: sha256:9e023dd6f2b339289d6b2d62ab04d3736fabe4f8f1b87325a391c02220fff747
+    adapters:
+      claude: .claude/skills/release-quality-review
+      codex: .agents/skills/release-quality-review

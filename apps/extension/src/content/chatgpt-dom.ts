@@ -583,3 +583,94 @@ export async function fillComposerText(
     method,
   };
 }
+
+// ── Page State Detection ─────────────────────────────────────────────────────
+
+export type ChatGPTPageState =
+  | 'conversation'    // 在对话中，有对话历史
+  | 'idle'           // 空闲状态，未发起对话
+  | 'loading'        // 页面加载中
+  | 'error'          // 错误状态
+  | 'rate-limited'   // 速率限制
+  | 'auth-required'  // 需要认证
+  | 'unknown';       // 未知状态
+
+export interface PageStateDetection {
+  state: ChatGPTPageState;
+  conversationId: string | null;
+  messageCount: number;
+  isAtConversationStart: boolean;
+  lastError: string | null;
+}
+
+/**
+ * 检测 ChatGPT 页面当前状态
+ * 用于 Source Relay 判断是否应该进行中继
+ */
+export function detectChatGPTPageState(): PageStateDetection {
+  // 检查是否有对话消息
+  const conversationTurns = document.querySelectorAll('[data-testid="conversation-turn"]');
+  const messageCount = conversationTurns.length;
+
+  // 检查是否在对话开始位置（没有历史消息）
+  const isAtConversationStart = messageCount === 0;
+
+  // 检查是否有加载状态
+  const isLoading = !!document.querySelector(
+    '[data-testid="loading-turn"], .generating, [aria-busy="true"]'
+  );
+
+  // 检查错误状态
+  const errorBanner = document.querySelector(
+    '[data-testid="error-banner"], .error-state, [role="alert"]'
+  );
+  const lastError = errorBanner?.textContent?.trim() ?? null;
+
+  // 检查速率限制
+  const isRateLimited = !!document.querySelector(
+    '[data-testid="rate-limit-warning"], .rate-limit, text=/请求过于频繁/i'
+  );
+
+  // 检查认证状态
+  const isAuthRequired = document.body.textContent?.includes('登录') === true &&
+    document.body.textContent?.includes('Sign in') === true &&
+    !document.querySelector('[data-testid="prompt-textarea"]');
+
+  // 获取当前对话 ID
+  const url = window.location.href;
+  const conversationIdMatch = url.match(/\/c\/([a-zA-Z0-9-]+)/);
+  const conversationId = conversationIdMatch?.[1] ?? null;
+
+  // 确定最终状态
+  let state: ChatGPTPageState;
+  if (isLoading) {
+    state = 'loading';
+  } else if (isRateLimited) {
+    state = 'rate-limited';
+  } else if (isAuthRequired) {
+    state = 'auth-required';
+  } else if (lastError) {
+    state = 'error';
+  } else if (messageCount > 0) {
+    state = 'conversation';
+  } else {
+    state = 'idle';
+  }
+
+  return {
+    state,
+    conversationId,
+    messageCount,
+    isAtConversationStart,
+    lastError,
+  };
+}
+
+/**
+ * 检查是否应该进行中继
+ * 只有在对话状态或空闲状态时才应该中继
+ */
+export function shouldRelay(): boolean {
+  const pageState = detectChatGPTPageState();
+  return pageState.state === 'conversation' || pageState.state === 'idle';
+}

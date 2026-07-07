@@ -1,0 +1,39 @@
+reviewer: destructive-qa
+score: 52
+dimension_scores:
+  security_posture: 50
+  boundary_handling: 55
+  error_recovery: 50
+blockers:
+  - id: DQA-001
+    severity: P0
+    description: Non-atomic claimNext in ChatGPT Web Queue - concurrent callers can claim same request
+  - id: DQA-002
+    severity: P0
+    description: In-memory store race conditions - no synchronization primitives
+  - id: DQA-003
+    severity: P0
+    description: State hydration fails open - corrupt snapshot data leads to inconsistent state
+  - id: DQA-004
+    severity: P0
+    description: Pairing token partially logged (first 8 chars visible)
+  - id: DQA-005
+    severity: P1
+    description: X-Forwarded-For spoofing possible for loopback
+  - id: DQA-006
+    severity: P1
+    description: No CSRF protection on cookie-based auth
+  - id: DQA-007
+    severity: P1
+    description: Rate limiter non-thread-safe - concurrent requests can bypass limits
+  - id: DQA-008
+    severity: P1
+    description: Claim token not cryptographically bound
+redlines:
+  - id: RL-001
+    severity: P0
+    description: Race condition in critical claimNext path
+  - id: RL-002
+    severity: P0
+    description: Authentication bypass possible via X-Forwarded-For spoofing
+recommendation: fail

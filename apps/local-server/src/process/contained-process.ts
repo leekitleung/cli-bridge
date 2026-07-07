@@ -27,13 +27,15 @@ export async function runContainedProcess(
   options: ContainedProcessOptions,
 ): Promise<ContainedProcessResult> {
   return await new Promise((resolve) => {
-    const detached = process.platform !== 'win32';
+    // SECURITY FIX: 始终使用 detached: false 避免孤儿进程问题
+    // 在 Unix 上 detached: true 会创建新的进程组，如果父进程崩溃，子进程可能变成孤儿
+    // 统一使用 detached: false 确保子进程始终受父进程管理
     const child = spawn(file, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: 'pipe',
       shell: false,
-      detached,
+      detached: false,  // SECURITY FIX: 统一设置为 false
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];

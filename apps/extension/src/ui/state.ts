@@ -190,8 +190,26 @@ export function createConnectionPanelStatus(state: BridgePanelConnectionState): 
   }
 }
 
-export function getPanelStatusColor(kind: BridgePanelStatusKind): string {
-  // WCAG AA compliant colors on white background (4.5:1 minimum)
+export function getPanelStatusColor(kind: BridgePanelStatusKind, isDark = false): string {
+  // WCAG AA compliant colors on white/dark background (4.5:1 minimum)
+  if (isDark) {
+    // Dark mode colors (on #171717 background)
+    switch (kind) {
+      case 'success':
+        return '#4ade80'; // #4ade80 on #171717 = 7.2:1
+      case 'failed':
+        return '#f87171'; // #f87171 on #171717 = 5.2:1
+      case 'blocked':
+      case 'fallback':
+        return '#fb923c'; // #fb923c on #171717 = 4.6:1
+      case 'warning':
+        return '#fbbf24'; // #fbbf24 on #171717 = 11.3:1
+      case 'idle':
+      default:
+        return '#9ca3af'; // #9ca3af on #171717 = 5.3:1
+    }
+  }
+  // Light mode colors (on #ffffff background)
   switch (kind) {
     case 'success':
       return '#166534'; // #166534 on #ffffff = 5.1:1
@@ -301,8 +319,8 @@ export function createAutomationMirrorStatus(state: AutomationMirrorState): Brid
   if (!state.binding) {
     return {
       kind: 'idle',
-      label: '自动化未绑定',
-      detail: '等待服务器创建双端点绑定',
+      label: 'Automation unbound',
+      detail: 'Waiting for server to create dual-endpoint binding',
     };
   }
   const proposalStatus = state.proposal?.status ?? 'none';
@@ -347,8 +365,8 @@ export function createSourceRelayStatus(state: SourceRelayHealthState): BridgePa
   if (!state.isConnected) {
     return {
       kind: 'failed',
-      label: 'Source Relay 未连接',
-      detail: '等待与 ChatGPT Web 配对',
+      label: 'Source Relay Disconnected',
+      detail: 'Waiting for ChatGPT Web pairing',
     };
   }
 
@@ -356,12 +374,12 @@ export function createSourceRelayStatus(state: SourceRelayHealthState): BridgePa
   if (state.isInBackoff) {
     const secondsLeft = Math.ceil(state.backoffRemainingMs / 1000);
     const intervalDesc = state.currentIntervalMs >= state.maxIntervalMs
-      ? '已达最大间隔'
-      : `${formatInterval(state.currentIntervalMs)} 后重试`;
+      ? 'Max interval reached'
+      : `Retry in ${formatInterval(state.currentIntervalMs)}`;
     return {
       kind: 'warning',
-      label: '重连中 (退避)',
-      detail: `${state.backoffAttempts}次 · ${secondsLeft}秒后重试 · ${intervalDesc}`,
+      label: 'Reconnecting (backoff)',
+      detail: `${state.backoffAttempts} attempts · ${secondsLeft}s · ${intervalDesc}`,
     };
   }
 
@@ -369,8 +387,8 @@ export function createSourceRelayStatus(state: SourceRelayHealthState): BridgePa
   if (state.consecutiveFailures > 0) {
     return {
       kind: 'warning',
-      label: 'Source Relay 不稳定',
-      detail: `${state.consecutiveFailures}次失败 · ${state.lastError || '等待恢复...'}`,
+      label: 'Source Relay Unstable',
+      detail: `${state.consecutiveFailures} failures · ${state.lastError || 'Waiting for recovery...'}`,
     };
   }
 
@@ -382,24 +400,24 @@ export function createSourceRelayStatus(state: SourceRelayHealthState): BridgePa
   // Healthy
   return {
     kind: 'success',
-    label: 'Source Relay 正常',
+    label: 'Source Relay OK',
     detail: state.lastHeartbeatAt
-      ? `心跳 ${formatTimeSince(state.lastHeartbeatAt)} · 成功率 ${successRate}%`
-      : `已连接 · 成功率 ${successRate}%`,
+      ? `Heartbeat ${formatTimeSince(state.lastHeartbeatAt)} · Success rate ${successRate}%`
+      : `Connected · Success rate ${successRate}%`,
   };
 }
 
 function formatInterval(ms: number): string {
-  if (ms >= 60_000) return `${Math.floor(ms / 60_000)}分钟`;
-  if (ms >= 1000) return `${Math.floor(ms / 1000)}秒`;
+  if (ms >= 60_000) return `${Math.floor(ms / 60_000)}m`;
+  if (ms >= 1000) return `${Math.floor(ms / 1000)}s`;
   return `${ms}ms`;
 }
 
 function formatTimeSince(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return `${seconds}s前`;
+  if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m前`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h前`;
+  return `${hours}h ago`;
 }

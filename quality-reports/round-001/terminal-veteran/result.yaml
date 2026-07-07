@@ -1,0 +1,22 @@
+reviewer: terminal-veteran
+score: 72
+dimension_scores:
+  error_handling: 70
+  logging: 65
+  timeouts: 75
+  degradation: 70
+blockers:
+  - id: TV-001
+    severity: P1
+    description: Command backend allowlist has Windows cmd.exe bypass
+  - id: TV-002
+    severity: P2
+    description: No structured logging (JSON) for machine parsing
+  - id: TV-003
+    severity: P2
+    description: Bridge timeout not cleared on early return
+  - id: TV-004
+    severity: P2
+    description: Snapshot write failure leaves runtime inconsistent
+redlines: []
+recommendation: fail

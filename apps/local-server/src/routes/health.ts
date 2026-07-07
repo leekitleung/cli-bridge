@@ -9,14 +9,20 @@ export interface HealthPayload {
   serviceVersion: string;
   host: string;
   port: number;
+  pairingToken?: string;
 }
 
-export function createHealthPayload(host: string, port: number): HealthPayload {
+export function createHealthPayload(
+  host: string,
+  port: number,
+  pairingToken?: string,
+): HealthPayload {
   return {
     status: 'ok',
     serviceName: SERVICE_NAME,
     serviceVersion: SERVICE_VERSION,
     host,
     port,
+    ...(pairingToken ? { pairingToken } : {}),
   };
 }

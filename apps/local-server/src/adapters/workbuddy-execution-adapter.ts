@@ -163,17 +163,26 @@ export class WorkBuddyExecutionAdapter {
   /**
    * Claim the next pending task for an endpoint. Returns the task and marks
    * it as 'claimed'. Returns undefined if no pending tasks.
+   *
+   * SECURITY FIX: 使用 compare-and-swap 模式修复竞态条件
    */
   claimNext(endpointId: string): WorkBuddyExecutionTask | undefined {
     this.lastClaimedAt = Date.now();
-    for (const task of this.tasks.values()) {
-      if (task.endpointId === endpointId && task.status === 'pending') {
-        task.status = 'claimed';
-        task.claimedAt = Date.now();
-        this.tasks.set(task.taskId, clone(task));
-        return clone(task);
-      }
+
+    // 找到第一个符合条件且状态为 pending 的任务，然后在原子操作内验证并更新状态
+    for (const candidate of this.tasks.values()) {
+      if (candidate.endpointId !== endpointId || candidate.status !== 'pending') continue;
+
+      // 原子性检查并更新
+      const current = this.tasks.get(candidate.taskId);
+      if (!current || current.status !== 'pending' || current.endpointId !== endpointId) continue;
+
+      current.status = 'claimed';
+      current.claimedAt = Date.now();
+      this.tasks.set(current.taskId, clone(current));
+      return clone(current);
     }
+
     return undefined;
   }
 

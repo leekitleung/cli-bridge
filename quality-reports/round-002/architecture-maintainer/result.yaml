@@ -1,0 +1,21 @@
+reviewer: architecture-maintainer
+score: 78
+dimension_scores:
+  code_organization: 72
+  design_patterns: 82
+  state_management: 82
+  maintainability: 75
+blockers:
+  - id: ARCH-001
+    severity: P2
+    description: bridge-api.ts is a god file at 5493 lines - exceeds 2000 line redline threshold
+    file: apps/local-server/src/routes/bridge-api.ts
+  - id: ARCH-002
+    severity: P3
+    description: Some module responsibilities overlap between adapters and execution
+redlines:
+  - id: ARCH-R1
+    severity: P0
+    description: God file detected - bridge-api.ts exceeds 2000 line threshold (5493 lines)
+    file: apps/local-server/src/routes/bridge-api.ts
+recommendation: fail

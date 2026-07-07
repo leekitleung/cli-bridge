@@ -1,0 +1,147 @@
+# Round 8: Native Designer Review (原生审美设计师)
+
+## Review Summary
+
+| Aspect | Score | Assessment |
+|--------|-------|------------|
+| Visual Quality | 7.5/10 | Solid foundation, needs polish |
+| Design Consistency | 8/10 | Good internal consistency |
+| Component States | 6/10 | Functional but visually under-developed |
+| Dark Mode | 7/10 | Present but inconsistent implementation |
+| Accessibility | 7.5/10 | WCAG colors good, some gaps |
+| Typography | 7/10 | Basic, needs hierarchy refinement |
+
+## Visual Quality Analysis
+
+### Strengths
+1. **CSS Custom Properties**: Well-structured design tokens using `--cb-*` variables
+2. **Color Scheme**: Green accent (#10a37f) provides clear CTA affordance
+3. **Border Radius**: Consistent 6-8px radius across components
+4. **Shadows**: Good depth with `0 16px 40px rgba(0, 0, 0, 0.18)`
+
+### Issues Found
+
+#### Critical (需立即修复)
+
+1. **状态颜色暗色模式缺失**
+   - 文件: `state.ts` lines 193-208
+   - 问题: `getPanelStatusColor()` 仅定义了浅色模式颜色
+   - 示例:
+     ```typescript
+     case 'success':
+       return '#166534'; // 仅浅色
+     ```
+   - 暗色模式背景为 `#171717`，此绿色对比度不足
+   - 建议: 添加暗色模式颜色分支
+
+2. **按钮 disabled 状态视觉反馈不足**
+   - 文件: `bridge-panel.tsx` lines 531-533
+   - 问题: `opacity: 0.55` 在暗色模式下区分度低
+   - 建议: 增加 `filter: saturate(0.3)` 或使用灰色背景
+
+#### Important (应修复)
+
+3. **状态输出区域样式不一致**
+   - 多个 `<output>` 元素字体大小混合使用 12px/11px
+   - 建议: 建立 typography scale (12px body, 11px secondary)
+
+4. **Diagnostics Panel 可访问性问题**
+   - 文件: `bridge-panel.tsx` lines 425-428
+   - 使用 emoji 作为诊断摘要文本
+   - 建议: 使用 aria-label 或隐藏文本
+
+5. **Preview 区域 monospace 字体栈不完整**
+   - 文件: `bridge-panel.tsx` line 487
+   - 问题: `ui-monospace` 不是有效字体名
+   - 建议: `'ui-monospace', 'SFMono-Regular', Consolas, monospace`
+
+#### Minor (可优化)
+
+6. **按钮间距不均匀**
+   - 文件: `bridge-panel.tsx` lines 237-242
+   - 3列布局 `1fr 1fr 1fr` 可能导致按钮过窄
+   - 建议: 考虑 2列+单列组合
+
+7. **Popup vs Panel 颜色系统差异**
+   - Popup: `--bg: #f7f7f5` vs Panel: `--cb-panel-bg: #ffffff`
+   - 建议: 统一为同一色值
+
+8. **Input placeholder 样式冲突**
+   - 文件: `bridge-panel.tsx` lines 110-115, 194
+   - 两处定义 placeholder 样式，可能冲突
+   - 建议: 合并到一处
+
+## Component States Inventory
+
+### Buttons
+| State | Current Implementation | Visual Quality |
+|-------|----------------------|----------------|
+| Default | `surface` bg, `border` border | OK |
+| Hover | 无 hover 样式 | 缺失 |
+| Active/Pressed | 无 active 样式 | 缺失 |
+| Disabled | opacity 0.55 | 不足 |
+| Primary | `accent` bg, white text | 良好 |
+| Focus | 2px accent outline | 良好 |
+
+### Text Inputs
+| State | Current Implementation | Visual Quality |
+|-------|----------------------|----------------|
+| Default | 1px border | OK |
+| Focus | 2px accent outline | 良好 |
+| Disabled | 无 disabled 样式 | 缺失 |
+| Error | 无 error 样式 | 缺失 |
+
+### Status Outputs
+| Type | Current Implementation | Visual Quality |
+|------|----------------------|----------------|
+| Success | 绿色文字 | 良好 (浅色) |
+| Failed | 红色文字 | 良好 (浅色) |
+| Warning | 橙色文字 | 良好 (浅色) |
+| Idle | 灰色文字 | OK |
+
+## Dark Mode Evaluation
+
+### Implementation Quality: 7/10
+
+**良好实践**:
+- 使用 `prefers-color-scheme: dark` media query
+- 使用 CSS custom properties 便于主题切换
+- `color-scheme: light dark` 声明
+
+**问题**:
+1. 硬编码颜色未使用变量
+2. `getPanelStatusColor()` 不感知主题
+3. Popup 和 Panel 暗色变量不一致
+
+## Recommendations (优先级排序)
+
+### P0 - 立即修复
+1. 修复 `getPanelStatusColor()` 支持暗色模式
+2. 为按钮添加 hover 状态样式
+
+### P1 - 近期修复
+3. 统一颜色系统 (popup vs panel)
+4. 添加 focus-visible 以外的其他交互状态
+5. 修复 monospace 字体栈
+
+### P2 - 后续优化
+6. 提取公共样式为 CSS 类
+7. 添加 CSS transitions 提高流畅度
+8. 考虑使用 CSS container queries
+
+## Code Quality Notes
+
+- 设计系统概念清晰 (CSS variables)
+- 组件结构合理，职责分离良好
+- 状态管理通过 factory functions 模式良好
+- 类型安全做得较好
+
+## Files Reviewed
+
+- `apps/extension/src/ui/bridge-panel.tsx` (1327 lines)
+- `apps/extension/src/ui/state.ts` (406 lines)
+- `apps/extension/src/popup/index.ts` (317 lines)
+
+---
+Review Date: 2026-07-07
+Reviewer: Native Designer Reviewer (Round 8)

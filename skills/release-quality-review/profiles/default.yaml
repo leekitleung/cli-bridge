@@ -1,47 +1,58 @@
-name: default
-description: Normal implementation quality gate for PR-sized changes
+# Default Profile - 标准 PR 评审
 
-required_reviewers:
+## 适用场景
+- PR 合并前
+- 日常代码审查
+- 功能完成后的小优化
+
+## 评审配置
+
+```yaml
+profile: default
+description: 标准 PR 评审
+estimated_time: "~15 分钟"
+
+# 常驻 Reviewers
+resident_reviewers:
   - product-flow
   - destructive-qa
-  - terminal-veteran
 
+# 条件触发 Reviewers
 conditional_reviewers:
-  native-designer:
-    when:
-      - changed_files_match: ["**/*.css", "**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.html", "**/ui/**"]
-      - evidence_has: ["screenshots", "design-files"]
-  zero-doc-user:
-    when:
-      - is_user_facing: true
-      - is_public_release: true
-      - changed_files_match: ["**/README.md", "**/docs/**", "**/onboarding/**"]
-  data-security:
-    when:
-      - changed_files_match: ["**/auth/**", "**/storage/**", "**/sync/**", "**/token/**"]
-      - diff_contains: ["token", "secret", "password", "key", "credential", "localStorage", "cookie", "session"]
-  terminal-veteran:
-    when:
-      - changed_files_match: ["**/cli/**", "**/scripts/**", "**/bin/**", "**/commands/**"]
+  - terminal-veteran  # 有 CLI/本地服务时
 
-thresholds:
+# 通过条件
+gate:
   min_score: 90
   fail_on_redlines: true
   fail_on_p0_p1_blockers: true
 
-commands:
-  test: "pnpm test"
-  build: "pnpm build"
-  lint: "pnpm lint"
+# 输出
+output:
+  verbose: true
+  include_evidence: true
+```
 
-evidence_required:
-  - manifest.yaml
-  - git-diff.patch
-  - test.log
-  - build.log
+## Reviewers 详情
 
-aliases:
-  vibe-coder: product-flow
-  new-user: zero-doc-user
-  aesthetic-designer: native-designer
-  quality-breaker: destructive-qa
+### product-flow (常驻)
+- **权重**: 40%
+- **重点**: 功能完成度、用户路径闭环
+- **必须**: 实际运行证据
+
+### destructive-qa (常驻)
+- **权重**: 35%
+- **重点**: 安全漏洞、异常路径、边界破坏
+- **必须**: OWASP Top 10 检查
+
+### terminal-veteran (条件触发)
+- **权重**: 25%
+- **触发条件**: 变更文件匹配 `**/cli/**`, `**/local-server/**`, `**/scripts/**`
+- **重点**: 命令设计、错误处理、日志质量
+
+## 不包含
+- architecture-maintainer (需要更深入架构分析)
+- release-verifier (测试/构建验证)
+- native-designer (UI 检查)
+- data-security (深度数据安全)
+- zero-doc-user (文档完整性)

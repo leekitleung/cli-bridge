@@ -12,6 +12,39 @@ Web as an automatic source relay, while v1.5b is planned as fixed review-only
 local CLI command transport. It still does not expose terminal control or run
 unattended agent loops.
 
+---
+
+## ⚠️ Prerequisites (Read First)
+
+- **Node.js 22+** — Required. Uses `--experimental-strip-types` to run TypeScript directly.
+- **A Chromium-based browser** — Optional, only needed for the browser extension panel.
+
+---
+
+## 🚀 Quick Start
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Start the server (opens browser automatically)
+npm start
+
+# 3. Run the local quality gate before committing
+npm run lint && npm run typecheck && npm test
+
+# 4. For development with hot-reload
+npm run dev
+```
+
+**Smoke test:**
+```bash
+curl http://127.0.0.1:31337/health          # 200 ok
+curl http://127.0.0.1:31337/health/private   # 401/403 without origin + pairing token
+```
+
+---
+
 ## What works today
 
 - **Local Server**: binds `127.0.0.1` only, exposes `GET /health` (public) and
@@ -110,11 +143,6 @@ unattended agent loops.
 > Status caveat: real Codex Managed PTY delivery remains experimental. ChatGPT
 > Web source relay is automatic when the extension is connected; Console UI
 > remains the control plane for pairing, routing, gates, and execution status.
-
-## Requirements
-
-- Node.js 22+ (uses `--experimental-strip-types` to run TypeScript directly).
-- A Chromium-based browser to load the extension (optional, for the panel).
 
 ## Install
 
@@ -233,6 +261,38 @@ Recovery notes:
   by `npm start`, replace the old popup value, and choose **保存并测试** again.
 - If the ChatGPT panel is still unpaired, click **刷新连接** after the popup
   reports a successful test.
+
+## Troubleshooting
+
+### Connection Issues
+
+| Symptom | Solution |
+|---------|----------|
+| "Cannot connect to local server" | Ensure `npm start` is running. Check port 31337 is not blocked. |
+| "Invalid pairing token" | Copy the newest token from `npm start` output, replace old token |
+| Extension popup not responding | Reload the ChatGPT page and re-test connection |
+
+### Extension Issues
+
+| Symptom | Solution |
+|---------|----------|
+| Panel not showing | Reload ChatGPT page, click extension icon |
+| Status stuck on "pending" | Click "刷新连接" to refresh connection |
+| Source relay not working | Ensure ChatGPT conversation page is open |
+
+### Goal Execution Issues
+
+| Symptom | Solution |
+|---------|----------|
+| Goal stuck at "gated" | Check Gate approval status via Project Console |
+| Step execution failed | Review step output and error messages |
+| Verification failed | Check for error keywords in step output |
+
+### Need More Help?
+
+1. Check server logs for error details
+2. Visit `/bridge/diagnostics/metrics` for system status
+3. Review `docs/README.md` for detailed documentation
 
 ## Remote review gate
 

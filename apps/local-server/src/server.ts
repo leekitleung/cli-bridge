@@ -6,6 +6,8 @@ import {
 } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
+import { logger, withCorrelationId, generateCorrelationId } from './utils/structured-logger.ts';
+
 import {
   DEFAULT_LOCAL_SERVER_PORT,
   LOCAL_SERVER_HOST,
@@ -33,6 +35,14 @@ import {
   type BridgeRuntimeOptions,
 } from './routes/bridge-api.ts';
 import {
+  createGoalLoopRouteContext,
+  handleGoalLoopRequest,
+  handleExecutorsRequest,
+  handleDiagnosticsLoopsRequest,
+  handleDiagnosticsMetricsRequest,
+  type GoalLoopRouteContext,
+} from './routes/goal-loop-routes.ts';
+import {
   assertAllowedOrigin,
   getRequestOrigin,
   isAllowedClaimOrigin,
@@ -46,6 +56,12 @@ import {
   createLocalAutoPairSessionStore,
   type LocalAutoPairSessionStore,
 } from './security/local-auto-pair-session.ts';
+import {
+  createRateLimiter,
+  DEFAULT_RATE_LIMIT_CONFIG,
+  AUTH_RATE_LIMIT_CONFIG,
+  type SimpleRateLimiter,
+} from './security/rate-limiter.ts';
 
 export interface LocalServerHandle {
   server: ReturnType<typeof createServer>;
@@ -123,6 +139,18 @@ export async function startLocalServer(
   const pairingToken = createPairingToken();
   const autoPairStore: LocalAutoPairSessionStore = createLocalAutoPairSessionStore();
   const bridgeRuntime: BridgeRuntime = createBridgeRuntime(runtimeOptions);
+  const goalLoopRouteContext: GoalLoopRouteContext = await createGoalLoopRouteContext(bridgeRuntime);
+
+  // 速率限制器
+  const defaultRateLimiter: SimpleRateLimiter = createRateLimiter(
+    DEFAULT_RATE_LIMIT_CONFIG.windowMs,
+    DEFAULT_RATE_LIMIT_CONFIG.maxRequests,
+  );
+  const authRateLimiter: SimpleRateLimiter = createRateLimiter(
+    AUTH_RATE_LIMIT_CONFIG.windowMs,
+    AUTH_RATE_LIMIT_CONFIG.maxRequests,
+  );
+
   const sourceRelayBridgeDiagnostics: SourceRelayBridgeDiagnostics = {
     requests: 0,
     authSucceeded: 0,
@@ -230,8 +258,31 @@ export async function startLocalServer(
   const requestHandler: RequestListener = (request, response) => {
     const url = new URL(request.url ?? '/', `http://${LOCAL_SERVER_HOST}`);
 
+    // 获取客户端 IP（不再信任 X-Forwarded-For，防止 IP 欺骗）
+    // SECURITY FIX: X-Forwarded-For 可以被攻击者伪造，不再使用
+    const clientIp = request.socket.remoteAddress ?? 'unknown';
+
+    // 速率限制检查（公共端点）
+    const publicPaths = [PUBLIC_HEALTH_PATH, CONSOLE_PATH, CONSOLE_GOALS_PATH, CONSOLE_PROJECT_PATH];
+    const authPaths = ['/bridge/local-auto-pair/extension-claim'];
+    const isPublicPath = publicPaths.includes(url.pathname);
+    const isAuthPath = authPaths.some(p => url.pathname.startsWith(p));
+
+    if (isPublicPath || isAuthPath) {
+      const limiter = isAuthPath ? authRateLimiter : defaultRateLimiter;
+      if (!limiter.check(clientIp)) {
+        const retryAfter = Math.ceil((limiter.resetAt(clientIp) - Date.now()) / 1000);
+        response.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': String(retryAfter),
+        });
+        response.end(JSON.stringify({ status: 'error', message: 'Too many requests' }));
+        return;
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === PUBLIC_HEALTH_PATH) {
-      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort), response);
+      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort, pairingToken), response);
       return;
     }
 
@@ -240,7 +291,7 @@ export async function startLocalServer(
         return;
       }
 
-      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort), response);
+      writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort, pairingToken), response);
       return;
     }
 
@@ -260,8 +311,20 @@ export async function startLocalServer(
 
     if (request.method === 'GET' && url.pathname === CONSOLE_PROJECT_PATH) {
       const session = autoPairStore.createConsoleSession();
+
+      // SECURITY: 添加安全 Headers 防止 XSS、点击劫持等攻击
+      const securityHeaders = {
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
+        'X-XSS-Protection': '1; mode=block',
+      };
+
       response.statusCode = 200;
       response.setHeader('content-type', 'text/html; charset=utf-8');
+      for (const [key, value] of Object.entries(securityHeaders)) {
+        response.setHeader(key, value);
+      }
       response.setHeader(
         'set-cookie',
         `cli_bridge_console_session=${session.consoleSessionToken}; HttpOnly; SameSite=Strict; Path=/`,
@@ -270,114 +333,226 @@ export async function startLocalServer(
       return;
     }
 
-    if (isBridgePath(url.pathname)) {
-      const sourceRelayPath = isChatGptWebSourceRelayPath(url.pathname);
-      if (sourceRelayPath) {
-        recordSourceRelayBridgeRequest(url.pathname, { method: request.method ?? 'GET' });
+    // ── Goal Loop & Executor routes (async, early exit) ──
+    const REQUEST_TIMEOUT_MS = 60_000; // 60 second timeout for all requests
+    const requestTimeout = setTimeout(() => {
+      if (!response.headersSent) {
+        writeJson(504, { status: 'error', code: 'REQUEST_TIMEOUT', message: 'Request timeout - operation took too long' }, response);
       }
-      const authContext = checkAuth(request, response);
-      if (!authContext) {
+      request.destroy();
+    }, REQUEST_TIMEOUT_MS);
+
+    (async () => {
+      try {
+      if (await handleGoalLoopRequest(request, response, goalLoopRouteContext)) {
+        clearTimeout(requestTimeout);
+        return;
+      }
+      if (await handleExecutorsRequest(request, response, goalLoopRouteContext)) {
+        clearTimeout(requestTimeout);
+        return;
+      }
+      if (await handleDiagnosticsLoopsRequest(request, response, goalLoopRouteContext)) {
+        clearTimeout(requestTimeout);
+        return;
+      }
+      if (await handleDiagnosticsMetricsRequest(request, response, goalLoopRouteContext)) {
+        clearTimeout(requestTimeout);
+        return;
+      }
+
+      // ── Bridge API routes ──
+      if (isBridgePath(url.pathname)) {
+        const sourceRelayPath = isChatGptWebSourceRelayPath(url.pathname);
         if (sourceRelayPath) {
-          recordSourceRelayBridgeRequest(url.pathname, { authResult: 'failed' });
+          recordSourceRelayBridgeRequest(url.pathname, { method: request.method ?? 'GET' });
         }
-        return;
-      }
-      if (sourceRelayPath) {
-        recordSourceRelayBridgeRequest(url.pathname, { authResult: 'succeeded' });
-      }
-
-      handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams, authContext)
-        .then((result) => {
+        const authContext = checkAuth(request, response);
+        if (!authContext) {
           if (sourceRelayPath) {
-            recordSourceRelayBridgeRequest(url.pathname, { resultStatus: result.statusCode });
+            recordSourceRelayBridgeRequest(url.pathname, { authResult: 'failed' });
           }
-          writeBridgeResult(result, response);
-        })
-        .catch(() => {
-          writeJson(500, { status: 'error', message: 'Internal bridge error' }, response);
-        });
-      return;
-    }
+          clearTimeout(requestTimeout);
+          return;
+        }
+        if (sourceRelayPath) {
+          recordSourceRelayBridgeRequest(url.pathname, { authResult: 'succeeded' });
+        }
 
-    // ── Local auto-pair routes (narrow, loopback-only) ──
+        // Add timeout to bridge request
+        const BRIDGE_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for bridge operations
+        const bridgeTimeout = setTimeout(() => {
+          if (!response.headersSent) {
+            writeJson(504, { status: 'error', code: 'BRIDGE_TIMEOUT', message: 'Bridge request timeout' }, response);
+          }
+          // Destroy request socket to prevent connection leak
+          request.destroy();
+        }, BRIDGE_REQUEST_TIMEOUT_MS);
 
-    if (request.method === 'GET' && url.pathname === '/bridge/local-auto-pair/status') {
-      if (!checkAuth(request, response)) {
+        handleBridgeRequest(bridgeRuntime, request.method ?? 'GET', url.pathname, request, url.searchParams, authContext)
+          .then((result) => {
+            clearTimeout(bridgeTimeout);
+            clearTimeout(requestTimeout);
+            if (sourceRelayPath) {
+              recordSourceRelayBridgeRequest(url.pathname, { resultStatus: result.statusCode });
+            }
+            writeBridgeResult(result, response);
+          })
+          .catch((err) => {
+            clearTimeout(bridgeTimeout);
+            clearTimeout(requestTimeout);
+            logger.error('[Server] Bridge request error:', { error: err instanceof Error ? err.message : String(err), path: url.pathname });
+            writeJson(500, { status: 'error', code: 'INTERNAL_ERROR', message: 'Internal bridge error' }, response);
+          });
         return;
       }
-      writeJson(200, {
-        status: 'ok',
-        diagnostics: autoPairStore.getDiagnostics(),
-        sourceRelayBridge: sourceRelayBridgeDiagnostics,
-      }, response);
-      return;
-    }
 
-    if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/extension-claim') {
-      const origin = getRequestOrigin(request);
-      if (!isAllowedClaimOrigin(origin)) {
-        writeJson(403, { status: 'error', message: 'Claim only allowed from loopback or extension' }, response);
+      // ── Local auto-pair routes ──
+      if (request.method === 'GET' && url.pathname === '/bridge/local-auto-pair/status') {
+        clearTimeout(requestTimeout);
+        if (!checkAuth(request, response)) { return; }
+        writeJson(200, { status: 'ok', diagnostics: autoPairStore.getDiagnostics(), sourceRelayBridge: sourceRelayBridgeDiagnostics }, response);
         return;
       }
-      const chunks: Buffer[] = [];
-      request.on('data', (chunk: Buffer) => chunks.push(chunk));
-      request.on('end', () => {
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString());
-          const result = autoPairStore.claimExtensionSession(body.nonce ?? '');
-          if (!result.ok) {
-            writeJson(409, { status: 'error', message: result.message }, response);
+
+      if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/extension-claim') {
+        clearTimeout(requestTimeout);
+        const origin = getRequestOrigin(request);
+        if (!isAllowedClaimOrigin(origin)) {
+          writeJson(403, { status: 'error', code: 'FORBIDDEN', message: 'Claim only allowed from loopback or extension' }, response);
+          return;
+        }
+        const MAX_BODY_SIZE = 1024 * 1024; // 1MB limit
+        let totalSize = 0;
+        const chunks: Buffer[] = [];
+        request.on('data', (chunk: Buffer) => {
+          totalSize += chunk.length;
+          if (totalSize > MAX_BODY_SIZE) {
+            request.destroy();
             return;
           }
-          writeJson(200, { extensionSessionToken: result.extensionSessionToken }, response);
-        } catch {
-          writeJson(400, { status: 'error', message: 'Invalid request body' }, response);
+          chunks.push(chunk);
+        });
+        request.on('end', () => {
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString());
+
+            // SECURITY FIX: 验证 nonce 长度和格式，防止资源耗尽攻击
+            const nonce = body?.nonce;
+            if (typeof nonce !== 'string' || nonce.length < 16 || nonce.length > 256) {
+              writeJson(400, { status: 'error', code: 'INVALID_NONCE', message: 'Invalid nonce format' }, response);
+              return;
+            }
+
+            const result = autoPairStore.claimExtensionSession(nonce);
+            if (!result.ok) { writeJson(409, { status: 'error', code: 'CLAIM_FAILED', message: result.message }, response); return; }
+            writeJson(200, { extensionSessionToken: result.extensionSessionToken }, response);
+          } catch (err) {
+            logger.error('[Server] Extension claim error:', { error: err instanceof Error ? err.message : String(err) });
+            writeJson(400, { status: 'error', code: 'INVALID_REQUEST', message: 'Invalid request body' }, response);
+          }
+        });
+        return;
+      }
+
+      if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/revoke') {
+        clearTimeout(requestTimeout);
+        const origin = getRequestOrigin(request);
+        const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
+        if (!originCheck.ok) {
+          writeJson(originCheck.statusCode, { status: 'error', code: 'FORBIDDEN', message: originCheck.message }, response);
+          return;
         }
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url.pathname === '/bridge/local-auto-pair/revoke') {
-      const origin = getRequestOrigin(request);
-      const originCheck = assertAllowedOrigin(origin, isTestEnvironment());
-      if (!originCheck.ok) {
-        writeJson(
-          originCheck.statusCode,
-          { status: 'error', message: originCheck.message },
-          response,
-        );
+        const consoleSessionToken = parseConsoleSessionCookie(request);
+        if (consoleSessionToken && autoPairStore.revokeConsoleSession(consoleSessionToken)) {
+          response.setHeader('set-cookie', 'cli_bridge_console_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+          writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
+          return;
+        }
+        const pairingHeader = extractPairingTokenFromRequest(request);
+        if (pairingHeader && autoPairStore.revokeExtensionSession(pairingHeader)) {
+          writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
+          return;
+        }
+        writeJson(404, { status: 'error', code: 'NOT_FOUND', message: 'No active local session found' }, response);
         return;
       }
 
-      const consoleSessionToken = parseConsoleSessionCookie(request);
-      if (consoleSessionToken && autoPairStore.revokeConsoleSession(consoleSessionToken)) {
-        response.setHeader('set-cookie', 'cli_bridge_console_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
-        writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
+      if (url.pathname === PUBLIC_HEALTH_PATH || url.pathname === PROTECTED_HEALTH_PATH) {
+        clearTimeout(requestTimeout);
+        writeJson(405, { status: 'error', code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' }, response);
         return;
       }
-      const pairingHeader = extractPairingTokenFromRequest(request);
-      if (pairingHeader && autoPairStore.revokeExtensionSession(pairingHeader)) {
-        writeJson(200, { status: 'ok', message: 'Local session revoked' }, response);
-        return;
+
+      clearTimeout(requestTimeout);
+      writeJson(404, { status: 'error', code: 'NOT_FOUND', message: 'Not found' }, response);
+      } catch (err) {
+        clearTimeout(requestTimeout);
+        logger.error('[Server] Unhandled request error:', { error: err instanceof Error ? err.message : String(err), path: url.pathname });
+        if (!response.headersSent) {
+          writeJson(500, { status: 'error', code: 'INTERNAL_ERROR', message: 'Internal server error' }, response);
+        }
       }
-      writeJson(404, { status: 'error', message: 'No active local session found' }, response);
-      return;
-    }
-
-    if (url.pathname === PUBLIC_HEALTH_PATH) {
-      writeJson(405, { status: 'error', message: 'Method not allowed' }, response);
-      return;
-    }
-
-    if (url.pathname === PROTECTED_HEALTH_PATH) {
-      writeJson(405, { status: 'error', message: 'Method not allowed' }, response);
-      return;
-    }
-
-    writeJson(404, { status: 'error', message: 'Not found' }, response);
+    })();
   };
 
   const server = createServer(requestHandler);
+
+  // Graceful shutdown support
+  let isShuttingDown = false;
+  const activeRequests = new Set<RequestListener>();
+
+  // Wrap request handler to track active requests
+  const wrappedHandler: RequestListener = (req, res) => {
+    if (isShuttingDown) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'unavailable', message: 'Server is shutting down' }));
+      return;
+    }
+    activeRequests.add(req as unknown as RequestListener);
+    req.on('close', () => activeRequests.delete(req as unknown as RequestListener));
+    requestHandler(req, res);
+  };
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    logger.info('[Server] Received shutdown signal, starting graceful shutdown...', { signal });
+
+    // Stop accepting new connections
+    server.close();
+
+    // Wait for active requests to complete (max 10 seconds)
+    const shutdownTimeout = 10_000;
+    const startTime = Date.now();
+
+    if (activeRequests.size > 0) {
+      logger.info('[Server] Waiting for active requests to complete...', { activeRequests: activeRequests.size });
+
+      await new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (activeRequests.size === 0 || Date.now() - startTime > shutdownTimeout) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+      });
+
+      const elapsed = Date.now() - startTime;
+      if (activeRequests.size > 0) {
+        logger.warn('[Server] Shutdown timeout, forcing exit', { elapsed, activeRequests: activeRequests.size });
+      } else {
+        logger.info('[Server] All requests completed, shutdown complete', { elapsed });
+      }
+    }
+
+    logger.info('[Server] Graceful shutdown complete');
+    process.exit(0);
+  };
+
+  // Register signal handlers
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -408,5 +583,7 @@ if (isMainModule()) {
   console.log(`Console UI: ${handle.url}/console`);
   console.log(`Goal Console UI: ${handle.url}/console/goals`);
   console.log(`Project Workspace: ${handle.url}/console/project`);
-  console.log(`Pairing token: ${handle.pairingToken}`);
+  // SECURITY FIX: 不输出配对令牌任何部分，防止信息泄露
+  console.log(`Pairing token: [see /health endpoint]`);
+  logger.info('Server started', { url: handle.url });
 }

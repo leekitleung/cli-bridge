@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 import { DEFAULT_LOCAL_SERVER_PORT } from '../packages/shared/src/constants.ts';
 import { startLocalServer } from '../apps/local-server/src/server.ts';
@@ -14,9 +15,13 @@ export async function startProduct(): Promise<void> {
     inboundRelayEndpointId: 'mock-inbound-agent',
   });
   installShutdownHandlers(handle);
+
+  // SECURITY FIX: 只输出 token 的前8个字符的哈希值，不暴露完整 token
+  const tokenHash = createHash('sha256').update(handle.pairingToken).digest('hex').slice(0, 8);
+
   console.log(`CLI Bridge listening on ${handle.url}`);
   console.log(`Project Workspace: ${buildConsoleOpenTarget(handle)}`);
-  console.log(`Pairing token: ${handle.pairingToken}`);
+  console.log(`Pairing token hint: ${tokenHash}...`);
   console.log('Next: open the CLI Bridge extension, paste the pairing token, then return to ChatGPT.');
   if (shouldAutoOpen() && process.stdout.isTTY) {
     openInBrowser(buildConsoleOpenTarget(handle));

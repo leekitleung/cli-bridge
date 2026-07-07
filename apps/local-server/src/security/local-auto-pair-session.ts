@@ -58,6 +58,38 @@ export function createLocalAutoPairSessionStore(
   const byConsole = new Map<string, SessionRecord>();
   const byClaim = new Map<string, SessionRecord>();
   const byExtension = new Map<string, SessionRecord>();
+
+  function isActive(record: SessionRecord | undefined): boolean {
+    if (!record) return false;
+    return !record.revokedAt && record.expiresAt > now();
+  }
+
+  // Cleanup interval for expired sessions (every 5 minutes)
+  const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+  const cleanupInterval = setInterval(() => {
+    let cleaned = 0;
+    const cutoff = now() - sessionTtlMs;
+    for (const [key, record] of byConsole.entries()) {
+      if (record.expiresAt < cutoff && !isActive(record)) {
+        byConsole.delete(key);
+        byClaim.delete(record.extensionClaimNonce);
+        cleaned++;
+      }
+    }
+    for (const [key, record] of byExtension.entries()) {
+      if (record.expiresAt < cutoff && !isActive(record)) {
+        byExtension.delete(key);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[LocalAutoPair] Cleaned up ${cleaned} expired sessions`);
+    }
+  }, CLEANUP_INTERVAL_MS);
+
+  // Prevent interval from keeping process alive
+  cleanupInterval.unref();
+
   const diagnostics: Omit<LocalAutoPairDiagnostics, 'activeConsoleSessions' | 'activeExtensionSessions'> = {
     consoleSessionsCreated: 0,
     extensionClaimsAttempted: 0,
@@ -69,10 +101,6 @@ export function createLocalAutoPairSessionStore(
     lastExtensionClaimRejectedAt: null,
     lastExtensionClaimRejectedReason: null,
   };
-
-  function active(record: SessionRecord | undefined): record is SessionRecord {
-    return !!record && !record.revokedAt && record.expiresAt > now();
-  }
 
   return {
     createConsoleSession(): ConsoleSessionBootstrap {
@@ -95,7 +123,7 @@ export function createLocalAutoPairSessionStore(
       };
     },
     verifyConsoleSession(consoleSessionToken: string): boolean {
-      return active(byConsole.get(consoleSessionToken));
+      return isActive(byConsole.get(consoleSessionToken));
     },
     claimExtensionSession(
       extensionClaimNonce: string,
@@ -105,8 +133,15 @@ export function createLocalAutoPairSessionStore(
       diagnostics.extensionClaimsAttempted++;
       diagnostics.lastExtensionClaimAttemptedAt = now();
       const record = byClaim.get(extensionClaimNonce);
-      if (!active(record) || record.claimUsedAt || record.claimExpiresAt <= now()) {
+      if (!record || !isActive(record)) {
         const message = 'extension claim nonce invalid or expired';
+        diagnostics.extensionClaimsRejected++;
+        diagnostics.lastExtensionClaimRejectedAt = now();
+        diagnostics.lastExtensionClaimRejectedReason = message;
+        return { ok: false, message };
+      }
+      if (record.claimUsedAt || record.claimExpiresAt <= now()) {
+        const message = 'extension claim nonce already used or expired';
         diagnostics.extensionClaimsRejected++;
         diagnostics.lastExtensionClaimRejectedAt = now();
         diagnostics.lastExtensionClaimRejectedReason = message;
@@ -120,7 +155,8 @@ export function createLocalAutoPairSessionStore(
       return { ok: true, extensionSessionToken: record.extensionSessionToken };
     },
     verifyExtensionSession(extensionSessionToken: string): boolean {
-      return active(byExtension.get(extensionSessionToken));
+      const record = byExtension.get(extensionSessionToken);
+      return isActive(record);
     },
     revokeConsoleSession(consoleSessionToken: string): boolean {
       const record = byConsole.get(consoleSessionToken);
@@ -130,7 +166,7 @@ export function createLocalAutoPairSessionStore(
     },
     revokeExtensionSession(extensionSessionToken: string): boolean {
       const record = byExtension.get(extensionSessionToken);
-      if (!active(record)) return false;
+      if (!record || !isActive(record)) return false;
       record.revokedAt = now();
       return true;
     },
@@ -138,10 +174,10 @@ export function createLocalAutoPairSessionStore(
       let activeConsoleSessions = 0;
       let activeExtensionSessions = 0;
       for (const record of byConsole.values()) {
-        if (active(record)) activeConsoleSessions++;
+        if (isActive(record)) activeConsoleSessions++;
       }
       for (const record of byExtension.values()) {
-        if (active(record)) activeExtensionSessions++;
+        if (isActive(record)) activeExtensionSessions++;
       }
       return {
         ...diagnostics,

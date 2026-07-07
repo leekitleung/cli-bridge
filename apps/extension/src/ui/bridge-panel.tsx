@@ -11,11 +11,14 @@ import {
   createExtractReturn,
   createPacket,
   getAutomationControlStatus,
+  getSourceRelayStatus,
   hasPairingToken,
+  listOnlineEndpoints,
   loadPairingTokenFromStorage,
   pauseAutomationControl,
   resumeAutomationControl,
   testPrivateHealth,
+  PAIRING_TOKEN_HEADER,
 } from '../content/bridge-client.ts';
 import {
   ensureOutboundPromptPoller,
@@ -41,6 +44,7 @@ import {
   createLoopPanelStatus,
   createNetworkErrorPanelStatus,
   createStreamingBlockedPanelStatus,
+  createSourceRelayStatus,
   getPanelStatusColor,
   IDLE_PANEL_STATUS,
   type BridgePanelStatus,
@@ -77,22 +81,25 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       --cb-muted: #5f6a65;
       --cb-border: #d7ddd9;
       --cb-accent: #10a37f;
+      --cb-placeholder: #5f6a65;
       color-scheme: light dark;
     }
     #${PANEL_ROOT_ID}[data-cli-bridge-host-theme="dark"] {
       --cb-panel-bg: #171717;
       --cb-surface: #202020;
       --cb-text: #f4f4f5;
-      --cb-muted: #a1a1aa;
+      --cb-muted: #9ca3af;
       --cb-border: #303030;
+      --cb-placeholder: #9ca3af;
     }
     @media (prefers-color-scheme: dark) {
       #${PANEL_ROOT_ID} {
         --cb-panel-bg: #171717;
         --cb-surface: #202020;
         --cb-text: #f4f4f5;
-        --cb-muted: #a1a1aa;
+        --cb-muted: #9ca3af;
         --cb-border: #303030;
+        --cb-placeholder: #9ca3af;
       }
     }
     #${PANEL_ROOT_ID} button:focus-visible,
@@ -100,13 +107,40 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       outline: 2px solid var(--cb-accent);
       outline-offset: 2px;
     }
+    #${PANEL_ROOT_ID} button:hover:not(:disabled):not([aria-disabled="true"]) {
+      filter: brightness(0.95);
+    }
+    #${PANEL_ROOT_ID} button:active:not(:disabled):not([aria-disabled="true"]) {
+      filter: brightness(0.9);
+      transform: translateY(1px);
+    }
+    #${PANEL_ROOT_ID} button:disabled,
+    #${PANEL_ROOT_ID} button[aria-disabled="true"] {
+      opacity: 0.5;
+      filter: saturate(0.3);
+      cursor: not-allowed;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${PANEL_ROOT_ID} button:disabled,
+      #${PANEL_ROOT_ID} button[aria-disabled="true"] {
+        opacity: 0.4;
+        filter: saturate(0.2) brightness(0.8);
+      }
+    }
+    #${PANEL_ROOT_ID} textarea::placeholder {
+      color: var(--cb-placeholder);
+    }
+    #${PANEL_ROOT_ID} textarea::-webkit-input-placeholder {
+      color: var(--cb-placeholder);
+    }
   `;
   root.head?.append(theme);
 
   const panel = root.createElement('section');
   panel.id = PANEL_ROOT_ID;
   panel.setAttribute('data-cli-bridge-panel', 'true');
-  if (isDarkHost(root)) {
+  const isDark = isDarkHost(root);
+  if (isDark) {
     panel.setAttribute('data-cli-bridge-host-theme', 'dark');
   }
   Object.assign(panel.style, {
@@ -130,7 +164,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   });
 
   const title = root.createElement('div');
-  title.textContent = 'ChatGPT Web source';
+  title.textContent = 'ChatGPT Web Source';
   Object.assign(title.style, {
     fontWeight: '700',
     color: 'var(--cb-text)',
@@ -139,8 +173,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const collapseButton = root.createElement('button');
   collapseButton.type = 'button';
-  collapseButton.setAttribute('aria-label', '收起面板');
-  collapseButton.title = '收起';
+  collapseButton.setAttribute('aria-label', 'Collapse panel');
+  collapseButton.title = 'Collapse';
   collapseButton.setAttribute('aria-expanded', 'true');
   const collapseIcon = createLucideChevronIcon(root, 'up');
   collapseButton.append(collapseIcon);
@@ -155,7 +189,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   panelHeader.append(title, collapseButton);
 
   const scope = root.createElement('div');
-  scope.textContent = 'Connected to Local Bridge as planner/source. Use Project Console for routing and execution.';
+  scope.textContent = 'Connected to local bridge as planner/source. Use Project Console for routing and execution.';
   scope.setAttribute('data-cli-bridge-source-status', 'true');
   Object.assign(scope.style, {
     color: 'var(--cb-muted)',
@@ -165,7 +199,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   const input = root.createElement('textarea');
   input.setAttribute('aria-label', 'CLI Bridge text');
   input.rows = 4;
-  input.placeholder = '粘贴要交给 ChatGPT 的下一步内容';
+  input.placeholder = 'Paste next step content to send to ChatGPT';
   Object.assign(input.style, {
     width: '100%',
     minHeight: '80px',
@@ -178,14 +212,15 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     padding: '8px',
     font: 'inherit',
   });
+  input.style.setProperty('--placeholder-color', 'var(--cb-muted)');
 
   const testTokenButton = root.createElement('button');
   testTokenButton.type = 'button';
-  testTokenButton.textContent = '刷新连接';
+  testTokenButton.textContent = 'Refresh Connection';
 
   const clearTokenButton = root.createElement('button');
   clearTokenButton.type = 'button';
-  clearTokenButton.textContent = '清除配对';
+  clearTokenButton.textContent = 'Clear Pairing';
 
   const connectionActions = root.createElement('div');
   Object.assign(connectionActions.style, {
@@ -206,19 +241,19 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const fillButton = root.createElement('button');
   fillButton.type = 'button';
-  fillButton.textContent = '填入下一步';
+  fillButton.textContent = 'Fill Next Step';
 
   const extractButton = root.createElement('button');
   extractButton.type = 'button';
-  extractButton.textContent = '预览回传';
+  extractButton.textContent = 'Preview Return';
 
   const returnButton = root.createElement('button');
   returnButton.type = 'button';
-  returnButton.textContent = '确认回传';
+  returnButton.textContent = 'Confirm Return';
 
   const copyButton = root.createElement('button');
   copyButton.type = 'button';
-  copyButton.textContent = '复制预览';
+  copyButton.textContent = 'Copy Preview';
 
   const returnActions = root.createElement('div');
   Object.assign(returnActions.style, {
@@ -229,15 +264,15 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const pauseAutomationButton = root.createElement('button');
   pauseAutomationButton.type = 'button';
-  pauseAutomationButton.textContent = '暂停自动化';
+  pauseAutomationButton.textContent = 'Pause Automation';
 
   const resumeAutomationButton = root.createElement('button');
   resumeAutomationButton.type = 'button';
-  resumeAutomationButton.textContent = '恢复自动化';
+  resumeAutomationButton.textContent = 'Resume Automation';
 
   const cancelAutomationButton = root.createElement('button');
   cancelAutomationButton.type = 'button';
-  cancelAutomationButton.textContent = '取消自动化';
+  cancelAutomationButton.textContent = 'Cancel Automation';
 
   const automationActions = root.createElement('div');
   Object.assign(automationActions.style, {
@@ -309,6 +344,156 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     overflowWrap: 'anywhere',
   });
 
+  // ADR-0035: Source Relay diagnostics status with queue metrics
+  const sourceRelayStatus = root.createElement('output');
+  sourceRelayStatus.setAttribute('data-cli-bridge-source-relay-status', 'true');
+  sourceRelayStatus.setAttribute('role', 'status');
+  sourceRelayStatus.setAttribute('aria-live', 'polite');
+  Object.assign(sourceRelayStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    overflowWrap: 'anywhere',
+    fontSize: '11px',
+  });
+
+  // ADR-0036: Queue metrics status
+  const queueMetricsStatus = root.createElement('output');
+  queueMetricsStatus.setAttribute('data-cli-bridge-queue-metrics', 'true');
+  queueMetricsStatus.setAttribute('role', 'status');
+  Object.assign(queueMetricsStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    fontSize: '11px',
+  });
+
+  // ADR-0036: Executor endpoints status with health indicators
+  const endpointsStatus = root.createElement('output');
+  endpointsStatus.setAttribute('data-cli-bridge-endpoints-status', 'true');
+  endpointsStatus.setAttribute('role', 'status');
+  Object.assign(endpointsStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    fontSize: '11px',
+  });
+
+  // ADR-0036: Goal Loop status with progress
+  const goalLoopStatus = root.createElement('output');
+  goalLoopStatus.setAttribute('data-cli-bridge-goal-loop-status', 'true');
+  goalLoopStatus.setAttribute('role', 'status');
+  Object.assign(goalLoopStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    fontSize: '11px',
+  });
+
+  // ADR-0036: Goal list status
+  const goalListStatus = root.createElement('output');
+  goalListStatus.setAttribute('data-cli-bridge-goal-list-status', 'true');
+  goalListStatus.setAttribute('role', 'status');
+  Object.assign(goalListStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    fontSize: '11px',
+  });
+
+  // ADR-0036: Performance metrics status
+  const perfStatus = root.createElement('output');
+  perfStatus.setAttribute('data-cli-bridge-perf-status', 'true');
+  perfStatus.setAttribute('role', 'status');
+  Object.assign(perfStatus.style, {
+    minHeight: '18px',
+    color: 'var(--cb-muted)',
+    fontSize: '11px',
+  });
+
+  // Performance metrics tracking
+  interface PerfMetrics {
+    lastHeartbeatLatency: number | null;
+    lastSourceRelayLatency: number | null;
+    heartbeatCount: number;
+    relayCount: number;
+    errorCount: number;
+    errors: Array<{ time: number; reason: string }>;
+  }
+
+  let perfMetrics: PerfMetrics = {
+    lastHeartbeatLatency: null,
+    lastSourceRelayLatency: null,
+    heartbeatCount: 0,
+    relayCount: 0,
+    errorCount: 0,
+    errors: [],
+  };
+
+  const updatePerfMetrics = () => {
+    const errors = perfMetrics.errors.slice(-5); // Keep last 5 errors
+    const parts: string[] = [];
+    if (perfMetrics.lastHeartbeatLatency !== null) {
+      parts.push(`HB: ${perfMetrics.lastHeartbeatLatency}ms`);
+    }
+    if (perfMetrics.lastSourceRelayLatency !== null) {
+      parts.push(`Relay: ${perfMetrics.lastSourceRelayLatency}ms`);
+    }
+    if (perfMetrics.errorCount > 0) {
+      parts.push(`Errors: ${perfMetrics.errorCount}`);
+    }
+    perfStatus.textContent = parts.length > 0
+      ? `Perf: ${parts.join(' | ')}`
+      : 'Perf: No data';
+  };
+
+  // ADR-0036: Expanded diagnostics panel
+  const diagnosticsPanel = root.createElement('details');
+  const diagnosticsSummary = root.createElement('summary');
+  diagnosticsSummary.textContent = '🔍 Link Diagnostics';
+  diagnosticsSummary.style.cursor = 'pointer';
+  diagnosticsSummary.style.fontWeight = '600';
+  diagnosticsPanel.append(diagnosticsSummary);
+
+  const diagnosticsBody = root.createElement('div');
+  Object.assign(diagnosticsBody.style, {
+    display: 'grid',
+    gap: '6px',
+    marginTop: '8px',
+    padding: '8px',
+    background: 'var(--cb-surface)',
+    borderRadius: '6px',
+    fontSize: '11px',
+  });
+
+  const renderDiagnostics = () => {
+    const health = ensureSourceRelayPoller().getHealth();
+    const lines: string[] = [];
+
+    // Connection status
+    lines.push(`Status: ${health.isRunning ? 'Running' : 'Stopped'}`);
+    lines.push(`Endpoints: ${health.consecutiveFailures >= 3 ? 'Offline' : 'Online'}`);
+
+    // Heartbeat status
+    if (health.lastHeartbeatAt) {
+      const ago = Math.round((Date.now() - health.lastHeartbeatAt) / 1000);
+      lines.push(`Last HB: ${ago}s ago`);
+    } else {
+      lines.push('Last HB: None');
+    }
+
+    // Backoff status
+    if (health.isInBackoff) {
+      lines.push(`Backoff: Retry #${health.backoffAttempts}, next in ${health.currentIntervalMs}ms`);
+    }
+
+    // Error history
+    if (perfMetrics.errors.length > 0) {
+      lines.push('--- Error History ---');
+      for (const err of perfMetrics.errors.slice(-3).reverse()) {
+        const ago = Math.round((Date.now() - err.time) / 1000);
+        lines.push(`[${ago}s ago] ${err.reason}`);
+      }
+    }
+
+    diagnosticsBody.textContent = lines.join('\n');
+  };
+
   const preview = root.createElement('pre');
   preview.textContent = '';
   Object.assign(preview.style, {
@@ -320,7 +505,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     color: 'var(--cb-text)',
     background: 'var(--cb-surface)',
     borderRadius: '6px',
-    font: '12px ui-monospace, SFMono-Regular, Menlo, monospace',
+    font: '12px SFMono-Regular, Consolas, Menlo, monospace',
   });
 
   Object.assign(collapseButton.style, {
@@ -364,6 +549,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       resumeAutomationButton,
       cancelAutomationButton,
     ]) {
+      button.setAttribute('aria-disabled', String(button.disabled));
       button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
       button.style.opacity = button.disabled ? '0.55' : '1';
     }
@@ -397,8 +583,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   const renderRelayStatus = () => {
     const active = getActiveRelaySession();
     relayStatus.textContent = active
-      ? '回程上下文可用'
-      : '暂无回程上下文';
+      ? 'Return context available'
+      : 'No return context';
   };
 
   renderRelayStatus();
@@ -437,12 +623,303 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   };
   refreshAutomationMirror();
 
+  // ADR-0036: Show executor endpoints status
+  const refreshEndpointsStatus = async () => {
+    const result = await listOnlineEndpoints();
+    if (!result.ok || !result.data) {
+      endpointsStatus.textContent = 'Endpoints: Query failed';
+      return;
+    }
+    const { endpoints } = result.data;
+    if (endpoints.length === 0) {
+      endpointsStatus.textContent = 'Endpoints: No online executors';
+    } else {
+      // Show executor status with health indicators
+      const statusParts = endpoints.map(e => {
+        const healthy = e.online ? '✓' : '✗';
+        return `${e.id}:${healthy}`;
+      });
+      endpointsStatus.textContent = `Executors: ${statusParts.join(' ')}`;
+    }
+  };
+  refreshEndpointsStatus();
+  setInterval(refreshEndpointsStatus, 30_000);
+
+  // ADR-0036: Show Goal Loop status from bridge server
+  interface GoalLoopStatusData {
+    ok: boolean;
+    status?: {
+      goalId: string;
+      goalStatus: string;
+      planStatus: string;
+      currentStepIndex: number;
+      totalSteps: number;
+    };
+    error?: string;
+  }
+
+  let activeGoalLoop: { goalId: string; lastUpdate: number } | null = null;
+
+  const refreshGoalLoopStatus = async (goalId?: string) => {
+    // If no goalId provided, try to get from stored active loop
+    const targetGoalId = goalId || activeGoalLoop?.goalId;
+    if (!targetGoalId) {
+      goalLoopStatus.textContent = 'Goal Loop: No active loop';
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:31337/bridge/goals/${targetGoalId}/loop/status`,
+        {
+          headers: {
+            [PAIRING_TOKEN_HEADER]: (window as any).__cliBridgePairingToken || '',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        goalLoopStatus.textContent = 'Goal Loop: Query failed';
+        return;
+      }
+
+      const data: GoalLoopStatusData = await response.json();
+      if (!data.ok || !data.status) {
+        goalLoopStatus.textContent = 'Goal Loop: No active loop';
+        activeGoalLoop = null;
+        return;
+      }
+
+      const { status } = data;
+      activeGoalLoop = { goalId: status.goalId, lastUpdate: Date.now() };
+
+      // Format progress
+      const progress = status.totalSteps > 0
+        ? `${status.currentStepIndex + 1}/${status.totalSteps}`
+        : '0/0';
+
+      const statusIcon = status.goalStatus === 'executing' ? '▶'
+        : status.goalStatus === 'approved' ? '○'
+        : status.goalStatus === 'done' ? '✓'
+        : status.goalStatus === 'failed' ? '✗'
+        : '?';
+
+      goalLoopStatus.textContent = `Loop: ${statusIcon} ${status.goalStatus} [${progress}]`;
+    } catch {
+      goalLoopStatus.textContent = 'Goal Loop: Connection failed';
+    }
+  };
+
+  // Poll goal loop status every 5 seconds when active
+  setInterval(() => {
+    if (activeGoalLoop) {
+      refreshGoalLoopStatus();
+    }
+  }, 5000);
+
+  // ADR-0036: Show recent Goal list from bridge server
+  interface GoalListData {
+    ok: boolean;
+    goals?: Array<{
+      id: string;
+      status: string;
+      description: string;
+      createdAt: number;
+    }>;
+    total?: number;
+  }
+
+  const refreshGoalListStatus = async () => {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:31337/bridge/goals`,
+        {
+          headers: {
+            [PAIRING_TOKEN_HEADER]: (window as any).__cliBridgePairingToken || '',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        goalListStatus.textContent = 'Goals: Query failed';
+        return;
+      }
+
+      const data: GoalListData = await response.json();
+      if (!data.ok || !data.goals) {
+        goalListStatus.textContent = 'Goals: No data';
+        return;
+      }
+
+      const { goals, total } = data;
+      // Show up to 3 most recent goals
+      const recent = goals.slice(0, 3);
+      const parts = recent.map(g => {
+        const icon = g.status === 'done' ? '✓'
+          : g.status === 'failed' ? '✗'
+          : g.status === 'executing' ? '▶'
+          : g.status === 'approved' ? '○'
+          : '·';
+        const age = formatAge(g.createdAt);
+        return `${icon}${age}`;
+      });
+
+      const totalStr = total && total > 3 ? `(+${total - 3})` : '';
+      goalListStatus.textContent = parts.length > 0
+        ? `Goals: ${parts.join(' ')} ${totalStr}`
+        : 'Goals: No records';
+    } catch {
+      goalListStatus.textContent = 'Goals: Connection failed';
+    }
+  };
+
+  // Format age from timestamp
+  const formatAge = (timestamp: number): string => {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
+  };
+
+  refreshGoalListStatus();
+  setInterval(refreshGoalListStatus, 30000);
+
+  // ADR-0035: Source Relay health tracking for diagnostics
+  const MAX_CONSECUTIVE_HEARTBEAT_FAILURES = 3;
+  let sourceRelayHealth: {
+    consecutiveFailures: number;
+    isInBackoff: boolean;
+    lastError: string | null;
+    backoffAttempts: number;
+    backoffRemainingMs: number;
+    currentIntervalMs: number;
+    maxIntervalMs: number;
+    lastHeartbeatAt: number | null;
+    isConnected: boolean;
+    totalRequests: number;
+    successCount: number;
+    failureCount: number;
+  } = {
+    consecutiveFailures: 0,
+    isInBackoff: false,
+    lastError: null,
+    backoffAttempts: 0,
+    backoffRemainingMs: 0,
+    currentIntervalMs: 0,
+    maxIntervalMs: 0,
+    lastHeartbeatAt: null,
+    isConnected: false,
+    totalRequests: 0,
+    successCount: 0,
+    failureCount: 0,
+  };
+
+  const renderSourceRelayStatus = () => {
+    const next = createSourceRelayStatus(sourceRelayHealth);
+    sourceRelayStatus.textContent = `${next.label}: ${next.detail}`;
+    sourceRelayStatus.style.color = getPanelStatusColor(next.kind, isDark);
+  };
+
+  // ADR-0036: Render queue metrics from bridge server
+  const renderQueueMetrics = () => {
+    // Queue metrics are fetched from the server status endpoint
+    // This now shows actual queue data from the server
+    if (sourceRelayHealth.isConnected) {
+      const successRate = sourceRelayHealth.totalRequests > 0
+        ? Math.round((sourceRelayHealth.successCount / sourceRelayHealth.totalRequests) * 100)
+        : 100;
+      queueMetricsStatus.textContent = `Req: ${sourceRelayHealth.totalRequests} | OK: ${sourceRelayHealth.successCount} | Fail: ${sourceRelayHealth.failureCount} | Rate: ${successRate}%`;
+    } else {
+      queueMetricsStatus.textContent = 'Queue: Not connected';
+    }
+  };
+
+  // ADR-0035: Fetch and display detailed queue metrics from bridge server
+  const fetchAndDisplayQueueMetrics = async () => {
+    try {
+      const result = await getSourceRelayStatus();
+      if (!result.ok) {
+        queueMetricsStatus.textContent = 'Queue: Failed to fetch';
+        return;
+      }
+      const data = result.data as {
+        metrics: {
+          depth: number;
+          inFlight: number;
+          completedInWindow: number;
+          avgWaitTime: number;
+          throughput: number;
+          extensionConnected: boolean;
+          lastHeartbeatAt: number | null;
+        };
+        recent: Array<{
+          id: string;
+          status: string;
+          projectId: string;
+          prompt: string;
+          createdAt: number;
+          claimedAt?: number;
+          returnedAt?: number;
+          failedAt?: number;
+        }>;
+      };
+
+      const { metrics, recent } = data;
+      const parts: string[] = [];
+
+      // Queue depth and in-flight
+      parts.push(`Pending: ${metrics.depth}`);
+      parts.push(`In-flight: ${metrics.inFlight}`);
+      parts.push(`Done: ${metrics.completedInWindow}`);
+
+      // Throughput
+      if (metrics.throughput > 0) {
+        parts.push(`Tput: ${metrics.throughput.toFixed(1)}/min`);
+      }
+
+      // Average wait time
+      if (metrics.avgWaitTime > 0) {
+        parts.push(`Wait: ${Math.round(metrics.avgWaitTime / 1000)}s`);
+      }
+
+      // Connection status
+      const connectedLabel = metrics.extensionConnected ? 'Connected' : 'Disconnected';
+      parts.push(`Status: ${connectedLabel}`);
+
+      queueMetricsStatus.textContent = parts.join(' | ');
+
+      // Update success/failure counts based on recent activity
+      const now = Date.now();
+      const oneHourAgo = now - 3600000;
+      let recentSuccess = 0;
+      let recentFailed = 0;
+      for (const item of recent) {
+        if (item.createdAt < oneHourAgo) continue;
+        if (item.status === 'returned') recentSuccess++;
+        if (item.status === 'failed') recentFailed++;
+      }
+      sourceRelayHealth.totalRequests = recentSuccess + recentFailed;
+      sourceRelayHealth.successCount = recentSuccess;
+      sourceRelayHealth.failureCount = recentFailed;
+
+    } catch {
+      queueMetricsStatus.textContent = 'Queue: Failed to fetch';
+    }
+  };
+
+  renderSourceRelayStatus();
+
   const renderConnection = (state: Parameters<typeof createConnectionPanelStatus>[0]) => {
     const next = createConnectionPanelStatus(state);
     connectionStatus.textContent = `${next.label}: ${next.detail}`;
-    connectionStatus.style.color = getPanelStatusColor(next.kind);
+    connectionStatus.style.color = getPanelStatusColor(next.kind, isDark);
     connectionStatus.style.fontWeight = '600';
     isConnected = state === 'connected';
+    sourceRelayHealth.isConnected = state === 'connected';
+    renderSourceRelayStatus();
     updateActionState();
   };
 
@@ -452,24 +929,121 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
   const startSourceRelay = () => {
     // ADR-0035: Source relay must keep running independently of the legacy
     // health probe so long-lived ChatGPT pages can pick up refreshed sessions.
-    ensureSourceRelayPoller({
+    const handle = ensureSourceRelayPoller({
       root,
       onEvent(event) {
         if (event.type === 'claimed') {
-          renderStatus({ kind: 'idle', label: 'Source Relay', detail: 'Processing Console prompt' });
+          renderStatus({ kind: 'idle', label: 'Relay', detail: 'Processing console prompt' });
         } else if (event.type === 'returned') {
-          renderStatus({ kind: 'success', label: 'Source Relay', detail: 'Response sent to Console' });
+          renderStatus({ kind: 'success', label: 'Relay', detail: 'Reply sent to console' });
         } else if (event.type === 'heartbeat') {
           renderStatus({
             kind: event.ok ? 'success' : 'failed',
-            label: 'Source Relay',
-            detail: event.ok ? 'Heartbeat recorded' : 'Heartbeat failed',
+            label: 'Relay',
+            detail: event.ok ? 'HB recorded' : 'HB failed',
           });
+          if (event.ok) {
+            sourceRelayHealth.lastHeartbeatAt = Date.now();
+            sourceRelayHealth.consecutiveFailures = 0;
+            sourceRelayHealth.isConnected = true;
+            renderSourceRelayStatus();
+          }
         } else if (event.type === 'failed') {
-          renderStatus({ kind: 'failed', label: 'Source Relay', detail: event.reason });
+          // Build diagnostic message from failure reason
+          const diagnosticMessages: Record<string, string> = {
+            'fill-failed': 'Fill failed - check ChatGPT page',
+            'submit-failed': 'Submit failed - try refresh',
+            'extract-failed': 'Extract reply failed',
+            'return-failed': 'Return failed',
+            'heartbeat-failed': 'HB failed - connection error',
+            'poll-failed': 'Poll failed - server unreachable',
+            'network-unreachable': 'Network unreachable - check bridge server',
+            'token-invalid': 'Token invalid - re-pair',
+            'timeout': 'Timeout',
+            'poller-error': 'Internal error',
+          };
+          const msg = diagnosticMessages[event.reason] || event.reason;
+          renderStatus({ kind: 'failed', label: 'Relay', detail: `${msg}${event.detail ? ': ' + event.detail : ''}` });
+          sourceRelayHealth.lastError = event.reason;
+        } else if (event.type === 'reconnecting') {
+          renderStatus({
+            kind: 'warning',
+            label: 'Reconnecting',
+            detail: `Attempt ${event.attempt}/${event.maxAttempts}, next in ${Math.round(event.nextIntervalMs / 1000)}s`,
+          });
+          sourceRelayHealth.isInBackoff = true;
+          sourceRelayHealth.backoffAttempts = event.attempt;
+        } else if (event.type === 'connection-lost') {
+          renderStatus({
+            kind: 'warning',
+            label: 'Connection lost',
+            detail: `Retrying (${event.consecutiveFailures} failures)`,
+          });
+        } else if (event.type === 'connection-restored') {
+          renderStatus({ kind: 'success', label: 'Relay', detail: 'Restored' });
+          sourceRelayHealth.consecutiveFailures = 0;
+          sourceRelayHealth.isInBackoff = false;
+          sourceRelayHealth.lastError = null;
+          sourceRelayHealth.isConnected = true;
+          renderSourceRelayStatus();
+        } else if (event.type === 'backoff-reset') {
+          sourceRelayHealth.isInBackoff = false;
+          sourceRelayHealth.backoffAttempts = 0;
+        }
+
+        // ADR-0036: Track performance metrics
+        if (event.type === 'heartbeat') {
+          perfMetrics.heartbeatCount++;
+          updatePerfMetrics();
+        } else if (event.type === 'returned') {
+          perfMetrics.relayCount++;
+          sourceRelayHealth.totalRequests++;
+          sourceRelayHealth.successCount++;
+          updatePerfMetrics();
+        } else if (event.type === 'failed') {
+          perfMetrics.errorCount++;
+          sourceRelayHealth.totalRequests++;
+          sourceRelayHealth.failureCount++;
+          perfMetrics.errors.push({ time: Date.now(), reason: event.reason });
+          if (perfMetrics.errors.length > 10) {
+            perfMetrics.errors = perfMetrics.errors.slice(-10);
+          }
+          updatePerfMetrics();
+          renderDiagnostics();
+          renderQueueMetrics();
         }
       },
     });
+
+    // Periodically update diagnostics panel
+    setInterval(renderDiagnostics, 10000);
+
+    // Periodically fetch and display queue metrics from bridge server
+    setInterval(fetchAndDisplayQueueMetrics, 5000);
+    // Also call it once on startup
+    fetchAndDisplayQueueMetrics();
+
+    // Periodically update health display
+    const updateHealth = () => {
+      const health = handle.getHealth();
+      sourceRelayHealth = {
+        consecutiveFailures: health.consecutiveFailures,
+        isInBackoff: health.isInBackoff,
+        lastError: health.lastError,
+        backoffAttempts: health.backoffAttempts,
+        backoffRemainingMs: health.backoffRemainingMs ?? 0,
+        currentIntervalMs: health.currentIntervalMs ?? 0,
+        maxIntervalMs: health.maxIntervalMs ?? 300000,
+        lastHeartbeatAt: health.lastHeartbeatAt,
+        isConnected: health.isRunning && health.consecutiveFailures < MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+        totalRequests: health.totalRequests ?? 0,
+        successCount: health.successCount ?? 0,
+        failureCount: health.failureCount ?? 0,
+      };
+      renderSourceRelayStatus();
+      renderQueueMetrics();
+    };
+    setInterval(updateHealth, 5000);
   };
 
   const refreshConnection = async () => {
@@ -488,9 +1062,9 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
         autoRelay: true,
         onEvent(event) {
           if (event.type === 'claimed') {
-            renderStatus({ kind: 'idle', label: '正在填入', detail: '已领取本地交接内容' });
+            renderStatus({ kind: 'idle', label: 'Filling', detail: 'Claiming local handover content' });
           } else if (event.type === 'delivered') {
-            renderStatus({ kind: 'success', label: '已填入', detail: '等待自动提交至 ChatGPT' });
+            renderStatus({ kind: 'success', label: 'Filled', detail: 'Waiting for auto-submit to ChatGPT' });
             renderLoopStatus('chatgpt-awaiting-user-send');
             renderRelayStatus();
           } else if (event.type === 'waiting') {
@@ -502,13 +1076,13 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
               renderRelayStatus();
             }
           } else if (event.type === 'submitted') {
-            renderStatus({ kind: 'idle', label: '已提交', detail: '正在等待 ChatGPT 回复' });
+            renderStatus({ kind: 'idle', label: 'Submitted', detail: 'Waiting for ChatGPT response' });
           } else if (event.type === 'returned') {
-            renderStatus({ kind: 'success', label: '已回传', detail: '回复已进入本地回程队列' });
+            renderStatus({ kind: 'success', label: 'Returned', detail: 'Reply queued for local return' });
             renderLoopStatus('codex-delivered');
             renderRelayStatus();
           } else {
-            renderStatus({ kind: 'failed', label: '自动填入失败', detail: '请检查连接后重试' });
+            renderStatus({ kind: 'failed', label: 'Auto-fill failed', detail: 'Check connection and retry' });
           }
         },
       });
@@ -604,8 +1178,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     if (!pendingExtractText) {
       renderStatus({
         kind: 'blocked',
-        label: '没有待回传内容',
-        detail: '请先预览回传内容',
+        label: 'No content to return',
+        detail: 'Preview return content first',
       });
       return;
     }
@@ -616,7 +1190,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
     returnInFlight = true;
     updateActionState();
-    renderStatus({ kind: 'idle', label: '正在回传', detail: '请稍候，不要重复点击' });
+    renderStatus({ kind: 'idle', label: 'Returning', detail: 'Please wait, do not click again' });
     try {
       const routed = await submitExtractReturn(
         pendingExtractText,
@@ -626,7 +1200,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
       if (!routed.ok) {
         renderStatus(routed.error === 'network-error'
           ? createNetworkErrorPanelStatus()
-          : { kind: 'failed', label: '回传失败', detail: '请检查配对状态后重试' });
+          : { kind: 'failed', label: 'Return failed', detail: 'Check pairing status and retry' });
         return;
       }
       pendingExtractText = '';
@@ -668,7 +1242,7 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
 
   const legacyTools = root.createElement('details');
   const legacySummary = root.createElement('summary');
-  legacySummary.textContent = 'Legacy relay tools';
+  legacySummary.textContent = 'Relay Tool';
   legacyTools.setAttribute('data-cli-bridge-legacy-tools', 'true');
   legacyTools.append(legacySummary);
 
@@ -682,6 +1256,13 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     loopStatus,
     relayStatus,
     automationStatus,
+    sourceRelayStatus,
+    queueMetricsStatus,
+    endpointsStatus,
+    goalLoopStatus,
+    goalListStatus,
+    perfStatus,
+    diagnosticsPanel,
     automationActions,
     status,
     preview,
@@ -701,8 +1282,8 @@ export function mountBridgePanel(root: Document = document): BridgePanelHandle {
     const collapsed = panelBody.hidden === false;
     panelBody.hidden = collapsed;
     panelBody.style.display = collapsed ? 'none' : 'grid';
-    collapseButton.setAttribute('aria-label', collapsed ? '展开面板' : '收起面板');
-    collapseButton.title = collapsed ? '展开' : '收起';
+    collapseButton.setAttribute('aria-label', collapsed ? 'Expand panel' : 'Collapse panel');
+    collapseButton.title = collapsed ? 'Expand' : 'Collapse';
     collapseButton.setAttribute('aria-expanded', String(!collapsed));
     renderLucideChevronIcon(collapseIcon, collapsed ? 'down' : 'up');
   });

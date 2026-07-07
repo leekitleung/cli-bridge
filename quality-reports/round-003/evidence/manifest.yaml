@@ -1,0 +1,45 @@
+manifest_version: "1.0"
+round: round-003
+profile: release-gate
+timestamp: 2026-07-07T08:30:00Z
+collected_by: Claude Code
+
+evidence:
+  git:
+    status: All staged and unstaged changes in current diff
+    diff_file: quality-reports/round-003/evidence/git-diff.patch
+  tests:
+    command: "npm test -- tests/unit/"
+    result: pass
+    details: "60/60 unit tests pass"
+  typecheck:
+    command: "pnpm typecheck"
+    result: pass
+  lint:
+    command: "pnpm lint"
+    result: pass
+  build:
+    command: "pnpm build-extension"
+    result: pass
+
+reviewers_completed:
+  - product-flow
+  - architecture-maintainer
+  - release-verifier
+  - destructive-qa
+  - terminal-veteran
+
+aggregate_score: 84
+
+notes: |
+  Round 3 status:
+  - Unit tests added for command-backend security
+  - Unit tests added for outbound-prompt-store race conditions
+  - bridge-api.ts still a god file (pending refactoring)
+  - Architecture redline still exists
+  - Other reviewers improved due to security fixes
+
+next_round_focus:
+  - Extract utilities from bridge-api.ts
+  - Address architecture redline
+  - Target score 90 for all reviewers

@@ -685,6 +685,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
     <div data-fact-source="fact-audit">Audit: not available</div>
     <div data-fact-source="fact-last-event">Last event: none</div>
     <div data-fact-source="fact-source-relay">Source relay: not available</div>
+    <div data-fact-source="fact-workbuddy">WorkBuddy: not available</div>
   </div>
 </nav>
 
@@ -718,6 +719,7 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px
   <div class="fact"><div class="fact-label">Audit</div><div class="fact-value" id="fact-audit">not available</div></div>
   <div class="fact"><div class="fact-label">Last event</div><div class="fact-value" id="fact-last-event">none</div></div>
   <div class="fact"><div class="fact-label">Source relay</div><div class="fact-value" id="fact-source-relay">not available</div></div>
+  <div class="fact"><div class="fact-label">WorkBuddy</div><div class="fact-value" id="fact-workbuddy">not available</div></div>
 </aside>
 
 <!-- Internal context store. Hidden DOM preserves existing render targets without
@@ -1512,20 +1514,48 @@ function renderFactsRail() {
   // ADR-0035: Render source relay status.
   const sourceRelay = store.cache.sourceRelay;
   if (sourceRelay) {
-    const { pending, connected, recent } = sourceRelay;
+    const { pending, connected, recent, heartbeatAgeMs } = sourceRelay;
     const connectedClass = connected ? 'ok' : 'failed';
+    const heartbeatAge = heartbeatAgeMs !== null ? Math.round(heartbeatAgeMs / 1000) + 's' : 'n/a';
     let html = '<span class="pill ' + connectedClass + '">' + (connected ? 'connected' : 'offline') + '</span>';
+    if (connected && heartbeatAgeMs !== null) {
+      html += ' <span class="unavailable">HB:' + heartbeatAge + '</span>';
+    }
     if (pending > 0) {
-      html += ' ' + pending + ' pending';
+      html += ' <span class="unavailable">' + pending + ' pending</span>';
     }
     if (recent && recent.length > 0) {
       const latest = recent[0];
       const time = new Date(latest.createdAt).toLocaleTimeString();
-      html += '<br><span class="unavailable">' + time + ' ' + latest.status + '</span>';
+      html += '<br><span class="unavailable" style="font-size:10px;">' + time + ' ' + latest.status + '</span>';
     }
     $('fact-source-relay').innerHTML = html;
   } else {
     $('fact-source-relay').innerHTML = '<span class="unavailable">not available</span>';
+  }
+
+  // ADR-0035: Render WorkBuddy executor status in facts rail.
+  const wb = store.cache.workbuddy;
+  if (wb) {
+    const execReady = wb.executorReady === true;
+    const lastHeartbeat = wb.lastHeartbeatAt ? Math.round((Date.now() - wb.lastHeartbeatAt) / 1000) + 's ago' : 'never';
+    const lastResult = wb.lastResultAt ? Math.round((Date.now() - wb.lastResultAt) / 1000) + 's ago' : 'never';
+    const taskCount = (wb.executionTasks || []).length;
+    const pendingTasks = (wb.executionTasks || []).filter(t => t.status === 'pending' || t.status === 'claimed').length;
+    const wbStatusClass = execReady ? 'ok' : (taskCount > 0 ? 'warning' : 'failed');
+    let html = '<span class="pill ' + wbStatusClass + '">' + (execReady ? 'executor ready' : 'executor offline') + '</span>';
+    html += ' <span class="unavailable" style="font-size:10px;">HB:' + lastHeartbeat + '</span>';
+    if (taskCount > 0) {
+      html += '<br><span class="unavailable" style="font-size:10px;">' + taskCount + ' tasks';
+      if (pendingTasks > 0) html += ' (' + pendingTasks + ' pending)';
+      html += '</span>';
+    }
+    if (wb.lastFailureReason) {
+      html += '<br><span class="unavailable" style="font-size:10px;color:var(--danger);">' + escapeHtml(wb.lastFailureReason.slice(0, 30)) + '</span>';
+    }
+    $('fact-workbuddy').innerHTML = html;
+  } else {
+    $('fact-workbuddy').innerHTML = '<span class="unavailable">not available</span>';
   }
 }
 
@@ -2124,9 +2154,16 @@ function renderCommandContext() {
     html += renderWorkBuddyConversation(wb);
     // ADR-0032: WorkBuddy execution lifecycle.
     if (wb && wb.executionTasks && wb.executionTasks.length) {
-      html += '<h4 style="margin-top:12px;">Execution Tasks</h4><table><thead><tr><th>status</th><th>endpoint</th></tr></thead><tbody>';
+      html += '<h4 style="margin-top:12px;">Execution Tasks</h4>';
+      html += '<table style="font-size:11px;width:100%;"><thead><tr><th>status</th><th>endpoint</th><th>created</th><th>timeout</th></tr></thead><tbody>';
       wb.executionTasks.forEach(t => {
-        html += '<tr><td><span class="pill">' + escapeHtml(t.status || 'unknown') + '</span></td><td>' + escapeHtml(t.endpointId || 'workbuddy') + '</td></tr>';
+        const createdTime = t.createdAt ? new Date(t.createdAt).toLocaleTimeString() : '-';
+        const timeoutStr = t.timeoutMs ? (t.timeoutMs >= 1000 ? (t.timeoutMs / 1000).toFixed(0) + 's' : t.timeoutMs + 'ms') : '-';
+        const statusStyle = t.status === 'returned' ? 'background:#d1fae5;' : t.status === 'failed' ? 'background:#fee2e2;' : t.status === 'claimed' ? 'background:#dbeafe;' : 'background:#fef3c7;';
+        html += '<tr><td><span class="pill" style="' + statusStyle + '">' + escapeHtml(t.status || 'unknown') + '</span></td>'
+          + '<td>' + escapeHtml(t.endpointId || 'workbuddy') + '</td>'
+          + '<td>' + escapeHtml(createdTime) + '</td>'
+          + '<td>' + escapeHtml(timeoutStr) + '</td></tr>';
       });
       html += '</tbody></table>';
     }
@@ -2186,28 +2223,54 @@ function renderWorkBuddyConversation(wb) {
   const tasks = wb && Array.isArray(wb.executionTasks) ? wb.executionTasks : [];
   if (!tasks.length) return '';
   const results = wb && Array.isArray(wb.executionResults) ? wb.executionResults : [];
-  let html = '<h4 style="margin-top:12px;">Execution Conversation</h4><div class="conversation-transcript">';
-  tasks.forEach(task => {
+  let html = '<h4 style="margin-top:12px;">Execution Conversation</h4>';
+  // ADR-0035: Add execution flow progress indicator
+  const taskStatusCounts = { pending: 0, claimed: 0, returned: 0, failed: 0 };
+  tasks.forEach(t => {
+    const status = (t.status || 'pending') as keyof typeof taskStatusCounts;
+    if (status in taskStatusCounts) taskStatusCounts[status]++;
+  });
+  if (tasks.length > 1 || taskStatusCounts.pending > 0) {
+    html += '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">';
+    if (taskStatusCounts.pending) html += '<span class="pill" style="background:#fef3c7;">⏳ Pending: ' + taskStatusCounts.pending + '</span>';
+    if (taskStatusCounts.claimed) html += '<span class="pill" style="background:#dbeafe;">⚙️ Running: ' + taskStatusCounts.claimed + '</span>';
+    if (taskStatusCounts.returned) html += '<span class="pill" style="background:#d1fae5;">✓ Done: ' + taskStatusCounts.returned + '</span>';
+    if (taskStatusCounts.failed) html += '<span class="pill" style="background:#fee2e2;">✗ Failed: ' + taskStatusCounts.failed + '</span>';
+    html += '</div>';
+  }
+  html += '<div class="conversation-transcript">';
+  tasks.forEach((task, idx) => {
     const result = results.find(r => r.taskId === task.taskId);
+    const createdAt = task.createdAt ? new Date(task.createdAt).toLocaleTimeString() : '';
+    const taskId = task.taskId ? task.taskId.slice(0, 8) + '...' : '';
     html += '<div class="conversation-message user">'
-      + '<div class="conversation-meta">user</div>'
+      + '<div class="conversation-meta">task #' + (idx + 1) + ' · ' + escapeHtml(taskId) + ' · ' + createdAt + '</div>'
       + '<div class="conversation-bubble">' + escapeHtml(task.prompt || '') + '</div>'
       + '</div>';
     if (result) {
       const elapsed = result.durationMs ? formatElapsedMs(result.durationMs) : '';
       const statusClass = result.ok === false ? 'failed' : 'returned';
+      const completedAt = result.returnedAt ? new Date(result.returnedAt).toLocaleTimeString() : '';
       html += '<div class="conversation-message target">'
         + '<div class="conversation-meta">executor'
         + (elapsed ? ' · ' + escapeHtml(elapsed) : '')
         + ' · <span class="pill">' + escapeHtml(statusClass) + '</span>'
+        + (completedAt ? ' · ' + completedAt : '')
         + '</div>'
         + '<div class="conversation-bubble">' + escapeHtml(formatWorkBuddyResultForDisplay(result)) + '</div>'
         + '</div>';
     } else {
+      const elapsed = task.createdAt ? Date.now() - task.createdAt : 0;
+      const recoveryHint = elapsed >= 60_000
+        ? '<span class="wait-recovery">Task pending >1min. Check WorkBuddy connection.</span>'
+        : elapsed >= 30_000
+          ? '<span class="wait-recovery">Task pending >30s...</span>'
+          : '';
       html += '<div class="conversation-message bridge">'
         + '<div class="conversation-meta">status</div>'
         + '<div class="conversation-bubble">' + renderWaitingLabel('Waiting for workbuddy', task.createdAt || Date.now()) + '</div>'
         + '<div class="conversation-state"><span class="pill">' + escapeHtml(task.status || 'pending') + '</span></div>'
+        + (recoveryHint ? '<div style="margin-top:4px;font-size:11px;color:var(--warning);">' + recoveryHint + '</div>' : '')
         + '</div>';
     }
   });

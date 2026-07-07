@@ -3,6 +3,10 @@ import type {
   ServerResponse,
 } from 'node:http';
 
+import { randomUUID } from 'node:crypto';
+
+import { logger } from '../utils/structured-logger.ts';
+
 import { MockAgentAdapter } from '../adapters/MockAgentAdapter.ts';
 import {
   CLAUDE_REVIEW_ARGS,
@@ -66,6 +70,7 @@ import { normalizeProjectWorkspaceRoots } from '../storage/workspace-apply-store
 import type { ApplyRequest } from '../storage/workspace-apply-store.ts';
 import { VerificationRunStore } from '../storage/verification-run-store.ts';
 import type { VerifyProfile } from '../../../../packages/shared/src/types.ts';
+import type { PlanStepInput } from '../storage/goal-store.ts';
 import { runVerificationProfile } from '../verification/profile-runner.ts';
 import { readGitStatus } from '../verification/git-status-reader.ts';
 import { fetchGithubChecks } from '../verification/github-checks-provider.ts';
@@ -802,9 +807,11 @@ async function handleTeamsPost(
   }
 
   try {
+    // 已通过 validateTeamSpecCreate 验证，使用类型断言
     const team = runtime.teamStore.create({
-      ...(body as any), projectId: projectKey,
-    });
+      ...body,
+      projectId: projectKey,
+    } as Parameters<typeof runtime.teamStore.create>[0]);
     if (!team) return error(409, 'Team already exists');
     runtime.persist();
 
@@ -900,7 +907,7 @@ async function handleArtifactPost(
     artifact.externalSessionId = body.externalSessionId.trim();
   }
 
-  const recorded = runtime.teamStore.recordArtifact(teamId, artifact as any);
+  const recorded = runtime.teamStore.recordArtifact(teamId, artifact as unknown as Parameters<typeof runtime.teamStore.recordArtifact>[1]);
   if (!recorded) return error(400, 'Invalid artifact: must pass schema validation and redaction guard');
 
   runtime.persist();
@@ -1051,8 +1058,15 @@ async function handleSlotAdvancePost(
     });
   }
 
+  // Validate slot status is a valid value before advancing
+  const VALID_SLOT_STATUSES = ['pending', 'ready', 'executing', 'blocked-needs-gate', 'done', 'failed', 'cancelled'] as const;
+  const validatedStatus = VALID_SLOT_STATUSES.includes(nextStatus as typeof VALID_SLOT_STATUSES[number])
+    ? nextStatus as typeof VALID_SLOT_STATUSES[number]
+    : null;
+  if (!validatedStatus) return error(400, 'Invalid slot status: ' + nextStatus);
+
   // Perform the advance.
-  const updated = runtime.teamStore.advanceSlot(teamId, slotId, nextStatus as any);
+  const updated = runtime.teamStore.advanceSlot(teamId, slotId, validatedStatus);
   if (!updated) return error(409, 'Slot advance failed');
 
   runtime.persist();
@@ -1256,33 +1270,34 @@ async function postWorkBuddyMultiplex(
 
   const payload: Record<string, unknown> = { ...sanitized, projectId: projectKey };
 
+  // Type-safe call: runtime assertion functions validate at runtime
   try {
     switch (_action) {
       case 'record-task': {
-        const task = runtime.workbuddyStore.recordTaskReference(payload as any);
+        const task = runtime.workbuddyStore.recordTaskReference(payload as unknown as Parameters<typeof runtime.workbuddyStore.recordTaskReference>[0]);
         runtime.persist();
         return created({ task });
       }
       case 'record-review-result': {
-        const sink = runtime.workbuddyStore.recordReviewResultSink(payload as any);
+        const sink = runtime.workbuddyStore.recordReviewResultSink(payload as unknown as Parameters<typeof runtime.workbuddyStore.recordReviewResultSink>[0]);
         runtime.persist();
         return created({ reviewResultSink: sink });
       }
       case 'record-prompt-draft': {
-        const draft = runtime.workbuddyStore.recordPromptDraftSink(payload as any);
+        const draft = runtime.workbuddyStore.recordPromptDraftSink(payload as unknown as Parameters<typeof runtime.workbuddyStore.recordPromptDraftSink>[0]);
         runtime.persist();
         return created({ promptDraftSink: draft });
       }
       case 'record-ledger': {
-        const event = runtime.workbuddyStore.recordExecutionLedgerEvent(payload as any);
+        const event = runtime.workbuddyStore.recordExecutionLedgerEvent(payload as unknown as Parameters<typeof runtime.workbuddyStore.recordExecutionLedgerEvent>[0]);
         runtime.persist();
         return created({ executionLedgerEvent: event });
       }
       default:
         return error(400, `Unknown action: ${_action}`);
     }
-  } catch (err: any) {
-    return error(400, err?.message ?? 'Invalid WorkBuddy payload');
+  } catch (err: unknown) {
+    return error(400, err instanceof Error ? err.message : 'Invalid WorkBuddy payload');
   }
 }
 
@@ -1477,7 +1492,7 @@ async function handleVerificationConfirmPost(
   if (!workspaceRoot) return error(409, 'No project workspace root configured');
 
   // Read body — only confirm:true, no command/profile override.
-  const parsed = await readJsonBody(request as any).catch(() => ({ ok: false as const, message: 'Invalid request body' }));
+  const parsed = await readJsonBody(request).catch(() => ({ ok: false as const, message: 'Invalid request body' }));
   if (!parsed.ok) return error(400, parsed.message);
 
   const body = parsed.body as Record<string, unknown>;
@@ -1639,7 +1654,11 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
   if (snapshotStore) {
     const read = snapshotStore.read();
     if (!read.ok && read.error !== 'snapshot-missing') {
-      throw new Error(read.error ?? 'snapshot-read-failed');
+      // 提供用户友好的错误消息，同时保留技术代码用于调试
+      const userMessage = read.error === 'snapshot-read-failed'
+        ? '无法读取保存的状态数据，请检查数据目录权限或尝试重启服务'
+        : read.error ?? 'snapshot-read-failed';
+      throw new Error(`[${read.error}] ${userMessage}`);
     }
     if (read.ok && read.snapshot) {
       packetStore.hydratePackets(read.snapshot.packets);
@@ -1648,11 +1667,15 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       outboundPromptStore.hydratePrompts(read.snapshot.outboundPrompts ?? []);
       webRelayLoopStore.hydrateLoops(read.snapshot.webRelayLoops ?? []);
       webRelayLoopStore.recoverAfterRestart();
+
+      // SECURITY FIX: 记录 hydration 失败以便诊断数据损坏
+      let hydrationFailures = 0;
+
       for (const loop of read.snapshot.automationLoopRuns ?? []) {
-        try { automationLoopStore.hydrateLoop(loop); } catch { /* skip bad record */ }
+        try { automationLoopStore.hydrateLoop(loop); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate automation loop', { error: String(e) }); }
       }
       for (const cycle of read.snapshot.automationLoopCycles ?? []) {
-        try { automationLoopStore.hydrateCycle(cycle); } catch { /* skip bad record */ }
+        try { automationLoopStore.hydrateCycle(cycle); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate automation cycle', { error: String(e) }); }
       }
       inboundMessageStore.hydrateMessages(read.snapshot.inboundMessages ?? []);
       relayContextStore.hydrateContexts(read.snapshot.relayContexts ?? []);
@@ -1669,61 +1692,65 @@ export function createBridgeRuntime(options: BridgeRuntimeOptions = {}): BridgeR
       for (const binding of read.snapshot.automationBindings ?? []) {
         automationBindingStore.hydrateBinding(binding);
       }
-      // v2.2 WorkBuddy state: fail-open hydration.
+      // v2.2 WorkBuddy state: fail-open hydration with error tracking.
       for (const t of read.snapshot.workbuddyTaskReferences ?? []) {
-        try { workbuddyStore.recordTaskReference(t); } catch { /* skip bad record */ }
+        try { workbuddyStore.recordTaskReference(t); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate workbuddy task ref', { error: String(e) }); }
       }
       for (const r of read.snapshot.workbuddyReviewResultSinks ?? []) {
-        try { workbuddyStore.recordReviewResultSink(r); } catch { /* skip bad record */ }
+        try { workbuddyStore.recordReviewResultSink(r); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate review sink', { error: String(e) }); }
       }
       for (const p of read.snapshot.workbuddyPromptDraftSinks ?? []) {
-        try { workbuddyStore.recordPromptDraftSink(p); } catch { /* skip bad record */ }
+        try { workbuddyStore.recordPromptDraftSink(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate prompt draft sink', { error: String(e) }); }
       }
       for (const t of read.snapshot.teams ?? []) {
-        try { teamStore.hydrateTeam(t); } catch { /* skip bad record */ }
+        try { teamStore.hydrateTeam(t); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate team', { error: String(e) }); }
       }
       for (const a of read.snapshot.teamArtifacts ?? []) {
-        try { teamStore.hydrateArtifact(a); } catch { /* skip bad record */ }
+        try { teamStore.hydrateArtifact(a); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate team artifact', { error: String(e) }); }
       }
       for (const p of read.snapshot.teamPresets ?? []) {
-        try { presetStore.hydratePreset(p); } catch { /* skip bad record */ }
+        try { presetStore.hydratePreset(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate team preset', { error: String(e) }); }
       }
       for (const s of read.snapshot.bindingSnapshots ?? []) {
-        try { bindingSnapshotStore.hydrateSnapshot(s); } catch { /* skip bad record */ }
+        try { bindingSnapshotStore.hydrateSnapshot(s); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate binding snapshot', { error: String(e) }); }
       }
       for (const p of read.snapshot.conversationPairings ?? []) {
-        try { conversationPairingStore.hydratePairing(p); } catch { /* skip bad record */ }
+        try { conversationPairingStore.hydratePairing(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate conversation pairing', { error: String(e) }); }
       }
       for (const e of read.snapshot.conversationTranscriptEvents ?? []) {
-        try { conversationTranscriptStore.hydrateEvent(e); } catch { /* skip bad record */ }
+        try { conversationTranscriptStore.hydrateEvent(e); } catch (e2) { hydrationFailures++; logger.warn('Failed to hydrate transcript event', { error: String(e2) }); }
       }
       for (const a of read.snapshot.conversationActions ?? []) {
-        try { conversationActionStore.hydrateAction(a); } catch { /* skip bad record */ }
+        try { conversationActionStore.hydrateAction(a); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate conversation action', { error: String(e) }); }
       }
       for (const p of read.snapshot.conversationInstructionPackets ?? []) {
-        try { conversationInstructionStore.hydratePacket(p); } catch { /* skip bad record */ }
+        try { conversationInstructionStore.hydratePacket(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate instruction packet', { error: String(e) }); }
       }
       for (const p of read.snapshot.conversationExecutionPackets ?? []) {
-        try { conversationExecutionStore.hydratePacket(p); } catch { /* skip bad record */ }
+        try { conversationExecutionStore.hydratePacket(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate execution packet', { error: String(e) }); }
       }
       for (const r of read.snapshot.conversationRoutes ?? []) {
-        try { conversationRouteStore.hydrateRoute(r); } catch { /* skip bad record */ }
+        try { conversationRouteStore.hydrateRoute(r); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate conversation route', { error: String(e) }); }
       }
       for (const p of read.snapshot.conversationPlanProposals ?? []) {
-        try { planProposalStore.hydrateProposal(p); } catch { /* skip bad record */ }
+        try { planProposalStore.hydrateProposal(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate plan proposal', { error: String(e) }); }
       }
       for (const t of read.snapshot.workbuddyTasks ?? []) {
-        try { workbuddyExecution.hydrateTask(t); } catch { /* skip bad record */ }
+        try { workbuddyExecution.hydrateTask(t); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate workbuddy task', { error: String(e) }); }
       }
       for (const p of read.snapshot.executionProposals ?? []) {
-        try { executionProposalStore.hydrateProposal(p); } catch { /* skip bad record */ }
+        try { executionProposalStore.hydrateProposal(p); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate execution proposal', { error: String(e) }); }
       }
       // v2.13: restore live verification run records
       for (const r of read.snapshot.verificationRunRecords ?? []) {
-        try { verificationRunStore.add(r.projectKey, r); } catch { /* skip bad record */ }
+        try { verificationRunStore.add(r.projectKey, r); } catch (e) { hydrationFailures++; logger.warn('Failed to hydrate verification record', { error: String(e) }); }
       }
       for (const e of read.snapshot.workbuddyExecutionLedgerEvents ?? []) {
-        try { workbuddyStore.recordExecutionLedgerEvent(e); } catch { /* skip bad record */ }
+        try { workbuddyStore.recordExecutionLedgerEvent(e); } catch (e2) { hydrationFailures++; logger.warn('Failed to hydrate ledger event', { error: String(e2) }); }
+      }
+
+      if (hydrationFailures > 0) {
+        logger.warn('Snapshot hydration completed with failures', { hydrationFailures });
       }
     }
   }
@@ -2300,245 +2327,80 @@ function recordReasoningArtifactOrPause(
   return { ok: true, artifact: runtime.reasoningArtifactStore.record(result.artifact) };
 }
 
-export const BRIDGE_PACKETS_PATH = '/bridge/packets';
-export const BRIDGE_PENDING_PROMPTS_PATH = '/bridge/pending-prompts';
-export const BRIDGE_PENDING_PROMPTS_CONFIRM_PATH = '/bridge/pending-prompts/confirm';
-export const BRIDGE_PENDING_PROMPTS_SEND_PATH = '/bridge/pending-prompts/send';
-export const BRIDGE_PENDING_PROMPTS_CANCEL_PATH = '/bridge/pending-prompts/cancel';
-export const BRIDGE_OUTBOUND_PATH = '/bridge/outbound';
-export const BRIDGE_OUTBOUND_NEXT_PATH = '/bridge/outbound/next';
-export const BRIDGE_OUTBOUND_ACK_PATH = '/bridge/outbound/ack';
-export const BRIDGE_OUTBOUND_CANCEL_PATH = '/bridge/outbound/cancel';
-export const BRIDGE_OUTBOUND_STATUS_PATH = '/bridge/outbound/status';
-export const BRIDGE_OUTBOUND_REPORT_PATH = '/bridge/outbound/report';
-export const BRIDGE_OUTBOUND_STAGE_PATH = '/bridge/outbound/stage';
-export const BRIDGE_LOOPS_PATH = '/bridge/loops';
-export const BRIDGE_LOOPS_ADVANCE_PATH = '/bridge/loops/advance';
-export const BRIDGE_LOOPS_PAUSE_PATH = '/bridge/loops/pause';
-export const BRIDGE_LOOPS_RESUME_PATH = '/bridge/loops/resume';
-export const BRIDGE_LOOPS_CANCEL_PATH = '/bridge/loops/cancel';
-export const BRIDGE_LOOPS_REPORT_PATH = '/bridge/loops/report';
-// Phase 3 multi-executor relay (inbound queue core).
-export const BRIDGE_INBOUND_PATH = '/bridge/inbound';
-export const BRIDGE_INBOUND_NEXT_PATH = '/bridge/inbound/next';
-export const BRIDGE_INBOUND_ACK_PATH = '/bridge/inbound/ack';
-export const BRIDGE_INBOUND_CANCEL_PATH = '/bridge/inbound/cancel';
-// Phase 3 extract→inbound routing policy (extract-return).
-export const BRIDGE_EXTRACT_RETURN_PATH = '/bridge/extract-return';
-export const BRIDGE_REVIEWS_PATH = '/bridge/reviews';
-export const BRIDGE_REVIEWS_CONFIRM_PATH = '/bridge/reviews/confirm';
-export const BRIDGE_REVIEWS_RUN_PATH = '/bridge/reviews/dispatch';
-export const BRIDGE_REVIEWS_CANCEL_PATH = '/bridge/reviews/cancel';
-export const BRIDGE_METRICS_PATH = '/bridge/metrics';
-export const BRIDGE_PROJECTS_PATH = '/bridge/projects';
+// ============================================================================
+// Bridge Route Paths (extracted to separate module)
+// ============================================================================
 
-// v2.0 Goal-driven execution endpoints (ADR-0003 §7.4).
-export const BRIDGE_GOALS_PATH = '/bridge/goals';
-export const BRIDGE_GOALS_PLAN_PATH = '/bridge/goals/plan';
-export const BRIDGE_GOALS_APPROVE_PATH = '/bridge/goals/approve';
-export const BRIDGE_GOALS_STEP_PATH = '/bridge/goals/step';
-export const BRIDGE_GOALS_GATE_PATH = '/bridge/goals/gate';
-export const BRIDGE_GOALS_CANCEL_PATH = '/bridge/goals/cancel';
-// EX-3: Goal binding snapshot routes.
-export const BRIDGE_GOALS_BINDING_PATH = '/bridge/goals/binding';
-export const BRIDGE_GOALS_REBIND_PATH = '/bridge/goals/rebind';
-export const BRIDGE_AUTOMATION_BINDINGS_PATH = '/bridge/automation/bindings';
-export const BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH = '/bridge/automation/bindings/derive';
-export const BRIDGE_EXECUTION_PROPOSALS_PATH = '/bridge/execution-proposals';
-export const BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH = '/bridge/execution-proposals/confirm';
-export const BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH = '/bridge/execution-proposals/dispatch';
-export const BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH = '/bridge/execution-proposals/edit';
-export const BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH = '/bridge/execution-proposals/pause';
-export const BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH = '/bridge/execution-proposals/resume';
-export const BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH = '/bridge/execution-proposals/cancel';
+import {
+  BRIDGE_PACKETS_PATH,
+  BRIDGE_PENDING_PROMPTS_PATH,
+  BRIDGE_PENDING_PROMPTS_CONFIRM_PATH,
+  BRIDGE_PENDING_PROMPTS_SEND_PATH,
+  BRIDGE_PENDING_PROMPTS_CANCEL_PATH,
+  BRIDGE_OUTBOUND_PATH,
+  BRIDGE_OUTBOUND_NEXT_PATH,
+  BRIDGE_OUTBOUND_ACK_PATH,
+  BRIDGE_OUTBOUND_CANCEL_PATH,
+  BRIDGE_OUTBOUND_STATUS_PATH,
+  BRIDGE_OUTBOUND_REPORT_PATH,
+  BRIDGE_OUTBOUND_STAGE_PATH,
+  BRIDGE_LOOPS_PATH,
+  BRIDGE_LOOPS_ADVANCE_PATH,
+  BRIDGE_LOOPS_PAUSE_PATH,
+  BRIDGE_LOOPS_RESUME_PATH,
+  BRIDGE_LOOPS_CANCEL_PATH,
+  BRIDGE_LOOPS_REPORT_PATH,
+  BRIDGE_INBOUND_PATH,
+  BRIDGE_INBOUND_NEXT_PATH,
+  BRIDGE_INBOUND_ACK_PATH,
+  BRIDGE_INBOUND_CANCEL_PATH,
+  BRIDGE_EXTRACT_RETURN_PATH,
+  BRIDGE_REVIEWS_PATH,
+  BRIDGE_REVIEWS_CONFIRM_PATH,
+  BRIDGE_REVIEWS_RUN_PATH,
+  BRIDGE_REVIEWS_CANCEL_PATH,
+  BRIDGE_METRICS_PATH,
+  BRIDGE_PROJECTS_PATH,
+  BRIDGE_GOALS_PATH,
+  BRIDGE_GOALS_PLAN_PATH,
+  BRIDGE_GOALS_APPROVE_PATH,
+  BRIDGE_GOALS_STEP_PATH,
+  BRIDGE_GOALS_GATE_PATH,
+  BRIDGE_GOALS_CANCEL_PATH,
+  BRIDGE_GOALS_BINDING_PATH,
+  BRIDGE_GOALS_REBIND_PATH,
+  BRIDGE_AUTOMATION_BINDINGS_PATH,
+  BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH,
+  BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH,
+  BRIDGE_ENDPOINTS_PATH,
+  BRIDGE_PROJECT_TIMELINE_SUFFIX,
+  BRIDGE_PROJECT_AUDIT_SUFFIX,
+  BRIDGE_PROJECT_MEMORY_SUFFIX,
+  BRIDGE_PROJECT_VERIFICATION_SUFFIX,
+  BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX,
+  BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX,
+  BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX,
+  BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX,
+  BRIDGE_PROJECT_WORKBUDDY_SUFFIX,
+  BRIDGE_PROJECT_TEAMS_SUFFIX,
+  BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX,
+  // Re-exported matchers
+  matchProjectAutomationLoopsListPath,
+  matchProjectAutomationLoopsActionPath,
+  matchProjectObservabilityPath,
+  matchEndpointAction,
+  matchEndpointSubPath,
+  isBridgePath,
+} from './bridge/paths.ts';
 
-// v2.x Endpoint session registry (EX-1: registration, heartbeat, discovery, offline).
-export const BRIDGE_ENDPOINTS_PATH = '/bridge/endpoints';
-
-// v2.1 Read-only project observability endpoints.
-export const BRIDGE_PROJECT_TIMELINE_SUFFIX = '/timeline';
-export const BRIDGE_PROJECT_AUDIT_SUFFIX = '/audit';
-export const BRIDGE_PROJECT_MEMORY_SUFFIX = '/memory';
-export const BRIDGE_PROJECT_VERIFICATION_SUFFIX = '/verification';
-// v2.13: live verification sub-routes
-export const BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX = '/verification/profiles';
-export const BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX = '/verification/confirm';
-// v2.14 ADR-0019-a: read-only local git status
-export const BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX = '/verification/git-status';
-// v2.14 ADR-0019-b: remote github checks confirm
-export const BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX = '/verification/github-checks/confirm';
-
-// v2.2 WorkBuddy non-executing task system project-scoped path.
-export const BRIDGE_PROJECT_WORKBUDDY_SUFFIX = '/workbuddy';
-// v2.3 AgentTeam project-scoped path.
-export const BRIDGE_PROJECT_TEAMS_SUFFIX = '/teams';
-// ADR-0028: automation work-cycle loop project-scoped path.
-export const BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX = '/automation-loops';
-
-/** Matches /bridge/projects/:key/automation-loops (list/create). */
-function matchProjectAutomationLoopsListPath(pathname: string): {
-  matched: true; key: string | undefined;
-} | { matched: false } {
-  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
-  if (!pathname.startsWith(prefix)) return { matched: false };
-  const rest = pathname.slice(prefix.length);
-  if (!rest.endsWith(BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX)) return { matched: false };
-  const raw = rest.slice(0, -BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX.length);
-  if (raw.length === 0 || raw.includes('/')) return { matched: false };
-  let decoded: string | undefined;
-  try { decoded = decodeURIComponent(raw); } catch { return { matched: true, key: undefined }; }
-  const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
-  return { matched: true, key };
-}
-
-/** Matches /bridge/projects/:key/automation-loops/:loopId/{tick|run|pause|resume|cancel}. */
-function matchProjectAutomationLoopsActionPath(pathname: string): {
-  matched: true; key: string | undefined; loopId: string | undefined; action: string;
-} | { matched: false } {
-  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
-  if (!pathname.startsWith(prefix)) return { matched: false };
-  const rest = pathname.slice(prefix.length);
-  const basePrefix = `${BRIDGE_PROJECT_AUTOMATION_LOOPS_SUFFIX}/`;
-  // Find /automation-loops/ in the rest
-  const loopsIdx = rest.indexOf(basePrefix);
-  if (loopsIdx === -1) return { matched: false };
-  const rawKey = rest.slice(0, loopsIdx);
-  if (rawKey.length === 0 || rawKey.includes('/')) return { matched: false };
-  let decodedKey: string | undefined;
-  try { decodedKey = decodeURIComponent(rawKey); } catch { return { matched: true, key: undefined, loopId: undefined, action: '' }; }
-  const key = decodedKey ? (validateProjectKey(decodedKey) ?? undefined) : undefined;
-  const after = rest.slice(loopsIdx + basePrefix.length);
-  const slashIdx = after.indexOf('/');
-  if (slashIdx === -1) return { matched: false };
-  const rawLoopId = after.slice(0, slashIdx);
-  const action = after.slice(slashIdx + 1);
-  const validActions = new Set(['tick', 'run', 'pause', 'resume', 'cancel']);
-  if (!validActions.has(action)) return { matched: false };
-  let loopId: string | undefined;
-  try { loopId = decodeURIComponent(rawLoopId); } catch { loopId = undefined; }
-  return { matched: true, key, loopId, action };
-}
-
-  /** Matches /bridge/projects/:key/{timeline|audit|memory|verification}. */
-function matchProjectObservabilityPath(pathname: string): {
-  matched: true; key: string | undefined; sub: string;
-} | { matched: false } {
-  const prefix = `${BRIDGE_PROJECTS_PATH}/`;
-  if (!pathname.startsWith(prefix)) return { matched: false };
-  const rest = pathname.slice(prefix.length);
-  for (const sub of [BRIDGE_PROJECT_TIMELINE_SUFFIX, BRIDGE_PROJECT_AUDIT_SUFFIX,
-    BRIDGE_PROJECT_MEMORY_SUFFIX, BRIDGE_PROJECT_VERIFICATION_SUFFIX,
-    BRIDGE_PROJECT_VERIFICATION_PROFILES_SUFFIX, BRIDGE_PROJECT_VERIFICATION_CONFIRM_SUFFIX,
-    BRIDGE_PROJECT_VERIFICATION_GIT_STATUS_SUFFIX,
-    BRIDGE_PROJECT_VERIFICATION_GITHUB_CHECKS_CONFIRM_SUFFIX]) {
-    if (rest.endsWith(sub)) {
-      const raw = rest.slice(0, -sub.length);
-      if (raw.length === 0 || raw.includes('/')) continue;
-      let decoded: string | undefined;
-      try { decoded = decodeURIComponent(raw); } catch {
-        // Malformed encoding — treat as matched but invalid key → 400.
-        return { matched: true, key: undefined, sub };
-      }
-      const key = decoded ? (validateProjectKey(decoded) ?? undefined) : undefined;
-      return { matched: true, key, sub };
-    }
-  }
-  return { matched: false };
-}
-
-/**
- * Match `/bridge/endpoints/:id/(heartbeat|offline)`.
- * Returns { matched: true, id, action } or { matched: false }.
- */
-function matchEndpointAction(
-  pathname: string,
-  action: 'heartbeat' | 'offline',
-): { matched: true; id: string } | { matched: false } {
-  const prefix = `${BRIDGE_ENDPOINTS_PATH}/`;
-  const suffix = `/${action}`;
-  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
-  const raw = pathname.slice(prefix.length, -suffix.length);
-  if (raw.length === 0 || raw.includes('/')) return { matched: false };
-  let decoded: string | undefined;
-  try { decoded = decodeURIComponent(raw); } catch {
-    return { matched: true, id: '' };
-  }
-  return { matched: true, id: decoded.trim() };
-}
-
-/**
- * Match `/bridge/endpoints/:id/:subPath`.
- */
-function matchEndpointSubPath(
-  pathname: string,
-  subPath: string,
-): { matched: true; id: string } | { matched: false } {
-  const prefix = `${BRIDGE_ENDPOINTS_PATH}/`;
-  const suffix = `/${subPath}`;
-  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return { matched: false };
-  const raw = pathname.slice(prefix.length, -suffix.length);
-  if (raw.length === 0 || raw.includes('/')) return { matched: false };
-  let decoded: string | undefined;
-  try { decoded = decodeURIComponent(raw); } catch {
-    return { matched: true, id: '' };
-  }
-  return { matched: true, id: decoded.trim() };
-}
-
-export function isBridgePath(pathname: string): boolean {
-  return pathname === BRIDGE_PACKETS_PATH ||
-    pathname === BRIDGE_PENDING_PROMPTS_PATH ||
-    pathname === BRIDGE_PENDING_PROMPTS_CONFIRM_PATH ||
-    pathname === BRIDGE_PENDING_PROMPTS_SEND_PATH ||
-    pathname === BRIDGE_PENDING_PROMPTS_CANCEL_PATH ||
-    pathname === BRIDGE_OUTBOUND_PATH ||
-    pathname === BRIDGE_OUTBOUND_NEXT_PATH ||
-    pathname === BRIDGE_OUTBOUND_ACK_PATH ||
-    pathname === BRIDGE_OUTBOUND_CANCEL_PATH ||
-    pathname === BRIDGE_OUTBOUND_STATUS_PATH ||
-    pathname === BRIDGE_OUTBOUND_REPORT_PATH ||
-    pathname === BRIDGE_OUTBOUND_STAGE_PATH ||
-    pathname === BRIDGE_LOOPS_PATH ||
-    pathname === BRIDGE_LOOPS_ADVANCE_PATH ||
-    pathname === BRIDGE_LOOPS_PAUSE_PATH ||
-    pathname === BRIDGE_LOOPS_RESUME_PATH ||
-    pathname === BRIDGE_LOOPS_CANCEL_PATH ||
-    pathname === BRIDGE_LOOPS_REPORT_PATH ||
-    pathname === BRIDGE_INBOUND_PATH ||
-    pathname === BRIDGE_INBOUND_NEXT_PATH ||
-    pathname === BRIDGE_INBOUND_ACK_PATH ||
-    pathname === BRIDGE_INBOUND_CANCEL_PATH ||
-    pathname === BRIDGE_EXTRACT_RETURN_PATH ||
-    pathname === BRIDGE_REVIEWS_PATH ||
-    pathname === BRIDGE_REVIEWS_CONFIRM_PATH ||
-    pathname === BRIDGE_REVIEWS_RUN_PATH ||
-    pathname === BRIDGE_REVIEWS_CANCEL_PATH ||
-    pathname === BRIDGE_METRICS_PATH ||
-    pathname === BRIDGE_PROJECTS_PATH ||
-    pathname.startsWith(`${BRIDGE_PROJECTS_PATH}/`) ||
-    pathname === BRIDGE_GOALS_PLAN_PATH ||
-    pathname === BRIDGE_GOALS_APPROVE_PATH ||
-    pathname === BRIDGE_GOALS_STEP_PATH ||
-    pathname === BRIDGE_GOALS_GATE_PATH ||
-    pathname === BRIDGE_GOALS_CANCEL_PATH ||
-    pathname === BRIDGE_AUTOMATION_BINDINGS_PATH ||
-    pathname === BRIDGE_AUTOMATION_BINDINGS_DERIVE_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_CONFIRM_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_DISPATCH_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_EDIT_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_PAUSE_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_RESUME_PATH ||
-    pathname === BRIDGE_EXECUTION_PROPOSALS_CANCEL_PATH ||
-    pathname === BRIDGE_GOALS_PATH ||
-    // ADR-0035: ChatGPT Web source relay paths.
-    pathname === '/bridge/source/chatgpt-web/heartbeat' ||
-    pathname === '/bridge/source/chatgpt-web/next' ||
-    pathname === '/bridge/source/chatgpt-web/results' ||
-    pathname === '/bridge/source/chatgpt-web/status' ||
-    (typeof pathname === 'string' && pathname === BRIDGE_ENDPOINTS_PATH) ||
-    (typeof pathname === 'string' && pathname.startsWith(`${BRIDGE_ENDPOINTS_PATH}/`));
-}
+// Re-export isBridgePath for server.ts
+export { isBridgePath };
 
 /**
  * Validate endpoint references for rebind: must exist, be online, and have
@@ -3788,7 +3650,7 @@ export async function handleBridgeRequest(
     if (!requestId || !text) return error(400, 'requestId and text are required');
     const result = runtime.chatGptWebQueue.recordResult(requestId, text);
     if (!result) return error(409, 'Could not record result');
-    console.debug('[BridgeAPI] /results recorded for', requestId, ':', text.substring(0, 50));
+    logger.debug('Result recorded for request', { requestId, textPreview: text.substring(0, 50) });
     const sourceRequest = runtime.chatGptWebQueue.getRequest(requestId);
     if (sourceRequest?.pairingId && sourceRequest.targetRouteKind) {
       runtime.conversationTranscriptStore.append({
@@ -3801,7 +3663,7 @@ export async function handleBridgeRequest(
         kind: 'planner_output',
         visibility: 'user',
       });
-      console.debug('[BridgeAPI] Appended planner_output message to transcript for project', sourceRequest.projectId);
+      logger.debug('Appended planner_output message to transcript', { projectId: sourceRequest.projectId, requestId });
       runtime.persist();
     }
     return ok({ result });
@@ -3811,15 +3673,11 @@ export async function handleBridgeRequest(
   const chatGptWebStatus = pathname === '/bridge/source/chatgpt-web/status';
   if (chatGptWebStatus) {
     if (method !== 'GET') return error(405, 'Method not allowed');
-    const pending = runtime.chatGptWebQueue.getPendingCount();
+    const metrics = runtime.chatGptWebQueue.getMetrics();
     const recent = runtime.chatGptWebQueue.getRecentActivity();
-    const heartbeat = runtime.chatGptWebQueue.getHeartbeat();
     return ok({
-      pending,
+      metrics,
       recent,
-      lastHeartbeatAt: heartbeat?.lastHeartbeatAt ?? null,
-      heartbeatAgeMs: heartbeat ? Date.now() - heartbeat.lastHeartbeatAt : null,
-      connected: runtime.chatGptWebQueue.isExtensionConnected(),
     });
   }
 
@@ -3835,7 +3693,7 @@ export async function handleBridgeRequest(
     if (method === 'GET') {
       const gateDecisions = runtime.gateDecisionStore.listByProject(key);
       const messages = runtime.conversationTranscriptStore.listByProject(key);
-      console.debug('[BridgeAPI] /conversation/messages returning', messages.length, 'messages');
+      logger.debug('Conversation messages returned', { projectId: key, messageCount: messages.length });
       return ok({
         messages,
         actions: runtime.conversationActionStore.listByProject(key),
@@ -3936,7 +3794,7 @@ export async function handleBridgeRequest(
           targetEndpointId: pairing.targetEndpointId,
           targetRouteKind: pairing.targetRouteKind,
         });
-        console.debug('[BridgeAPI] Enqueued source request', sourceRequest.id, 'for project', key);
+        logger.debug('Enqueued source request', { sourceRequestId: sourceRequest.id, projectId: key });
         scheduleChatGptWebSourceTimeout(runtime, {
           requestId: sourceRequest.id,
           projectId: key,
@@ -4376,7 +4234,9 @@ export async function handleBridgeRequest(
       const view = buildHarnessVerification(obsInput);
       // v2.13: merge live verification records into summary
       const liveRuns = runtime.verificationRunStore.getForProject(obsPath.key!);
-      (view as any).liveRunRecords = liveRuns;
+      // Extend view with liveRunRecords for UI display (not part of core type)
+      const extendedView = view as unknown as { liveRunRecords: typeof liveRuns };
+      extendedView.liveRunRecords = liveRuns;
       if (liveRuns.length > 0) {
         const summary = view.summary ?? { evidenceCount: 0, doneStepCount: 0, totalStepCount: 0, resultCounts: { passed: 0, failed: 0, skipped: 0, errored: 0, unknown: 0 } };
         const counts = summary.resultCounts ?? { passed: 0, failed: 0, skipped: 0, errored: 0, unknown: 0 };
@@ -4625,6 +4485,53 @@ export async function handleBridgeRequest(
     }
 
     // ════════════════════════════════════════════════
+    // v2.4b Manual path (for tests and simple use cases)
+    // ════════════════════════════════════════════════
+    if (plannerSource === 'manual') {
+      const goal = runtime.goalStore.getGoal(goalId);
+      if (!goal) return error(400, 'Goal not found');
+
+      const rawSteps = parsed.body.steps;
+      if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+        return error(400, 'steps must be a non-empty array when using plannerSource: manual');
+      }
+
+      // Use attachPlan instead of createPlan (which doesn't exist)
+      const validKinds = ['review', 'summarize', 'propose-patch', 'apply-patch', 'run-command', 'write-file', 'delete-file', 'git-commit', 'git-push'] as const;
+      const validTiers = ['patch-proposal', 'workspace-write'] as const;
+      type ValidKind = typeof validKinds[number];
+      type ValidTier = typeof validTiers[number];
+
+      const steps: PlanStepInput[] = rawSteps.map((s: Record<string, unknown>) => {
+        const kind = validKinds.includes(s.kind as ValidKind) ? s.kind as ValidKind : 'run-command' as const;
+        const tier = validTiers.includes(s.tier as ValidTier) ? s.tier as ValidTier : 'patch-proposal' as const;
+        return {
+          intent: typeof s.intent === 'string' ? s.intent : '',
+          kind,
+          targetEndpointId: typeof s.targetEndpointId === 'string' ? s.targetEndpointId : 'workbuddy',
+          tier,
+        };
+      });
+
+      const permittedTiers: ValidTier[] = Array.isArray(parsed.body.permittedTiers)
+        ? parsed.body.permittedTiers.filter((t: unknown): t is ValidTier => validTiers.includes(t as ValidTier))
+        : ['patch-proposal'];
+
+      const plan = runtime.goalStore.attachPlan({
+        goalId,
+        steps,
+        permittedTiers,
+      });
+
+      if (!plan) {
+        return error(400, 'Failed to attach plan - goal may not be in draft status');
+      }
+
+      runtime.persist();
+      return created({ plan });
+    }
+
+    // ════════════════════════════════════════════════
     // v2.4a Model API path
     // ════════════════════════════════════════════════
     if (plannerSource === 'model-api') {
@@ -4860,8 +4767,8 @@ export async function handleBridgeRequest(
     // ════════════════════════════════════════════════
     // Default: review-cli path (unchanged)
     // ════════════════════════════════════════════════
-    if (plannerSource !== 'review-cli') {
-      return error(400, 'plannerSource must be "review-cli" or "model-api"');
+    if (!['review-cli', 'model-api', 'manual'].includes(plannerSource)) {
+      return error(400, 'plannerSource must be "review-cli", "model-api", or "manual"');
     }
     if (criticSource !== 'none') {
       return error(400, 'criticSource requires plannerSource: "model-api"');

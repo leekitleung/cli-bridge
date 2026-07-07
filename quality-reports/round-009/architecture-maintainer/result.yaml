@@ -1,0 +1,255 @@
+# Architecture Maintainer Review - Round 009
+
+**Review Date:** 2026-07-08
+**Reviewer:** Architecture Maintainer
+**Scope:** execution/ and goal/ modules (newly added)
+
+---
+
+## Executive Summary
+
+| Category | Rating | Findings |
+|----------|--------|----------|
+| Module Responsibility Clarity | ⚠️ MEDIUM | Execution and Goal layers have overlapping concerns |
+| Maintainability | ✅ HIGH | Clean interfaces, good documentation |
+| State Management | ⚠️ MEDIUM | Dual state models with sync issues |
+| Error Handling | ⚠️ MEDIUM | Inconsistent patterns across modules |
+| Testability | ✅ HIGH | Well-structured with dependency injection |
+
+---
+
+## 1. Module Responsibility Clarity
+
+### 1.1 Execution Layer Architecture
+
+**Components:**
+- `executor-registry.ts` - Plugin registry with health checking
+- `execution-dispatcher-v2.ts` - Task routing and execution statistics
+- `opencode-executor.ts` - OpenCode CLI adapter
+- `workbuddy-executor.ts` - WorkBuddy inbox adapter
+- `execution-dispatcher.ts` (v1) - Legacy dispatch logic
+
+**Issues Identified:**
+
+| ID | Severity | Component | Issue |
+|----|----------|-----------|-------|
+| AR-001 | HIGH | execution-dispatcher.ts | Duplicate dispatcher exists (v1/v2) causing confusion |
+| AR-002 | MEDIUM | Both dispatchers | `dispatchExecutionProposal` and `ExecutionDispatcher.dispatch()` have overlapping responsibilities |
+| AR-003 | MEDIUM | executor-registry.ts | Global singleton pattern (`getExecutorRegistry`) conflicts with DI patterns used elsewhere |
+
+### 1.2 Goal Layer Architecture
+
+**Components:**
+- `goal-orchestrator.ts` - Pure state machine, no side effects
+- `goal-automation-loop.ts` - Tick-based automation with result handling
+- `goal-loop-runner.ts` - High-level runner combining orchestrator + dispatcher
+- `gate-aware-execution.ts` - Gate integration layer
+
+**Issues Identified:**
+
+| ID | Severity | Component | Issue |
+|----|----------|-----------|-------|
+| AR-004 | HIGH | goal-loop-runner.ts + goal-automation-loop.ts | Code duplication in tick handling logic |
+| AR-005 | MEDIUM | goal-loop-runner.ts | Duplicates verification error keyword lists from goal-automation-loop.ts |
+| AR-006 | MEDIUM | gate-aware-execution.ts | Thin wrapper with no clear additional value over goal-loop-runner.ts |
+
+### 1.3 Cross-Layer Concerns
+
+| ID | Severity | Issue |
+|----|----------|-------|
+| AR-007 | MEDIUM | `goal-loop-runner.ts` registers executors in its constructor AND `goal-loop-routes.ts` registers the same executors - potential double-registration |
+
+---
+
+## 2. Maintainability Assessment
+
+### 2.1 Strengths
+
+✅ **Good Interface Design**
+- `ExecutorBackend` interface is clean and focused
+- `AdvanceResult` discriminated union provides clear state transitions
+- Consistent JSDoc documentation across modules
+
+✅ **Dependency Injection**
+- Most components accept runtime/registry via constructor
+- `BridgeRuntime` aggregates dependencies cleanly
+
+✅ **Documentation**
+- Module-level comments explain purpose and scope
+- Clear separation between "DO" and "DON'T" in goal-orchestrator
+
+### 2.2 Weaknesses
+
+| ID | Severity | Component | Issue |
+|----|----------|-----------|-------|
+| AR-008 | MEDIUM | execution/* | No index.ts barrel exports for public API - callers must know internal file structure |
+| AR-009 | LOW | All modules | Missing unit tests for core business logic |
+| AR-010 | LOW | verification logic | Error keyword lists hardcoded instead of configurable |
+
+---
+
+## 3. State Management Analysis
+
+### 3.1 Current State Models
+
+**Model A: InMemoryGoalStore**
+- Goals, Plans, PlanSteps with status transitions
+- Pure CRUD operations
+- No side effects in store itself
+
+**Model B: InMemoryAutomationLoopStore**
+- Tracks loop cycles and progress
+- Separate from goal state
+
+**Model C: WorkBuddyExecutionAdapter**
+- Task inbox/outbox model
+- Separate from goal state
+
+### 3.2 Synchronization Issues
+
+| ID | Severity | Issue |
+|----|----------|-------|
+| AR-011 | HIGH | `GoalLoopRunner.tick()` checks `AutomationLoopStore` for pending results, but results come from `WorkBuddyExecutionAdapter` - two different stores need sync |
+| AR-012 | MEDIUM | `tickGoalLoop()` reads from `runtime.workbuddyExecution.getResult()` but doesn't update `AutomationLoopStore` after marking step complete |
+| AR-013 | MEDIUM | `pendingGateApprovals` Map in both `GateAwareExecutionIntegration` AND `GoalLoopRunner` - redundant state |
+
+### 3.3 State Ownership Matrix
+
+```
+State Owner                    | Read By                | Written By
+-------------------------------|------------------------|-------------------
+InMemoryGoalStore              | Orchestrator, Runner   | Orchestrator
+AutomationLoopStore             | Runner, Routes         | Runner
+WorkBuddyExecutionAdapter       | Runner, Routes         | Runner, External WB
+ExecutorRegistry (health)       | Routes, Dispatcher     | HealthCheck
+```
+
+**Issue AR-014 (MEDIUM):** No transactional boundary exists across these stores - partial failures leave inconsistent state.
+
+---
+
+## 4. Error Handling Patterns
+
+### 4.1 Current Patterns
+
+| Pattern | Usage | Location |
+|---------|-------|----------|
+| Result union types | ✅ Good | `AdvanceResult`, `DispatchResult` |
+| Error keyword matching | ⚠️ Fragile | `verifyStepOutput()` |
+| Exception propagation | ⚠️ Inconsistent | Some wrapped, some raw |
+| Timeout handling | ✅ Good | Both executors implement timeouts |
+
+### 4.2 Error Handling Issues
+
+| ID | Severity | Component | Issue |
+|----|----------|-----------|-------|
+| AR-015 | MEDIUM | goal-loop-runner.ts | `catch (err)` uses `err instanceof Error` but some errors may be strings |
+| AR-016 | MEDIUM | Both executors | No retry logic for transient failures |
+| AR-017 | LOW | verifyStepOutput() | Hardcoded keyword list may miss edge cases; regex patterns incomplete |
+
+---
+
+## 5. Security Considerations
+
+### 5.1 Strengths
+
+✅ **Command Injection Prevention**
+- `opencode-executor.ts` uses `shell: false`
+- Working directory validation implemented
+
+✅ **Input Validation**
+- `goal-loop-routes.ts` validates UUID format for all ID params
+- Body size limits enforced (1MB max)
+
+### 5.2 Security Notes
+
+| ID | Severity | Component | Issue |
+|----|----------|-----------|-------|
+| AR-018 | LOW | workbuddy-executor.ts | Pairing token transmitted in fetch headers - verify TLS in production |
+| AR-019 | INFO | All modules | No rate limiting on execution endpoints |
+
+---
+
+## 6. Recommendations
+
+### Priority 1 (Critical)
+
+1. **Consolidate Dispatchers** (AR-001, AR-002)
+   - Deprecate `execution-dispatcher.ts` (v1)
+   - Migrate `dispatchExecutionProposal` logic into `ExecutionDispatcher` or a dedicated `ExecutionProposalDispatcher`
+   - Update all callers
+
+2. **Fix State Sync Issues** (AR-011, AR-012)
+   - Add explicit state transition methods that update both stores atomically
+   - Or introduce a saga/transaction pattern for cross-store operations
+
+### Priority 2 (Important)
+
+3. **Remove Duplicate Code** (AR-004, AR-005)
+   - Extract shared tick handling logic into base class or shared utility
+   - Share error keyword lists as a constant module
+
+4. **Consolidate Gate Execution** (AR-006, AR-013)
+   - Deprecate `GateAwareExecutionIntegration`
+   - Integrate its logic into `GoalLoopRunner` or remove entirely
+
+5. **Fix Double Registration** (AR-007)
+   - Make executor registration happen once at startup
+   - Use `setExecutorRegistry` pattern consistently
+
+### Priority 3 (Nice to Have)
+
+6. **Add Configuration for Error Keywords** (AR-010)
+   - Externalize error detection patterns
+   - Allow per-project customization
+
+7. **Improve Test Coverage** (AR-009)
+   - Add unit tests for `GoalOrchestrator.advance()`
+   - Add integration tests for executor selection
+
+---
+
+## 7. Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| State inconsistency after partial failure | MEDIUM | HIGH | Implement transactional boundaries |
+| Wrong executor selected | LOW | MEDIUM | Add capability matching tests |
+| Gate bypass (security) | LOW | HIGH | Already mitigated by orchestrator design |
+| Memory leak from pending maps | MEDIUM | LOW | Already has cleanup in `cleanupExpiredExecutions()` |
+
+---
+
+## 8. Files Reviewed
+
+### Execution Module
+- `apps/local-server/src/execution/index.ts`
+- `apps/local-server/src/execution/executor-registry.ts`
+- `apps/local-server/src/execution/execution-dispatcher.ts`
+- `apps/local-server/src/execution/execution-dispatcher-v2.ts`
+- `apps/local-server/src/execution/opencode-executor.ts`
+- `apps/local-server/src/execution/workbuddy-executor.ts`
+
+### Goal Module
+- `apps/local-server/src/goal/gate-aware-execution.ts`
+- `apps/local-server/src/goal/goal-automation-loop.ts`
+- `apps/local-server/src/goal/goal-loop-runner.ts`
+- `apps/local-server/src/goal/goal-orchestrator.ts`
+
+### Supporting
+- `apps/local-server/src/routes/goal-loop-routes.ts`
+- `apps/local-server/src/routes/bridge-api.ts`
+- `apps/local-server/src/storage/goal-store.ts`
+
+---
+
+## Conclusion
+
+The execution and goal modules demonstrate good architectural thinking with clear separation of concerns. However, there are several areas where the architecture has evolved organically, leading to:
+- Duplicate implementations
+- State synchronization gaps
+- Inconsistent patterns
+
+The recommendations above focus on consolidation and hardening rather than fundamental redesign. The core design is sound - the issues are primarily around implementation consistency and operational concerns.
+
+**Overall Architecture Rating: 7/10** (Good with room for improvement)

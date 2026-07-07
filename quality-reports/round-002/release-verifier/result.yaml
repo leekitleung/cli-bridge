@@ -1,0 +1,25 @@
+reviewer: release-verifier
+score: 83
+dimension_scores:
+  test_coverage: 78
+  build_quality: 90
+  documentation: 80
+  release_readiness: 85
+blockers:
+  - id: RV-001
+    severity: P2
+    description: Test coverage for security-critical paths needs improvement (e.g., race conditions)
+    files:
+      - tests/unit/command-backend.test.ts
+      - tests/unit/outbound-prompt-store.test.ts
+  - id: RV-002
+    severity: P3
+    description: README could benefit from more complete onboarding documentation
+redlines: []
+recommendation: conditional_pass
+notes: |
+  - Unit tests pass (59/60, 1 skipped)
+  - Type checking passes
+  - Build extension works
+  - Documentation is comprehensive but inconsistent (mixed Chinese/English)
+  - Changelog exists but could be more detailed

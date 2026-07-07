@@ -1,0 +1,30 @@
+# Result YAML Template
+# Each reviewer MUST output this file to quality-reports/round-XXX/<reviewer>/result.yaml
+
+reviewer: <reviewer-name>
+score: <0-100>
+dimension_scores:
+  <dimension-1>: <0-100>
+  <dimension-2>: <0-100>
+  <dimension-3>: <0-100>
+
+blockers:
+  - id: <BLOCKER-001>
+    severity: P0|P1|P2|P3
+    description: <clear description>
+    files:
+      - <file-path>
+    evidence:
+      lines: <line-numbers>
+      type: <code|config|test|doc>
+
+redlines:
+  - id: <RL-001>
+    description: <critical quality issue that MUST be fixed>
+    severity: P0|P1
+
+recommendation: pass|fail
+notes: <optional human notes>
+
+# NOTE: recommendation is the reviewer's assessment only.
+# Final passed/fail is determined by review-gate.mjs based on thresholds.

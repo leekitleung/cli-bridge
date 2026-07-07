@@ -1,0 +1,69 @@
+experiment: 2
+hypothesis: strengthen-security
+dimension: security-posture
+timestamp: '2026-07-07T06:30:13.175Z'
+baseline:
+  testCoverage:
+    value: 8
+    unit: files
+    note: test file count
+  lintErrors:
+    value: 2
+    unit: errors
+  typeErrors:
+    value: -1
+    unit: unknown
+    note: could not parse
+  documentationCoverage:
+    value: 230
+    unit: files
+    detail:
+      readme: 29
+      docs: 201
+      src: 129
+  cliUsability:
+    value: 22
+    unit: scripts
+    helpWorks: true
+    detail:
+      scripts:
+        - start
+        - dev
+        - dev:configured
+        - web-auto:e2e
+        - dual-endpoint:e2e
+        - build-extension
+        - lint
+        - lint:eslint
+        - format
+        - format:check
+        - remote-review-gate
+        - typecheck
+        - test
+        - start:local-server
+        - start:local-server:configured
+        - review
+        - skill:check
+        - skill:install
+        - skill:verify
+        - skill:diff
+        - skill:update
+        - skill:gate
+  securityPosture:
+    value: 0
+    unit: checks
+    detail:
+      envExample: false
+      envGitignored: false
+      securityDoc: false
+      auditScript: false
+  architectureScore:
+    value: 62
+    unit: '%'
+    detail:
+      apps: 122
+      packages: 7
+      tests: 8
+      docs: 201
+dryRun: true
+status: dry_run

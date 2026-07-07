@@ -1,0 +1,62 @@
+# Destructive QA Reviewer Result
+reviewer: destructive-qa
+profile: release-gate
+round: skill-release
+
+# Overall score (0-100)
+score: 82
+
+# Dimension scores
+dimension_scores:
+  input_validation: 85
+  concurrency_safety: 80
+  resource_limits: 85
+  error_boundaries: 85
+  attack_surface: 75
+
+# Blocking issues
+blockers:
+  - id: BLOCKER-001
+    severity: P2
+    category: security
+    description: review-gate.mjs uses execSync with template strings - potential command injection if inputs are untrusted
+    files:
+      - skills/release-quality-review/scripts/review-runner.mjs
+    evidence:
+      lines: "253"
+      type: code
+    fix_effort: low
+
+  - id: BLOCKER-002
+    severity: P3
+    category: security
+    description: No input validation on --round parameter beyond null check
+    files:
+      - skills/release-quality-review/scripts/review-gate.mjs
+    evidence:
+      lines: "42-46"
+      type: code
+    fix_effort: low
+
+# Redlines
+redlines: []
+
+# Recommendation
+recommendation: conditional
+
+# Notes
+notes: |
+  The skill handles security reasonably well:
+  - YAML parsing has error handling
+  - File paths are constructed safely
+  - No obvious injection vectors in critical paths
+
+  Minor concern: execSync usage in review-runner.mjs should use array form
+  for command/args to prevent shell injection.
+
+  Otherwise, security posture is acceptable for internal tooling.
+
+# Metadata
+reviewed_at: 2026-07-07T00:00:00Z
+reviewer_type: constant
+triggered_by: release-gate profile always-on

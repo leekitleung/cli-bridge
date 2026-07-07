@@ -12,6 +12,11 @@ const MAX_ARG_COUNT = 20;
  */
 const MAX_ARG_LENGTH = 4096;
 
+/**
+ * Maximum length for individual arguments to prevent buffer overflow
+ */
+const MAX_ARG_LENGTH_PER = 1024;
+
 export interface CommandBackendConfig {
   /** Allowlist of command names or absolute paths that may be executed. */
   allowlist: string[];
@@ -43,10 +48,19 @@ export function createCommandBackend(config: CommandBackendConfig) {
   const timeoutMs = config.timeoutMs || 30_000;
   const outputCapBytes = config.outputCapBytes || 65_536;
 
+  /**
+   * Windows built-in commands that can be safely executed via cmd.exe /c
+   * These are limited to safe read-only operations
+   */
+  const WINDOWS_SAFE_BUILTINS = new Set([
+    'echo', 'type', 'cd', 'chdir', 'dir', 'path', 'ver', 'vol', 'date', 'time',
+    'set', 'prompt', 'cls', 'color', 'title', 'mode', 'net', 'netstat', 'ipconfig',
+    'hostname', 'systeminfo', 'tasklist', 'findstr'
+  ]);
+
   function isAllowed(command: string): boolean {
-    // On Windows, allow cmd.exe to run built-in commands
     if (process.platform === 'win32' && command.toLowerCase() === 'cmd.exe') {
-      return true;
+      return true; // cmd.exe is allowed, but we'll validate /c arguments below
     }
     return config.allowlist.some(entry => {
       if (entry === command) return true;
@@ -58,6 +72,35 @@ export function createCommandBackend(config: CommandBackendConfig) {
       }
       return false;
     });
+  }
+
+  /**
+   * Validate Windows cmd.exe /c arguments to prevent command injection
+   */
+  function validateWindowsCmdArgs(argv: string[]): { valid: boolean; reason?: string } {
+    // argv[0] is 'cmd.exe', argv[1] is '/c', rest are the actual command
+    if (argv.length < 3) {
+      return { valid: false, reason: 'No command specified after cmd.exe /c' };
+    }
+
+    const subCommand = argv[2].toLowerCase();
+
+    // Only allow safe built-in commands
+    if (!WINDOWS_SAFE_BUILTINS.has(subCommand)) {
+      return {
+        valid: false,
+        reason: `cmd.exe: '${subCommand}' is not in the safe built-in list. Allowed: ${[...WINDOWS_SAFE_BUILTINS].join(', ')}`
+      };
+    }
+
+    // Check for path traversal in arguments
+    for (let i = 3; i < argv.length; i++) {
+      if (argv[i].includes('..')) {
+        return { valid: false, reason: 'Path traversal not allowed in cmd.exe arguments' };
+      }
+    }
+
+    return { valid: true };
   }
 
   async function execute(task: {
@@ -81,7 +124,8 @@ export function createCommandBackend(config: CommandBackendConfig) {
 
     // SECURITY FIX: 检查 shell 元字符防止命令注入
     // 即使 shell: false，也拒绝包含危险元字符的输入
-    const SHELL_METACHARACTERS = /[;|&$`()<>\\]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
+    // 添加换行符检查防止多行注入攻击
+    const SHELL_METACHARACTERS = /[;|&$`()<>\\\r\n]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
     if (SHELL_METACHARACTERS.test(prompt)) {
       return {
         ok: false,
@@ -127,6 +171,19 @@ export function createCommandBackend(config: CommandBackendConfig) {
       };
     }
 
+    // Validate individual argument length
+    for (const arg of argv) {
+      if (arg.length > MAX_ARG_LENGTH_PER) {
+        return {
+          ok: false,
+          stdout: '',
+          stderr: `Argument exceeds ${MAX_ARG_LENGTH_PER} byte limit.`,
+          exitCode: 1,
+          failureReason: `argument-too-long: ${arg.length} > ${MAX_ARG_LENGTH_PER}`,
+        };
+      }
+    }
+
     const command = argv[0];
     if (!isAllowed(command)) {
       return {
@@ -138,13 +195,53 @@ export function createCommandBackend(config: CommandBackendConfig) {
       };
     }
 
+    // Validate Windows cmd.exe commands
+    const isWindows = process.platform === 'win32';
+    if (isWindows && command.toLowerCase() === 'cmd.exe') {
+      const validation = validateWindowsCmdArgs(argv);
+      if (!validation.valid) {
+        return {
+          ok: false,
+          stdout: '',
+          stderr: validation.reason || 'Invalid cmd.exe arguments',
+          exitCode: 1,
+          failureReason: `windows-cmd-validation-failed: ${validation.reason}`,
+        };
+      }
+    }
+
     const workDir = task.workingDirectory ? resolve(task.workingDirectory) : cwd;
+
+    // Validate working directory is within sandbox bounds
+    const sandboxRoot = cwd;
+    if (!workDir.startsWith(sandboxRoot)) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: 'Working directory must be within sandbox root.',
+        exitCode: 1,
+        failureReason: 'working-directory-escape-attempt',
+      };
+    }
 
     // On Windows, use cmd.exe to execute commands through /c flag
     // This allows built-in commands like echo, type, del to work properly
-    const isWindows = process.platform === 'win32';
     const execArgv = isWindows ? ['/c', ...argv] : argv;
     const execCommand = isWindows ? 'cmd.exe' : command;
+
+    // Windows-compatible process termination helper
+    function killProcess(pid: number | undefined, force = false): void {
+      if (!pid) return;
+      if (isWindows) {
+        // Windows: use taskkill to terminate process tree
+        // /T: kill process and all child processes
+        // /F: force termination
+        spawn('taskkill', force ? ['/T', '/F', '/PID', String(pid)] : ['/T', '/PID', String(pid)], { shell: false });
+      } else {
+        // Unix: use SIGTERM, then SIGKILL if force
+        process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+      }
+    }
 
     return new Promise<CommandBackendResult>((resolveResult) => {
       const child = spawn(execCommand, execArgv, {
@@ -162,30 +259,40 @@ export function createCommandBackend(config: CommandBackendConfig) {
 
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
-        // Force kill after 2s if SIGTERM doesn't work.
+        killProcess(child.pid, false);
+        // Force kill after 2s if graceful termination doesn't work.
         setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
+          killProcess(child.pid, true);
         }, 2000);
       }, timeoutMs);
 
       child.stdout.on('data', (chunk: Buffer) => {
         if (outputTruncated) return;
         stdout += chunk.toString('utf8');
-        if (stdout.length + stderr.length > outputCapBytes) {
+        const totalLen = stdout.length + stderr.length;
+        if (totalLen > outputCapBytes) {
           outputTruncated = true;
-          stdout = stdout.slice(0, outputCapBytes);
-          child.kill('SIGTERM');
+          // Distribute cap proportionally between stdout and stderr
+          const stdoutRatio = stdout.length / (stdout.length + stderr.length || 1);
+          const stderrRatio = stderr.length / (stdout.length + stderr.length || 1);
+          stdout = stdout.slice(0, Math.floor(outputCapBytes * stdoutRatio));
+          stderr = stderr.slice(0, Math.floor(outputCapBytes * stderrRatio));
+          killProcess(child.pid, false);
         }
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
         if (outputTruncated) return;
         stderr += chunk.toString('utf8');
-        if (stdout.length + stderr.length > outputCapBytes) {
+        const totalLen = stdout.length + stderr.length;
+        if (totalLen > outputCapBytes) {
           outputTruncated = true;
-          stderr = stderr.slice(0, outputCapBytes);
-          child.kill('SIGTERM');
+          // Distribute cap proportionally between stdout and stderr
+          const stdoutRatio = stdout.length / (stdout.length + stderr.length || 1);
+          const stderrRatio = stderr.length / (stdout.length + stderr.length || 1);
+          stdout = stdout.slice(0, Math.floor(outputCapBytes * stdoutRatio));
+          stderr = stderr.slice(0, Math.floor(outputCapBytes * stderrRatio));
+          killProcess(child.pid, false);
         }
       });
 

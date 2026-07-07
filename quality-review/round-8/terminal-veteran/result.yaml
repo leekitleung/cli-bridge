@@ -1,0 +1,200 @@
+# Terminal Veteran Quality Review - Round 8
+
+## Files Reviewed
+- `apps/local-server/src/server.ts` (587 lines)
+- `apps/local-server/src/workbuddy/command-backend.ts` (317 lines)
+
+---
+
+## Executive Summary
+
+**Overall CLI Quality: 7.5/10 (Good)**
+
+The CLI has solid foundations with security hardening already applied. However, several improvements can be made in error messaging, logging depth, and edge case handling.
+
+---
+
+## server.ts Assessment
+
+### Strengths
+1. **Graceful Shutdown**: Proper SIGTERM/SIGINT handling with active request tracking (lines 500-553)
+2. **Security Headers**: CSP, X-Frame-Options, XSS-Protection applied to Console routes (lines 313-319)
+3. **Request Timeouts**: Dual timeout mechanism (60s general + 120s bridge-specific) with proper cleanup
+4. **Rate Limiting**: Per-IP rate limiting with configurable windows
+5. **IP Spoofing Prevention**: X-Forwarded-For explicitly not trusted (line 259-261)
+6. **Body Size Limits**: 1MB max for extension-claim endpoint (line 423)
+7. **Nonce Validation**: 16-256 char length validation (lines 439-443)
+
+### Issues Found
+
+| Severity | Category | Issue | Location |
+|----------|----------|-------|----------|
+| Medium | Error Handling | Catch block swallows stack trace | Line 489 |
+| Low | Logging | No request logging, only errors | Global |
+| Low | Logging | Pairing token hints hidden but no log when auth fails | Line 402 |
+| Low | Edge Case | Null `request.url` defaults to `/` but could mask issues | Line 257 |
+| Low | CLI Output | Security-conscious output (token hidden) | Line 585 |
+
+### Specific Observations
+
+**1. Error Message Quality**
+```typescript
+// Line 402 - Only logs error, no context
+console.error('[Server] Bridge request error:', err);
+
+// Should include:
+console.error('[Server] Bridge request error:', {
+  path: url.pathname,
+  method: request.method,
+  error: err.message,
+  stack: err.stack
+});
+```
+
+**2. Missing Request Logging**
+- No access logs for debugging production issues
+- Cannot trace request flow without instrumenting
+- Suggestion: Add structured request logging for failed/timeout requests
+
+**3. 404 Response Time**
+- Line 486: Generic "Not found" message - good for security (no path disclosure)
+- However, adds `code: 'NOT_FOUND'` for programmatic access
+
+**4. Health Endpoint Diagnostics**
+- Lines 282-294: Health endpoint returns server info
+- Pairing token included in protected health (good for pairing workflow)
+- Public health should perhaps exclude sensitive data
+
+---
+
+## command-backend.ts Assessment
+
+### Strengths
+1. **Allowlist Enforcement**: Only allowlisted commands execute
+2. **Shell Metacharacter Detection**: Blocks injection attempts even with `shell: false`
+3. **Multi-layer DoS Protection**: Argument count, total length, per-argument limits
+4. **Output Capping**: Prevents memory exhaustion
+5. **Process Tree Termination**: Windows `taskkill /T` kills children properly
+6. **Force Kill Fallback**: 2-second grace period before SIGKILL
+
+### Issues Found
+
+| Severity | Category | Issue | Location |
+|----------|----------|-------|----------|
+| Medium | Error Message | `stderr: err.message` loses error context | Line 275 |
+| Low | Logging | No command execution logging | Line 183 |
+| Low | Logging | No allowlist check failure details | Line 150-157 |
+| Low | Edge Case | `spawn` errors not categorized | Line 270-279 |
+| Low | Windows | cmd.exe allowlist bypass on Windows | Line 53-55 |
+
+### Specific Observations
+
+**1. Allowlist Bypass (Windows)**
+```typescript
+// Line 53-55: cmd.exe is always allowed on Windows
+if (process.platform === 'win32' && command.toLowerCase() === 'cmd.exe') {
+  return true;
+}
+```
+**Risk**: Any command can be run via `cmd.exe /c <command>`. This effectively bypasses the allowlist on Windows.
+
+**Recommendation**: Either remove this exception or document it clearly as intentional for Windows compatibility.
+
+**2. Error Context Loss**
+```typescript
+// Line 275: Only passes message, loses stack/context
+stderr: err.message,
+
+// Better:
+stderr: `Spawn failed: ${err.message} (code: ${err.code})`,
+```
+
+**3. Missing Structured Logging**
+```typescript
+// No logging of:
+child.stdout.on('data', ...)
+
+// Should log (debug level):
+console.debug(`[CommandBackend] ${task.taskId}: stdout +${chunk.length}b`);
+```
+
+**4. Timeout Handling Improvement Needed**
+```typescript
+// Line 196-203: Timer continues if process exits exactly at timeout
+const timer = setTimeout(() => {
+  timedOut = true;
+  killProcess(child.pid, false);
+  ...
+}, timeoutMs);
+```
+
+**Race Condition**: If process exits within 1ms of timeout, `timedOut` flag may be set before `close` event fires.
+
+**5. Output Truncation Logic Bug**
+```typescript
+// Lines 208-209: Truncates stdout but keeps full stderr
+if (stdout.length + stderr.length > outputCapBytes) {
+  outputTruncated = true;
+  stdout = stdout.slice(0, outputCapBytes);  // Only truncates stdout!
+}
+```
+
+**Issue**: If stderr is larger, it remains full length, violating the cap.
+
+---
+
+## Recommendations Summary
+
+### High Priority
+1. **Fix allowlist bypass on Windows** - cmd.exe exception negates allowlist security
+2. **Fix output truncation logic** - Only one stream gets truncated, not both
+
+### Medium Priority
+3. **Enhance error messages with context** - Include paths, method, stack traces
+4. **Add structured request logging** - For debugging production issues
+5. **Fix race condition in timeout handling** - Check if process already exited
+
+### Low Priority
+6. **Add command execution audit log** - Track what commands ran (for security review)
+7. **Consider removing cmd.exe allowlist** - Document if intentional
+8. **Add request ID tracking** - For distributed tracing
+
+---
+
+## Security Considerations
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Shell Injection Prevention | Pass | Metacharacter regex blocks common patterns |
+| Allowlist Enforcement | Partial | Bypassed by cmd.exe on Windows |
+| Output Size Limits | Fail | Truncation logic doesn't cap combined output |
+| Timeout Enforcement | Pass | Dual-force kill mechanism works |
+| Authentication | Pass | Token + session cookie with validation |
+| Rate Limiting | Pass | Per-IP limits configured |
+
+---
+
+## CLI Behavior Tests Performed
+
+| Test | Command | Expected | Actual | Status |
+|------|---------|----------|--------|--------|
+| Empty prompt | `""` | Error | Returns with `failureReason: 'Empty prompt'` | Pass |
+| Shell injection | `echo "test" && echo "pwned"` | Blocked | Blocked by metacharacter check | Pass |
+| Argument overflow | 25+ args | Blocked | Returns `too-many-arguments` | Pass |
+| Long args | 2000+ char arg | Blocked | Returns `argument-too-long` | Pass |
+| Timeout | Long-running command | Killed | Force killed after timeout | Pass |
+
+---
+
+## Final Verdict
+
+**Ready for Production with Caveats**
+
+The CLI implementation demonstrates good security practices with defense-in-depth (allowlist + shell metacharacter detection + output caps + timeouts). The Windows cmd.exe allowlist bypass is a significant concern that should be addressed or formally documented as an intentional trade-off for Windows compatibility.
+
+**Minimum Fixes Required Before Production:**
+1. Document the Windows cmd.exe behavior
+2. Fix output truncation to cap combined stdout+stderr
+3. Add error context to spawn failures
+
+**Overall: Solid foundation, needs minor hardening for production use.**

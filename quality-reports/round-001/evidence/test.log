@@ -1,0 +1,100 @@
+ WARN  The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+
+> cli-bridge@ test H:\02-areas\cli-bridge
+> node --experimental-strip-types --test tests/unit/*.test.ts tests/e2e/goal-loop-integration.test.ts
+
+TAP version 13
+# [Test Setup] Got pairing token from public endpoint
+# [Test] Created goal: 0145e208-6f11-41fd-a1a1-b58d4db763bc
+# Subtest: Goal Loop Integration Tests
+    # Subtest: 1. Goal Lifecycle
+        # Subtest: should create a goal
+        ok 1 - should create a goal
+          ---
+          duration_ms: 12.4696
+          type: 'test'
+          ...
+        # Subtest: should create a plan for a goal
+        ok 2 - should create a plan for a goal
+          ---
+          duration_ms: 5.0483
+          type: 'test'
+          ...
+        # Subtest: should approve a plan
+        ok 3 - should approve a plan
+          ---
+          duration_ms: 7.6186
+          type: 'test'
+          ...
+        1..3
+    ok 1 - 1. Goal Lifecycle
+      ---
+      duration_ms: 26.0169
+      type: 'suite'
+      ...
+# [Test] Started loop: 361f7400-8ff9-47f4-b7dc-389a701b9da9
+    # Subtest: 2. Goal Loop Management
+        # Subtest: should start a goal loop
+        ok 1 - should start a goal loop
+          ---
+          duration_ms: 12.2523
+          type: 'test'
+          ...
+        # Subtest: should get loop status
+        ok 2 - should get loop status
+          ---
+          duration_ms: 10.6957
+          type: 'test'
+          ...
+        # Subtest: should stop a goal loop
+        ok 3 - should stop a goal loop
+          ---
+          duration_ms: 5.5957
+          type: 'test'
+          ...
+        1..3
+    ok 2 - 2. Goal Loop Management
+      ---
+      duration_ms: 29.028
+      type: 'suite'
+      ...
+    # Subtest: 3. Gate Approval
+        # Subtest: should have pending gates for mutating steps
+        ok 1 - should have pending gates for mutating steps
+          ---
+          duration_ms: 1011.1672
+          type: 'test'
+          ...
+        1..1
+    ok 3 - 3. Gate Approval
+      ---
+      duration_ms: 1011.5113
+      type: 'suite'
+      ...
+# [Test] Executor status: 2/2 healthy
+    # Subtest: 4. Executor Status
+        # Subtest: should return executor status
+        ok 1 - should return executor status
+          ---
+          duration_ms: 2.1224
+          type: 'test'
+          ...
+        1..1
+    ok 4 - 4. Executor Status
+      ---
+      duration_ms: 2.4963
+      type: 'suite'
+      ...
+    # Subtest: 5. Error Handling
+        # Subtest: should reject starting loop for non-approved goal
+        ok 1 - should reject starting loop for non-approved goal
+          ---
+          duration_ms: 3.125
+          type: 'test'
+          ...
+        # Subtest: should require authentication for protected endpoints
+        ok 2 - should require authentication for protected endpoints
+          ---
+          duration_ms: 0.8416
+          type: 'test'
+          ...

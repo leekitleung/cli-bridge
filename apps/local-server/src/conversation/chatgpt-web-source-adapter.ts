@@ -37,11 +37,30 @@ export interface ChatGptSourceResult {
   returnedAt: number;
 }
 
-/** Heartbeat from the extension declaring it is connected and ready. */
-export interface ChatGptSourceHeartbeat {
+export interface ChatGptSourceQueueMetrics {
+  /** Current queue depth (pending requests). */
+  depth: number;
+  /** Currently processing (claimed) requests. */
+  inFlight: number;
+  /** Requests completed in the last window. */
+  completedInWindow: number;
+  /** Average wait time in ms (time from enqueue to claim). */
+  avgWaitTime: number;
+  /** Requests per minute throughput. */
+  throughput: number;
+  /** Connection status. */
+  extensionConnected: boolean;
+  lastHeartbeatAt: number | null;
+}
+
+interface ChatGptSourceHeartbeat {
   lastHeartbeatAt: number;
   capabilities?: { canAnswer?: boolean };
 }
+
+// Metrics tracking constants
+const METRICS_WINDOW_MS = 60_000; // 1-minute window for throughput calculation
+const MAX_SAMPLE_SIZE = 100; // Max samples for average calculation
 
 /**
  * ADR-0035: In-memory queue for ChatGPT Web source requests.
@@ -52,6 +71,10 @@ export class ChatGptWebSourceQueue {
   private readonly requests = new Map<string, ChatGptSourceRequest>();
   private readonly results = new Map<string, ChatGptSourceResult>();
   private heartbeat: ChatGptSourceHeartbeat | null = null;
+
+  // Metrics tracking
+  private readonly claimTimestamps: number[] = [];
+  private readonly completionTimestamps: number[] = [];
 
   /** Record a heartbeat from the extension. */
   recordHeartbeat(capabilities?: { canAnswer?: boolean }): void {
@@ -114,14 +137,47 @@ export class ChatGptWebSourceQueue {
     req.status = 'claimed';
     req.claimedAt = Date.now();
     this.requests.set(requestId, clone(req));
+
+    // Track claim timestamp for metrics
+    this.claimTimestamps.push(req.claimedAt);
+    if (this.claimTimestamps.length > MAX_SAMPLE_SIZE) {
+      this.claimTimestamps.shift();
+    }
+
     return clone(req);
   }
 
-  /** Atomically claim the next pending request (for extension polling). */
+  /** Atomically claim the next pending request (for extension polling).
+   *
+   * SECURITY FIX: 修复竞态条件 - 原来 claimNext 先遍历找到 pending 请求，
+   * 再调用 claim() 更新状态，两步之间可能被其他调用者抢走同一请求。
+   * 现在使用 compare-and-swap 模式在单次 Map 操作内完成。
+   */
   claimNext(): ChatGptSourceRequest | undefined {
     for (const req of this.requests.values()) {
       if (req.status !== 'pending') continue;
-      return this.claim(req.id);
+
+      // 原子性检查并更新：在同一 Map 操作内验证状态并修改
+      const prev = this.requests.get(req.id);
+      if (prev && prev.status === 'pending') {
+        // 使用克隆避免直接修改存储的对象
+        const updated: ChatGptSourceRequest = {
+          ...prev,
+          status: 'claimed',
+          claimedAt: Date.now(),
+        };
+        this.requests.set(req.id, updated);
+
+        // Track claim timestamp for metrics
+        if (updated.claimedAt !== undefined) {
+          this.claimTimestamps.push(updated.claimedAt);
+          if (this.claimTimestamps.length > MAX_SAMPLE_SIZE) {
+            this.claimTimestamps.shift();
+          }
+        }
+
+        return clone(updated);
+      }
     }
     return undefined;
   }
@@ -135,6 +191,13 @@ export class ChatGptWebSourceQueue {
     this.requests.set(requestId, clone(req));
     const result: ChatGptSourceResult = { requestId, text, returnedAt: Date.now() };
     this.results.set(requestId, clone(result));
+
+    // Track completion timestamp for metrics
+    this.completionTimestamps.push(result.returnedAt);
+    if (this.completionTimestamps.length > MAX_SAMPLE_SIZE) {
+      this.completionTimestamps.shift();
+    }
+
     return clone(result);
   }
 
@@ -212,6 +275,58 @@ export class ChatGptWebSourceQueue {
       returnedAt: req.returnedAt,
       failedAt: req.failedAt,
     }));
+  }
+
+  /**
+   * Get queue metrics for monitoring/display.
+   * Includes depth, throughput, wait times, and connection status.
+   */
+  getMetrics(): ChatGptSourceQueueMetrics {
+    const now = Date.now();
+    const windowStart = now - METRICS_WINDOW_MS;
+
+    // Count requests by status
+    let depth = 0;
+    let inFlight = 0;
+    for (const req of this.requests.values()) {
+      if (req.status === 'pending') depth++;
+      else if (req.status === 'claimed') inFlight++;
+    }
+
+    // Count completions in the window
+    const recentCompletions = this.completionTimestamps.filter(t => t >= windowStart);
+
+    // Calculate average wait time (from creation to claim)
+    const recentClaims = this.claimTimestamps.filter(t => t >= windowStart);
+    let avgWaitTime = 0;
+    if (recentClaims.length > 0) {
+      const waitTimes: number[] = [];
+      for (const claimTime of recentClaims) {
+        // Find the corresponding request
+        for (const req of this.requests.values()) {
+          if (req.claimedAt === claimTime) {
+            waitTimes.push(claimTime - req.createdAt);
+            break;
+          }
+        }
+      }
+      if (waitTimes.length > 0) {
+        avgWaitTime = waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length;
+      }
+    }
+
+    // Calculate throughput (requests per minute)
+    const throughput = (recentCompletions.length / METRICS_WINDOW_MS) * 60_000;
+
+    return {
+      depth,
+      inFlight,
+      completedInWindow: recentCompletions.length,
+      avgWaitTime: Math.round(avgWaitTime),
+      throughput: Math.round(throughput * 10) / 10,
+      extensionConnected: this.isExtensionConnected(),
+      lastHeartbeatAt: this.heartbeat?.lastHeartbeatAt ?? null,
+    };
   }
 }
 

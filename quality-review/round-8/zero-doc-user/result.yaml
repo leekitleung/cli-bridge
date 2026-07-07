@@ -1,0 +1,63 @@
+reviewer: zero-doc-user
+score: 76
+dimension_scores:
+  onboarding: 72
+  documentation: 78
+  discoverability: 80
+  error_clarity: 74
+summary: >
+  零文档用户评估 Round 8。README.md 整体结构清晰，Quick Start 部分提供了基本的启动步骤，
+  Prerequisites 明确列出了 Node.js 22+ 和浏览器要求。但仍存在以下问题：
+  1. 缺少实际截图或视频演示，用户无法快速了解界面效果
+  2. docs/ 目录混乱，200+ 文件包含大量内部规划文档，新用户难以找到关键信息
+  3. Goal 相关文档（goal-directive.md, goal-experiment-tracker.md）存在中文，
+     但框架定义是英文，文档语言不统一
+  4. 错误消息可操作性需要提升 - smoke test 示例过于简单，未覆盖常见错误场景
+  5. 缺少 FAQ 或 Troubleshooting 部分，用户遇到问题时难以自助解决
+blockers:
+  - id: ZU-R8-001
+    severity: P2
+    description: >
+      docs/ 目录文档混乱 - 200+ 文件包含大量内部规划文档、ADR、技术规格，
+      新用户难以快速找到"什么是 CLI Bridge"、"如何开始"、"常见问题"等关键信息。
+      建议：增加 docs/README.md 作为索引，增加"Getting Started"和"FAQ"文档。
+    files:
+      - docs/README.md (缺失)
+      - docs/getting-started.md (缺失)
+      - docs/faq.md (缺失)
+  - id: ZU-R8-002
+    severity: P2
+    description: >
+      README.md 缺少故障排除部分 - 用户首次使用时遇到问题时（如服务器启动失败、
+      extension 连接不上、pairing token 失效），无法通过文档自助解决。
+      Recovery notes 仅覆盖 extension 面板相关问题。
+    files:
+      - README.md
+  - id: ZU-R8-003
+    severity: P3
+    description: >
+      文档语言不统一 - goal-instruction-framework.md 是英文，但 goal-directive.md、
+      goal-experiment-tracker.md 是中文。这种混合语言对新用户不友好。
+    files:
+      - docs/goal-directive.md
+      - docs/goal-experiment-tracker.md
+  - id: ZU-R8-004
+    severity: P3
+    description: >
+      缺少截图/视频演示 - README.md 描述的功能（Console UI、Extension Panel、
+      Bridge Panel）没有配套的可视化内容，用户无法直观了解最终效果。
+    files:
+      - README.md
+redlines: []
+recommendation: needs_work
+improvements:
+  - priority: high
+    item: 创建 docs/README.md 作为文档索引，清晰分类（Getting Started / Guides / API / Reference / Troubleshooting）
+  - priority: high
+    item: 在 README.md 增加 Troubleshooting/FAQ 部分，覆盖常见错误场景
+  - priority: medium
+    item: 统一文档语言，建议全部使用英文（或全部中文）
+  - priority: medium
+    item: 为主流程添加截图或 GIF 演示（Console UI、Extension 连接流程）
+  - priority: low
+    item: 将 smoke test 示例扩展为完整的端到端测试脚本

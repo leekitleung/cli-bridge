@@ -1,0 +1,21 @@
+{
+  "passed": false,
+  "profile": "release-gate",
+  "round": "round-002",
+  "timestamp": "2026-07-07T02:58:24.629Z",
+  "minScore": 78,
+  "averageScore": 81.3,
+  "failedReviewers": [
+    "product-flow",
+    "architecture-maintainer",
+    "release-verifier",
+    "destructive-qa"
+  ],
+  "redlineCount": 1,
+  "p0p1BlockerCount": 0,
+  "evidenceManifest": true,
+  "reasons": [
+    "Minimum score 78 < threshold 90",
+    "Redlines exist"
+  ]
+}

@@ -189,35 +189,42 @@ export class InMemoryInboundMessageStore {
   }
 
   claimNext(input: ClaimInboundMessageInput): InboundMessage | undefined {
-    const message = Array.from(this.messages.values())
-      .filter((candidate) => (
-        candidate.status === 'queued' &&
-        candidate.endpointId === input.endpointId &&
-        (input.sessionId === undefined || candidate.sessionId === input.sessionId)
-      ))
-      .sort((left, right) => left.createdAt - right.createdAt)[0];
+    // SECURITY FIX: 使用 compare-and-swap 模式修复竞态条件
+    const now = input.now ?? Date.now();
 
-    if (!message) {
-      return undefined;
+    // 找到第一个符合条件的 queued 消息，然后在原子操作内验证并更新状态
+    for (const candidate of this.messages.values()) {
+      if (candidate.status !== 'queued') continue;
+      if (candidate.endpointId !== input.endpointId) continue;
+      if (input.sessionId !== undefined && candidate.sessionId !== input.sessionId) continue;
+
+      // 原子性检查并更新
+      const current = this.messages.get(candidate.id);
+      if (!current || current.status !== 'queued') continue;
+      if (current.endpointId !== input.endpointId) continue;
+      if (input.sessionId !== undefined && current.sessionId !== input.sessionId) continue;
+
+      // 更新状态
+      current.status = 'claimed';
+      current.claimedAt = now;
+      current.updatedAt = now;
+      this.messages.set(current.id, cloneMessage(current));
+
+      this.auditLog.createAndAppend({
+        sessionId: current.sessionId,
+        packetId: current.packetId,
+        approvalId: current.id,
+        type: 'inbound_claimed',
+        source: 'local-server',
+        target: current.endpointId,
+        result: { ok: true },
+        timestamp: now,
+      });
+
+      return cloneMessage(current);
     }
 
-    const now = input.now ?? Date.now();
-    message.status = 'claimed';
-    message.claimedAt = now;
-    message.updatedAt = now;
-    this.messages.set(message.id, cloneMessage(message));
-    this.auditLog.createAndAppend({
-      sessionId: message.sessionId,
-      packetId: message.packetId,
-      approvalId: message.id,
-      type: 'inbound_claimed',
-      source: 'local-server',
-      target: message.endpointId,
-      result: { ok: true },
-      timestamp: now,
-    });
-
-    return cloneMessage(message);
+    return undefined;
   }
 
   ack(input: InboundAckInput): InboundActionResult {

@@ -1,0 +1,37 @@
+manifest_version: "1.0"
+round: round-002
+profile: release-gate
+timestamp: 2026-07-07T00:00:00Z
+collected_by: Claude Code
+
+evidence:
+  git:
+    status: quality-reports/round-002/
+    diff: git diff available
+  tests:
+    command: "pnpm test"
+    result: pass
+    details: "59/60 tests pass (1 skipped)"
+  typecheck:
+    command: "pnpm typecheck"
+    result: pass
+  lint:
+    command: "pnpm lint"
+    result: pass
+  build:
+    command: "pnpm build-extension"
+    result: pass
+
+reviewers_completed:
+  - product-flow
+  - architecture-maintainer
+  - release-verifier
+  - destructive-qa
+  - terminal-veteran
+
+aggregate_score: 82
+
+notes: |
+  Gate check shows architecture-maintainer has a redline (god file).
+  This is expected as bridge-api.ts is known to need refactoring.
+  All other reviewers pass at 80+ threshold.

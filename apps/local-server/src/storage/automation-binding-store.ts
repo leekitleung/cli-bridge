@@ -153,7 +153,8 @@ export class InMemoryAutomationBindingStore {
     const locked = { ...binding, lockedAt: now, updatedAt: now };
     assertRunEndpointBinding(locked);
     if (locked.bindingHash !== hashBindingFields(locked)) {
-      throw new Error('binding hash mismatch');
+      // 提供用户友好的错误消息
+      throw new Error('状态数据损坏，请尝试删除数据目录后重启 ([binding-hash-mismatch])');
     }
     this.bindingsByPlan.set(planId, clone(locked));
     return clone(locked);
@@ -188,7 +189,8 @@ export class InMemoryAutomationBindingStore {
   commitBinding(binding: RunEndpointBinding): RunEndpointBinding {
     assertRunEndpointBinding(binding);
     if (binding.bindingHash !== hashBindingFields(binding)) {
-      throw new Error('binding hash mismatch');
+      // 提供用户友好的错误消息
+      throw new Error('状态数据损坏，请尝试删除数据目录后重启 ([binding-hash-mismatch])');
     }
     const existing = this.bindingsByPlan.get(binding.planId);
     if (existing?.lockedAt !== undefined) {

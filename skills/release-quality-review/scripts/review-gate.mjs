@@ -204,11 +204,16 @@ function loadReviewer(name) {
 
 // Parse score from review report
 function parseScore(scoreContent) {
-  // Match patterns like "总分: 85/100" or "Overall Score: 85/100" or "Score: 85"
+  // Match patterns like:
+  // "Overall Score: 75/100" or "Overall Score: **75/100**"
+  // "总分: 85/100"
+  // "Score: 85"
+  // "75/100" (standalone)
   const patterns = [
-    /(?:总分|Overall Score|Total Score|Score)[:\s]*(\d+)\/100/i,
-    /^#+\s+.*?(\d+)\/100$/m,
-    /score[:\s=]*(\d+)/i,
+    /(?:总分|Overall Score|Total Score|Score)[:\s*]*\*\*?(\d+)\*\*?\/100/i,
+    /\*\*(\d+)\/100\*\*/,
+    /^(\d{2})\/100$/m,
+    /\s(\d{2})\/100\s/,
   ];
 
   for (const pattern of patterns) {
@@ -263,6 +268,7 @@ function collectEvidence_() {
     timestamp: new Date().toISOString(),
     git: {},
     files: {},
+    automatedChecks: {},
   };
 
   // Git info
@@ -292,7 +298,115 @@ function collectEvidence_() {
     // Ignore
   }
 
+  // Automated checks
+  evidence.automatedChecks = runAutomatedChecks();
+
   return evidence;
+}
+
+// Run automated gate checks
+function runAutomatedChecks() {
+  const checks = {
+    oversizedFiles: { status: 'pass', issues: [] },
+    circularDeps: { status: 'pass', issues: [] },
+    secrets: { status: 'pass', issues: [] },
+    testGate: { status: 'unknown', output: '' },
+    typecheckGate: { status: 'unknown', output: '' },
+  };
+
+  // Check 1: Oversized files (>2000 lines)
+  log.info('Checking for oversized files...');
+  try {
+    const output = execSync(
+      'find apps packages -name "*.ts" -type f -exec wc -l {} + 2>/dev/null | sort -rn | head -20',
+      { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 30000 }
+    );
+    const lines = output.trim().split('\n');
+    for (const line of lines) {
+      const match = line.trim().match(/^\s*(\d+)\s+(.+)$/);
+      if (match) {
+        const [count, path] = [parseInt(match[1], 10), match[2]];
+        if (count > 2000) {
+          checks.oversizedFiles.issues.push({ path, lines: count });
+          checks.oversizedFiles.status = 'warn';
+        }
+      }
+    }
+  } catch (e) {
+    log.warn('Could not check file sizes');
+  }
+
+  // Check 2: Circular dependencies (basic heuristic)
+  log.info('Checking for circular dependencies...');
+  try {
+    // Try madge first
+    const madgeOutput = execSync(
+      'npx madge --circular --extensions ts apps packages 2>&1 || echo ""',
+      { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 30000 }
+    );
+    if (madgeOutput.includes('Circular dependencies found') || madgeOutput.includes('-->')) {
+      checks.circularDeps.status = 'fail';
+      checks.circularDeps.issues = madgeOutput.split('\n').filter(l => l.includes('-->'));
+    }
+  } catch (e) {
+    // madge might not be installed, try manual check
+    try {
+      const files = execSync(
+        'find apps packages -name "index.ts" -type f 2>/dev/null | head -10',
+        { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 10000 }
+      ).trim().split('\n');
+
+      if (files.length > 5) {
+        // Too many barrel files might indicate design issues
+        checks.circularDeps.issues.push('High number of barrel exports detected - manual review needed');
+        checks.circularDeps.status = 'warn';
+      }
+    } catch (e2) {
+      // Ignore
+    }
+  }
+
+  // Check 3: Secrets in source
+  log.info('Checking for secrets in source...');
+  try {
+    const secretsOutput = execSync(
+      'grep -rn "password\\|secret\\|api_key\\|private_key\\|aws_secret" ' +
+      '--include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" ' +
+      'apps packages 2>/dev/null | grep -v "\\.d\\.ts\\|node_modules\\|_test\\|mock\\|example\\|test\\|spec" | head -10 || echo ""',
+      { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 30000 }
+    ).trim();
+
+    if (secretsOutput && secretsOutput.length > 0) {
+      checks.secrets.status = 'warn';
+      checks.secrets.issues = secretsOutput.split('\n').slice(0, 5);
+    }
+  } catch (e) {
+    // No secrets found
+  }
+
+  // Check 4: Test gate
+  log.info('Running test gate...');
+  try {
+    const testOutput = execSync('pnpm test 2>&1', { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 120000 });
+    checks.testGate.status = 'pass';
+    checks.testGate.output = 'Tests passed';
+  } catch (e) {
+    checks.testGate.status = 'fail';
+    checks.testGate.output = e.message.substring(0, 500);
+  }
+
+  // Check 5: Typecheck gate
+  log.info('Running typecheck gate...');
+  try {
+    const typeOutput = execSync('pnpm typecheck 2>&1', { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 120000 });
+    checks.typecheckGate.status = 'pass';
+    checks.typecheckGate.output = 'Typecheck passed';
+  } catch (e) {
+    checks.typecheckGate.status = 'fail';
+    checks.typecheckGate.output = e.message.substring(0, 500);
+  }
+
+  return checks;
 }
 
 // Check if a reviewer report exists
@@ -354,7 +468,46 @@ function generateSummary(roundDir, profile, scores, allPassed, evidence = null) 
     content += `**Git:** ${evidence.git.branch} @ ${evidence.git.commit}\n`;
   }
 
-  content += `\n---\n\n`;
+  if (evidence && evidence.automatedChecks) {
+    const ac = evidence.automatedChecks;
+    content += `## Automated Gate Checks\n\n`;
+    content += `| Check | Status | Details |\n`;
+    content += `|-------|--------|--------|\n`;
+
+    const testIcon = ac.testGate.status === 'pass' ? '✅' : '❌';
+    content += `| pnpm test | ${testIcon} ${ac.testGate.status} | ${ac.testGate.output.substring(0, 50)} |\n`;
+
+    const typeIcon = ac.typecheckGate.status === 'pass' ? '✅' : '❌';
+    content += `| pnpm typecheck | ${typeIcon} ${ac.typecheckGate.status} | ${ac.typecheckGate.output.substring(0, 50)} |\n`;
+
+    const sizeIcon = ac.oversizedFiles.status === 'pass' ? '✅' : '⚠️';
+    content += `| File sizes | ${sizeIcon} ${ac.oversizedFiles.issues.length} oversized | ${ac.oversizedFiles.issues.slice(0, 2).map(i => `${i.lines}L ${i.path.split('/').pop()}`).join(', ') || 'OK'} |\n`;
+
+    const circIcon = ac.circularDeps.status === 'pass' ? '✅' : '❌';
+    content += `| Circular deps | ${circIcon} | ${ac.circularDeps.issues.length > 0 ? ac.circularDeps.issues[0].substring(0, 50) : 'None found'} |\n`;
+
+    const secretIcon = ac.secrets.status === 'pass' ? '✅' : '⚠️';
+    content += `| Secrets scan | ${secretIcon} | ${ac.secrets.issues.length > 0 ? ac.secrets.issues.length + ' potential' : 'Clean'} |\n`;
+
+    content += `\n`;
+
+    // Add detail section for issues
+    const allIssues = [
+      ...ac.oversizedFiles.issues.map(i => `⚠️ **Oversized file**: ${i.path} (${i.lines} lines)`),
+      ...ac.secrets.issues.map(i => `⚠️ **Potential secret**: ${i.substring(0, 100)}`),
+      ...ac.circularDeps.issues.filter(i => typeof i === 'string').map(i => `❌ **Circular dep**: ${i.substring(0, 100)}`),
+    ];
+
+    if (allIssues.length > 0) {
+      content += `### Automated Check Issues\n\n`;
+      allIssues.forEach((issue, i) => {
+        content += `${i + 1}. ${issue}\n`;
+      });
+      content += `\n`;
+    }
+  }
+
+  content += `---\n\n`;
 
   // Score table
   content += `## Scores\n\n`;

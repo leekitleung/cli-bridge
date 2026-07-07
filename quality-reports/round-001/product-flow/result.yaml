@@ -1,0 +1,33 @@
+reviewer: product-flow
+score: 55
+dimension_scores:
+  completeness: 60
+  path_closure: 50
+  state_handling: 55
+blockers:
+  - id: PF-001
+    severity: P0
+    description: bridge-api.ts is 5474 lines - violates single responsibility
+  - id: PF-002
+    severity: P0
+    description: No input validation on API requests - body parsing lacks schema validation
+  - id: PF-003
+    severity: P0
+    description: Silent failure in hydration loops - no logging, no metrics
+  - id: PF-004
+    severity: P1
+    description: Test coverage below 40% - only 4 test files
+  - id: PF-005
+    severity: P1
+    description: Missing error type hierarchy - errors are just strings
+  - id: PF-006
+    severity: P1
+    description: No health checks for dependencies
+redlines:
+  - id: RL-001
+    severity: P0
+    description: API body parsing allows arbitrary JSON without validation
+  - id: RL-002
+    severity: P0
+    description: Silent hydration failures with no audit trail
+recommendation: fail

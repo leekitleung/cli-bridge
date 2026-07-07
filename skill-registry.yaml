@@ -1,0 +1,33 @@
+# Skill Registry
+# Declares required skills and their trust levels
+# DO NOT add skills from unknown sources
+
+version: "1.0"
+trust_policy:
+  auto_update: false
+  allow_external: false
+
+skills:
+  release-quality-review:
+    description: Multi-dimensional code review with deterministic quality gates
+    source: local
+    path: skills/release-quality-review
+    trust_level: L0  # Built-in, fully trusted
+    auto_update: false
+    required: true
+    adapters:
+      claude: .claude/skills/release-quality-review
+      codex: .agents/skills/release-quality-review
+
+# Example of L1 skill (commented out - uncomment if you set up internal registry)
+# review-gate-core:
+#   description: Core gate checking logic
+#   source: internal
+#   url: git@github.com:your-org/agent-skills.git
+#   path: skills/review-gate-core
+#   version: "0.3.2"
+#   ref: 1d9fa0c
+#   checksum: sha256:placeholder
+#   trust_level: L1
+#   auto_update: patch-only
+#   required: false

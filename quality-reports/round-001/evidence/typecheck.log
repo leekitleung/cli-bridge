@@ -1,0 +1,5 @@
+ WARN  The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+
+> cli-bridge@ typecheck H:\02-areas\cli-bridge
+> tsc -p tsconfig.json --noEmit
+

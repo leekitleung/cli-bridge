@@ -1,0 +1,51 @@
+ M AGENTS.md
+ M apps/extension/src/content/bridge-client.ts
+ M apps/extension/src/content/chatgpt-dom.ts
+ M apps/extension/src/content/source-relay-poller.ts
+ M apps/extension/src/ui/bridge-panel.tsx
+ M apps/extension/src/ui/state.ts
+ M apps/local-server/src/adapters/workbuddy-execution-adapter.ts
+ M apps/local-server/src/conversation/chatgpt-web-source-adapter.ts
+ M apps/local-server/src/process/contained-process.ts
+ M apps/local-server/src/routes/bridge-api.ts
+ M apps/local-server/src/routes/health.ts
+ M apps/local-server/src/routes/project-console.ts
+ M apps/local-server/src/security/local-auto-pair-session.ts
+ M apps/local-server/src/server.ts
+ M apps/local-server/src/storage/automation-binding-store.ts
+ M apps/local-server/src/storage/goal-store.ts
+ M apps/local-server/src/storage/inbound-message-store.ts
+ M apps/local-server/src/storage/outbound-prompt-store.ts
+ M apps/local-server/src/workbuddy/command-backend.ts
+ M package.json
+ M scripts/start-local-configured.ts
+ M scripts/start.ts
+?? .agents/
+?? .claude/
+?? apps/local-server/src/execution/execution-dispatcher-v2.ts
+?? apps/local-server/src/execution/executor-registry.ts
+?? apps/local-server/src/execution/index.ts
+?? apps/local-server/src/execution/opencode-executor.ts
+?? apps/local-server/src/execution/workbuddy-executor.ts
+?? apps/local-server/src/goal/gate-aware-execution.ts
+?? apps/local-server/src/goal/goal-automation-loop.ts
+?? apps/local-server/src/goal/goal-loop-runner.ts
+?? apps/local-server/src/routes/goal-loop-routes.ts
+?? apps/local-server/src/security/rate-limiter.ts
+?? docs/QUICKSTART.md
+?? docs/goal-directive.md
+?? docs/goal-experiment-tracker.md
+?? docs/goal-instruction-framework-v2.md
+?? docs/goal-instruction-framework.md
+?? docs/goal-optimization-experiments.md
+?? docs/goal-parallel-implementation.md
+?? docs/goal-project-completion.md
+?? packages/shared/src/error-messages.ts
+?? quality-reports/
+?? quality-review/
+?? scripts/sync-skills.ts
+?? skill-registry.yaml
+?? skills.lock.yaml
+?? skills/
+?? tests/e2e/
+?? tests/unit/

@@ -1,6 +1,22 @@
 # Release Quality Review Skill
 
-跨 Agent 工具的质量评审框架，基于 4 个常驻 Reviewer + 条件触发 Reviewer 的设计。
+跨 Agent 工具的质量评审框架。基于「4 个常驻 Reviewer + 条件触发 Reviewer」的设计，支持 Claude Code、Codex 和其他 Agent 工具。
+
+## 核心设计
+
+```
+常驻 Reviewers (每次必运行)
+├── product-flow          # 产品闭环审查官
+├── architecture-maintainer  # 工程架构审查官
+├── release-verifier      # 验收发布审查官
+└── destructive-qa        # 破坏性质量官
+
+条件触发 Reviewers (按需启用)
+├── native-designer       # UI 变更时
+├── terminal-veteran      # CLI/本地服务变更时
+├── data-security         # token/auth 变更时
+└── zero-doc-user         # 文档/新用户场景时
+```
 
 ## 快速开始
 
@@ -13,88 +29,19 @@ cat quality-reports/round-001/summary.md
 
 # 3. 修复问题后继续评审
 node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round 2
+
+# 4. 单独运行某个 Reviewer
+node skills/release-quality-review/scripts/review-gate.mjs --reviewer destructive-qa
 ```
 
-## 工作流程
+## Profiles
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        评审工作流                                    │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │
-│   │  1. 收集证据  │ -> │  2. 选择Profile │ -> │  3. 启动Reviewer │     │
-│   └──────────────┘    └──────────────┘    └──────────────┘         │
-│         │                                       │                    │
-│         v                                       v                    │
-│   ┌──────────────┐                      ┌──────────────┐            │
-│   │ git diff     │                      │ 并行执行评审  │            │
-│   │ 截图/日志    │                      │ 产出评分文件  │            │
-│   │ 测试结果     │                      │              │            │
-│   └──────────────┘                      └──────────────┘            │
-│                                               │                      │
-│                                               v                      │
-│   ┌──────────────────────────────────────────────────────────┐      │
-│   │                    4. 门禁检查                            │      │
-│   │                                                          │      │
-│   │   所有 Reviewer >= 90?  ───── NO ──>  修复问题 ──┐       │      │
-│   │        │                                  │      │       │      │
-│   │       YES                                 │      │       │      │
-│   │        │                                  └──────┘       │      │
-│   │        v                                          ^      │      │
-│   │   存在红线?                                        │      │      │
-│   │        │                                          │      │      │
-│   │       NO                                         │      │      │
-│   │        v                                          │      │      │
-│   │   ┌────────────────┐                              │      │      │
-│   │   │  5. 生成报告   │ ─────────────────────────────┘      │      │
-│   │   └────────────────┘                                    │      │
-│   └──────────────────────────────────────────────────────────┘      │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## 评审维度定义
-
-### 常驻 Reviewers (每次评审必运行)
-
-| Reviewer | 职责 | 核心问题 |
-|----------|------|----------|
-| 产品闭环审查官 | 功能完成度、用户路径闭环 | "这个功能真的做完了吗？用户能用它完成任务吗？" |
-| 工程架构审查官 | 模块职责、边界、可维护性、SRP/OCP | "代码结构会腐化吗？改一处会破坏多处吗？" |
-| 验收发布审查官 | 测试覆盖、构建验证、发布证据 | "有测试吗？构建能过吗？能安全发布吗？" |
-| 破坏性质量官 | 安全、异常路径、权限、边界破坏 | "能被人玩坏吗？有哪些攻击面？" |
-
-### 条件触发 Reviewers (按需启用)
-
-| Reviewer | 触发条件 | 检查什么 |
-|----------|----------|----------|
-| 原生审美设计师 | 有 UI、截图、视觉交付 | 视觉层级、间距、色彩、状态反馈 |
-| 零文档新用户 | 面向新用户、开箱即用 | 首次使用链路、引导清晰度 |
-| 终端十年老兵 | 有 CLI、本地服务 | 错误处理、日志、边界健壮性 |
-| 数据安全审查官 | 有 token、用户数据 | 数据加密、传输安全、隐私合规 |
-
-## Profile 配置
-
-### quick (快速评审)
-- 适用: 开发中快速检查
-- Reviewers: product-flow, architecture-maintainer
-- 运行时间: ~5 分钟
-
-### default (默认评审)
-- 适用: PR 合并前
-- Reviewers: product-flow, destructive-qa, terminal-veteran
-- 运行时间: ~15 分钟
-
-### release-gate (发布门禁) ⭐推荐
-- 适用: 发布前必须通过
-- Reviewers: product-flow, architecture-maintainer, release-verifier, destructive-qa, terminal-veteran
-- 运行时间: ~30 分钟
-
-### full (完整评审)
-- 适用: 重大版本发布
-- Reviewers: 所有 8 个 Reviewer
-- 运行时间: ~60 分钟
+| Profile | 用途 | Reviewers | 运行时间 |
+|---------|------|-----------|----------|
+| `quick` | 开发中快速检查 | product-flow, architecture-maintainer | ~5 分钟 |
+| `default` | PR 合并前 | product-flow, destructive-qa, terminal-veteran | ~15 分钟 |
+| `release-gate` | 发布前必须通过 | 全部常驻 + terminal-veteran | ~30 分钟 |
+| `full` | 重大版本发布 | 全部 8 个 | ~60 分钟 |
 
 ## 评分标准
 
@@ -111,105 +58,227 @@ node skills/release-quality-review/scripts/review-runner.mjs --profile release-g
 2. **无 P0 红线**
 3. **有实际证据支撑评分**
 
-## 触发方式
-
-```bash
-# 完整评审 (所有常驻 + 按类型触发)
-node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate
-
-# 快速评审 (只常驻 Reviewers)
-node skills/release-quality-review/scripts/review-gate.mjs --profile quick
-
-# 单维度评审
-node skills/release-quality-review/scripts/review-gate.mjs --reviewer destructive-qa
-
-# 只检查红线
-node skills/release-quality-review/scripts/review-gate.mjs --check-redlines
-
-# 继续上轮评审
-node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round 2
-
-# 干跑模式 (不修改文件)
-node skills/release-quality-review/scripts/review-runner.mjs --dry-run
-```
-
-## 输出格式
-
-```
-quality-reports/
-├── round-001/
-│   ├── summary.md              # 本轮汇总
-│   ├── product-flow/
-│   │   ├── score.md            # 评分详情
-│   │   ├── blockers.md         # P0/P1 必须修复
-│   │   └── improvement-list.md # P2/P3 建议改进
-│   ├── architecture-maintainer/
-│   │   └── ...
-│   └── ...
-├── round-002/
-│   └── ...
-└── final-report.md             # 所有 >= 90 且无红线时生成
-```
-
-## Claude Code 集成
-
-在 Claude Code 中使用：
-
-```
-/review --profile release-gate
-```
-
-或直接在对话中：
-
-```
-请运行 release-quality-review skill，profile 为 release-gate，直到所有 Reviewer >= 90 且无红线。
-```
-
-## Codex 集成
-
-在 Codex 中使用：
-
-```
-请读取 AGENTS.md 中的 release-quality-review 规则，
-然后运行 node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate
-```
-
 ## 目录结构
 
 ```
 skills/release-quality-review/
-├── SKILL.md                           # 本文件
-├── review-config.yaml                 # 项目级评审配置
+├── SKILL.md                      # 本文件
+├── review-config.yaml            # 项目级配置
 ├── profiles/
-│   ├── default.yaml                   # 默认 profile
-│   └── release-gate.yaml              # 发布门禁 profile
-├── reviewers/
-│   ├── TEMPLATE.md                    # Reviewer 模板
-│   ├── product-flow.md                # 产品闭环审查官
-│   ├── architecture-maintainer.md     # 工程架构审查官
-│   ├── release-verifier.md            # 验收发布审查官
-│   ├── destructive-qa.md              # 破坏性质量官
-│   ├── native-designer.md             # 原生审美设计师
-│   ├── zero-doc-user.md               # 零文档新用户
-│   ├── terminal-veteran.md            # 终端十年老兵
-│   └── data-security.md               # 数据安全审查官
+│   ├── quick.yaml
+│   ├── default.yaml
+│   ├── release-gate.yaml
+│   └── full.yaml
+├── reviewers/                     # Reviewer 定义 (canonical source)
+│   ├── TEMPLATE.md               # 新建 Reviewer 模板
+│   ├── product-flow.md           # 产品闭环审查官
+│   ├── architecture-maintainer.md # 工程架构审查官
+│   ├── release-verifier.md       # 验收发布审查官
+│   ├── destructive-qa.md         # 破坏性质量官
+│   ├── native-designer.md        # 原生审美设计师
+│   ├── zero-doc-user.md          # 零文档新用户
+│   ├── terminal-veteran.md       # 终端十年老兵
+│   └── data-security.md          # 数据安全审查官
 ├── rubrics/
-│   ├── scoring.md                     # 评分标准
-│   ├── redlines.md                    # 红线规则
-│   └── evidence.md                    # 证据收集指南
+│   ├── scoring.md                # 评分标准
+│   ├── redlines.md               # 红线规则
+│   └── evidence.md               # 证据收集指南
 ├── scripts/
-│   ├── review-gate.mjs                # 门禁脚本
-│   └── review-runner.mjs              # 编排器
+│   ├── review-gate.mjs           # 门禁检查器
+│   └── review-runner.mjs         # 编排器
 └── templates/
-    └── result.yaml                    # 结构化结果模板
+    └── result.yaml               # 结构化结果模板
+
+.claude/                           # Claude Code 适配层
+├── REVIEW-ORCHESTRATOR.md         # 评审编排器
+└── reviewers/                     # Claude Code subagent 定义
+    ├── product-flow.md
+    ├── destructive-qa.md
+    └── ...
+
+quality-reports/                   # 评审输出
+├── round-001/
+│   ├── summary.md
+│   ├── metadata.json
+│   ├── product-flow/
+│   │   ├── result.yaml           # 机器可读结果
+│   │   ├── score.md
+│   │   ├── blockers.md
+│   │   └── improvement-list.md
+│   └── ...
+└── final-report.md
 ```
+
+## Claude Code 使用
+
+### 方式 1: Skill 命令
+```
+/review --profile release-gate
+```
+
+### 方式 2: 对话指令
+```
+请运行 release-quality-review skill，profile 为 release-gate，直到所有 Reviewer >= 90 且无红线。
+```
+
+### 方式 3: 直接执行
+```bash
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate
+```
+
+### 方式 4: Claude Code Subagent 并行评审 (推荐用于 release-gate)
+
+对于 release-gate profile，建议使用并行 subagent 加速评审：
+
+```bash
+# 1. 使用 review-runner.mjs 的并行模式
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --parallel
+
+# 2. 或在 Claude Code 对话中显式创建 subagent
+# 主 agent:
+/review --profile release-gate --parallel
+```
+
+### Claude Code Subagent 编排流程
+
+当使用 `--parallel` 模式时，review-runner.mjs 会：
+
+1. **收集证据** - 收集 git diff、测试输出、类型检查结果
+2. **并行启动 Reviewers** - 每个 reviewer 在独立 subagent 中运行
+3. **收集结果** - 等待所有 reviewer 完成
+4. **汇总评分** - 生成 summary.md 和各 reviewer 的 score.md
+5. **判断门禁** - 所有 >= 90 且无红线则通过
+
+```mermaid
+graph TD
+    A[收集证据] --> B[并行启动 Reviewers]
+    B --> C[product-flow]
+    B --> D[architecture-maintainer]
+    B --> E[release-verifier]
+    B --> F[destructive-qa]
+    C --> G[汇总结果]
+    D --> G
+    E --> G
+    F --> G
+    G --> H{门禁判断}
+    H -->|通过| I[✅ 发布]
+    H -->|失败| J[修复问题]
+    J --> A
+```
+
+## Codex 使用
+
+### 基本用法
+```bash
+# 读取 AGENTS.md 中的评审规则
+# 然后运行评审
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate
+```
+
+### Codex Subagent 并行评审
+
+Codex 需要显式 spawn subagents。推荐做法：
+
+```
+请读取 skills/release-quality-review/SKILL.md 和 AGENTS.md，然后：
+
+1. 运行 node skills/release-quality-review/scripts/review-gate.mjs --collect-evidence 收集证据
+2. 显式 spawn 以下 subagents（并行）：
+   - product-flow reviewer: 读取 reviewers/product-flow.md，执行产品闭环评审
+   - architecture-maintainer reviewer: 读取 reviewers/architecture-maintainer.md，执行架构评审
+   - release-verifier reviewer: 读取 reviewers/release-verifier.md，执行验收发布评审
+   - destructive-qa reviewer: 读取 reviewers/destructive-qa.md，执行破坏性质量评审
+   - terminal-veteran reviewer（如有 CLI/本地服务）：读取 reviewers/terminal-veteran.md
+
+3. 等待所有 reviewer 返回结果
+4. 汇总到 quality-reports/round-XXX/
+5. 如果任意 reviewer < 90 或存在红线，先修复最高优先级问题
+6. 只有 review-gate.mjs 返回 pass 后才允许结束
+```
+
+### Codex 与 Claude Code 的关键差异
+
+| 特性 | Claude Code | Codex |
+|------|-------------|-------|
+| 自动 subagent | 支持 | 需要显式 spawn |
+| Skill 命令 | `/review` | 不支持，需用 node 脚本 |
+| Hooks | 支持 | 不支持 |
+| 内置 parallel | `--parallel` flag | 需手动编排 |
+
+## 完整评审流程
+
+### 标准流程 (release-gate)
+
+```
+Round 1: 全面扫描
+├── 收集证据 (git diff, tests, typecheck)
+├── 运行所有常驻 reviewers
+├── 运行条件触发 reviewers (基于变更类型)
+├── 汇总结果到 quality-reports/round-001/
+└── 如有失败 → Round 2
+
+Round 2: 针对性修复
+├── 只运行上轮失败的 reviewers
+├── 只运行与本轮修改相关的 reviewers
+├── destructive-qa 做 sanity check
+├── 汇总结果
+└── 如有失败 → Round 3 或人工介入
+
+Round N: 迭代直到通过或放弃
+```
+
+### 评审员输出文件
+
+每个 reviewer 必须生成以下文件到 `quality-reports/round-XXX/<reviewer>/`:
+
+| 文件 | 必需 | 内容 |
+|------|------|------|
+| `score.md` | 是 | 评分和详细分析 |
+| `blockers.md` | 是 | P0/P1 红线列表 |
+| `improvement-list.md` | 是 | P2/P3 改进建议 |
+| `result.yaml` | 是 | 机器可读的标准化输出 |
+
+### 证据收集要求
+
+评审必须有实际证据支撑，不能只靠猜测：
+
+**代码证据**
+- 引用具体文件和行号
+- 展示问题代码片段
+- 对比修复前后的代码
+
+**测试证据**
+- 测试运行输出
+- 测试覆盖率报告
+- 边界条件测试结果
+
+**截图证据** (UI 相关)
+- 真机截图
+- 设计稿对比
+- 错误状态截图
+
+**运行证据**
+- 命令行输出
+- API 响应
+- 日志片段
 
 ## 添加新 Reviewer
 
 1. 复制 `reviewers/TEMPLATE.md` 为新 reviewer 名称
-2. 定义评审维度和权重
-3. 定义红线规则
+2. 定义评审维度和权重 (总和 = 100%)
+3. 定义红线规则 (P0/P1)
 4. 添加到 `profiles/*.yaml` 的 `required_reviewers` 或 `conditional_reviewers`
+
+## 退出码
+
+| 退出码 | 含义 | 行动 |
+|--------|------|------|
+| `0` | 所有 Reviewer 通过 (>=90) | 可以发布 |
+| `1` | 评分未达标 | 查看报告，修复问题 |
+| `2` | 有 P0/P1 红线 | 必须先修复 |
+| `3` | 测试失败 | 检查测试输出 |
+| `4` | 配置文件错误 | 检查 profile/yaml |
+| `5` | Agent 执行失败 | 查看错误日志 |
 
 ## 常见问题
 
@@ -227,3 +296,4 @@ A: 以实际证据为准。要求 Reviewer 引用具体代码/截图/测试结�
 - Superpowers 框架: https://github.com/obra/superpowers
 - Claude Code Code Review 插件: https://pluginmarketplace.ai/plugin/code-review
 - PR-Agent: https://github.com/The-PR-Agent/pr-agent
+- reviewdog: https://github.com/reviewdog/reviewdog

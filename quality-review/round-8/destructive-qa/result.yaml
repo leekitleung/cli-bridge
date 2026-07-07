@@ -1,0 +1,258 @@
+# Round 8 Destructive QA Review - Security Assessment
+
+## Review Summary
+
+**Reviewer:** Destructive QA Reviewer
+**Date:** 2026-07-07
+**Scope:** command-backend.ts, security/ directory, execution dispatchers
+**Risk Level:** MEDIUM
+
+---
+
+## Findings
+
+### CRITICAL (0)
+
+No critical issues found.
+
+### HIGH (2)
+
+#### H-1: cmd.exe allowlist bypass on Windows
+- **File:** `apps/local-server/src/workbuddy/command-backend.ts`
+- **Line:** 51-66 (`isAllowed` function)
+- **Severity:** HIGH
+- **Description:** |
+  The `isAllowed()` function unconditionally allows `cmd.exe` on Windows:
+  ```typescript
+  if (process.platform === 'win32' && command.toLowerCase() === 'cmd.exe') {
+    return true;
+  }
+  ```
+  While command arguments are parsed via `parseArgv()` which respects quoting, the
+  `/c` flag passed later allows executing arbitrary commands. For example:
+  - Input: `cmd.exe /c dir ..\\..\\..\\..\\windows\\system32`
+  - Input: `cmd.exe /c type C:\\Windows\\System32\\drivers\\etc\\hosts`
+  - Input: `cmd.exe /c powershell -enc <base64>`
+
+  The shell metacharacter check at line 90 blocks some patterns but allows `/c` since
+  `/` is not in the blocklist.
+
+- **Failure Scenario:** A prompt containing `cmd.exe /c net user attacker P@ssw0rd /add`
+  would execute with elevated privileges if the server runs as administrator.
+
+- **Recommendation:** Remove the blanket `cmd.exe` allow. If Windows built-in commands
+  are required, create an explicit allowlist like:
+  ```typescript
+  const WINDOWS_ALLOWED_COMMANDS = new Set(['cmd.exe', 'echo', 'type', 'copy', 'move', 'del']);
+  if (isWindows && WINDOWS_ALLOWED_COMMANDS.has(command.toLowerCase())) { ... }
+  ```
+  Additionally, validate that argv[1] is one of the known safe built-in commands
+  (e.g., `/c` followed by a safe command), not arbitrary executable paths.
+
+- **Fix Status:** Unfixed
+
+#### H-2: Working directory path traversal
+- **File:** `apps/local-server/src/workbuddy/command-backend.ts`
+- **Line:** 160
+- **Severity:** HIGH
+- **Description:** |
+  The working directory is resolved from user-controlled `task.workingDirectory`:
+  ```typescript
+  const workDir = task.workingDirectory ? resolve(task.workingDirectory) : cwd;
+  ```
+  While `resolve()` normalizes the path, it does not prevent traversal to parent
+  directories of the intended sandbox root. If `defaultCwd` is set to a project
+  directory, an attacker can specify `workingDirectory: '../../../root'` to escape.
+
+- **Failure Scenario:** `task.workingDirectory = '..\\..\\..\\..\\'` combined with
+  a command like `type C:\\Windows\\System32\\config\\SAM` could read sensitive files.
+
+- **Recommendation:** Validate that the resolved working directory is still under
+  the intended sandbox root:
+  ```typescript
+  const workDir = task.workingDirectory ? resolve(task.workingDirectory) : cwd;
+  if (!workDir.startsWith(resolve(cwd))) {
+    return { ok: false, ..., failureReason: 'working-directory-escape' };
+  }
+  ```
+
+- **Fix Status:** Unfixed
+
+---
+
+### MEDIUM (3)
+
+#### M-1: Insufficient rate limiter per-IP tracking
+- **File:** `apps/local-server/src/security/rate-limiter.ts`
+- **Line:** 40-45
+- **Severity:** MEDIUM
+- **Description:** |
+  The rate limiter only tracks by direct connection IP, which is correct. However,
+  the `SimpleRateLimiter` class has no mechanism to track across multiple IPs if an
+  attacker uses a rotating proxy or botnet. Additionally, the cleanup timer runs
+  every 60 seconds but does not handle entries with expired `resetAt` that were not
+  cleaned up in time, potentially allowing bursts after the window expires.
+
+- **Failure Scenario:** An attacker with 100 different source IPs could make 10,000
+  requests/minute against an endpoint limited to 100 requests/IP.
+
+- **Recommendation:** Consider implementing:
+  1. Global request counter regardless of IP
+  2. Sliding window rate limiting instead of fixed window
+  3. Additional fingerprinting (User-Agent, Accept-Language hash)
+
+- **Fix Status:** Documented as known limitation
+
+#### M-2: Token comparison timing attack
+- **File:** `apps/local-server/src/security/pairing.ts`
+- **Line:** 35-42
+- **Severity:** MEDIUM
+- **Description:** |
+  The `verifyPairingToken` function uses `timingSafeEqual` which is good, but the
+  length comparison at line 35-37 leaks the expected token length:
+  ```typescript
+  if (receivedToken.length !== expectedToken.length) {
+    return false;
+  }
+  ```
+  An attacker can determine the token length by measuring response time differences.
+
+- **Failure Scenario:** |
+  Timing differences: length mismatch returns immediately (~0.1ms) vs full comparison
+  (~1-5ms depending on length). Attacker can iteratively determine token length.
+
+- **Recommendation:** Perform `timingSafeEqual` on a fixed-length hash of both tokens
+  instead of direct comparison, or always perform the full timing-safe comparison
+  regardless of length (pad/normalize inputs).
+
+- **Fix Status:** Partial - length leak still present
+
+#### M-3: Session claim nonce reuse not atomic
+- **File:** `apps/local-server/src/security/local-auto-pair-session.ts`
+- **Line:** 143-155
+- **Description:** |
+  The `claimExtensionSession` function checks `claimUsedAt` before setting it, but
+  this check-then-set is not atomic. In a concurrent request scenario:
+  1. Request A: checks `claimUsedAt` -> undefined (pass)
+  2. Request B: checks `claimUsedAt` -> undefined (pass)
+  3. Request A: sets `claimUsedAt = now()`
+  4. Request B: sets `claimUsedAt = now()` (overwrites A's value)
+
+  Both requests may receive valid extension session tokens.
+
+- **Failure Scenario:** Race condition allows a single nonce to be claimed multiple
+  times if concurrent requests arrive within the same execution tick.
+
+- **Recommendation:** Use atomic compare-and-swap or a mutex to ensure only one
+  successful claim per nonce:
+  ```typescript
+  if (record.claimUsedAt) return { ok: false, message: 'nonce already used' };
+  record.claimUsedAt = now(); // Atomic in single-threaded, but not with concurrent handlers
+  ```
+
+- **Fix Status:** Unfixed - only safe if Node.js event loop is single-threaded per instance
+
+---
+
+### LOW (4)
+
+#### L-1: Origin guard accepts null origin
+- **File:** `apps/local-server/src/security/origin-guard.ts`
+- **Line:** 41-43
+- **Severity:** LOW
+- **Description:** |
+  `isAllowedOrigin()` returns `true` when `origin` is null. The comment explains this
+  is intentional (same-origin or non-browser clients), but curl-based attacks can
+  bypass the origin check entirely.
+
+- **Mitigation:** Pairing token is still required as the real authentication gate.
+  Low risk because the server binds to loopback only.
+
+#### L-2: Sensitive content redaction regex limitations
+- **File:** `apps/local-server/src/security/redaction.ts`
+- **Line:** 16-69
+- **Severity:** LOW
+- **Description:** |
+  The redaction rules use regex patterns that may miss edge cases:
+  - Private key pattern requires exact header/footer format
+  - AWS keys only match specific prefix patterns
+  - No detection for JWT tokens, GCP credentials, or generic bearer tokens
+
+- **Recommendation:** Add additional patterns for:
+  - JWT tokens: `eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*`
+  - GCP keys: `[A-Za-z0-9_-]+@<project>\.iam\.gserviceaccount\.com`
+
+#### L-3: Output truncation may leave partial data
+- **File:** `apps/local-server/src/workbuddy/command-backend.ts`
+- **Line:** 206-222
+- **Severity:** LOW
+- **Description:** |
+  When output exceeds `outputCapBytes`, the truncation happens by slicing to the cap,
+  but `stdout` and `stderr` may be interleaved. A large stderr chunk could be truncated
+  mid-line, potentially exposing partial sensitive data.
+
+- **Recommendation:** Truncate at line boundaries or after the cap is reached, ensure
+  complete lines are preserved where possible.
+
+#### L-4: No process zombie cleanup on error path
+- **File:** `apps/local-server/src/workbuddy/command-backend.ts`
+- **Line:** 270-279
+- **Severity:** LOW
+- **Description:** |
+  When `child.on('error', ...)` fires, the timer is cleared but the child process
+  may not be killed. If the error occurs after the process started but before
+  clean termination, a zombie process could remain.
+
+- **Recommendation:** Call `killProcess(child.pid, true)` in the error handler.
+
+---
+
+## Security Controls Assessment
+
+| Control | Status | Notes |
+|---------|--------|-------|
+| Command allowlist | PARTIAL | H-1: cmd.exe bypass |
+| Shell metacharacter blocking | GOOD | Comprehensive pattern list |
+| Working directory sandbox | WEAK | H-2: Path traversal possible |
+| Rate limiting | ADEQUATE | Per-IP tracking with M-1 limitations |
+| Token comparison | PARTIAL | M-2: Length leak present |
+| Session nonce atomicity | WEAK | M-3: Race condition possible |
+| Origin validation | ADEQUATE | L-1: Null origin accepted (by design) |
+| Sensitive data redaction | PARTIAL | L-2: Limited patterns |
+| Output capping | ADEQUATE | L-3: Minor interleaving issue |
+| Process cleanup | PARTIAL | L-4: Error path zombies |
+| Timeout enforcement | GOOD | 30s default with force kill |
+| Output size limit | GOOD | 64KB default with truncation |
+
+---
+
+## Recommendations Summary
+
+### Immediate Actions Required
+1. **H-1 Fix:** Remove blanket `cmd.exe` allow or implement strict built-in command validation
+2. **H-2 Fix:** Add working directory sandbox boundary validation
+
+### Should Address
+3. **M-2 Fix:** Eliminate token length timing leak
+4. **M-3 Fix:** Add atomic claim operation for session nonces
+
+### Consider Addressing
+5. **M-1 Enhancement:** Implement global rate limiting or sliding window
+6. **L-3 Enhancement:** Improve output truncation to line boundaries
+7. **L-4 Fix:** Kill process on error path
+8. **L-2 Enhancement:** Expand sensitive data redaction patterns
+
+---
+
+## Files Reviewed
+
+- `apps/local-server/src/workbuddy/command-backend.ts` (317 lines)
+- `apps/local-server/src/security/pairing.ts` (43 lines)
+- `apps/local-server/src/security/redaction.ts` (98 lines)
+- `apps/local-server/src/security/origin-guard.ts` (85 lines)
+- `apps/local-server/src/security/rate-limiter.ts` (139 lines)
+- `apps/local-server/src/security/local-auto-pair-session.ts` (190 lines)
+- `apps/local-server/src/execution/execution-dispatcher.ts` (289 lines)
+- `apps/local-server/src/execution/execution-dispatcher-v2.ts` (185 lines)
+- `apps/local-server/src/adapters/command-runner.ts` (332 lines)
+- `apps/local-server/src/adapters/workbuddy-execution-adapter.ts` (304 lines)

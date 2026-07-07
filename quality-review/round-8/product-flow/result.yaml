@@ -1,0 +1,171 @@
+# Round 8: Product Flow Review - result.yaml
+# Reviewer: Product Flow Reviewer (vibe coder)
+# Date: 2026-07-07
+# Scope: apps/local-server/src/ and apps/extension/src/
+
+review:
+  round: 8
+  reviewer: product-flow-reviewer
+  focus: 功能完整性、用户路径闭环、状态处理
+
+# ─────────────────────────────────────────────
+# 1. 功能完整性分析
+# ─────────────────────────────────────────────
+
+功能完整性:
+  评分: B+ (85%)
+
+  完整功能:
+    - 多执行器架构 (ExecutorRegistry): workbuddy + opencode 可插拔
+    - Goal-Driven 执行链路: Goal → Plan → Gate → Execute → Audit
+    - ChatGPT Web Source Relay: 轮询-填充-提交-提取-返回完整链路
+    - Source Relay 健康追踪: 心跳、退避重连、指标监控
+    - Execution Dispatcher: 任务分发、统计、执行器选择
+    - Bridge API 路由: 完整的 RESTful 接口
+    - Extension UI Panel: 连接状态、填充、提取、返回操作
+    - Gate 审批流程: 待审批队列、审批动作
+    - Goal Loop Runner: 轮询执行循环、状态管理
+
+  缺失/不完整功能:
+    - verification 触发是 TODO: "TODO: 触发验证" (goal-loop-runner.ts:348)
+    - GoalLoopRunner 未实现 getStatus() 的 lastResult 字段
+    - automationBindingStore 未在 BridgeRuntime 中初始化 (runtime 中缺失)
+    - goal-loop-routes.ts 文件存在但未读取验证
+
+# ─────────────────────────────────────────────
+# 2. 用户路径闭环分析
+# ─────────────────────────────────────────────
+
+用户路径闭环:
+  评分: B (80%)
+
+  完整路径:
+    路径1 - ChatGPT Web 作为 Source:
+      - 浏览器 Extension 启动 Source Relay Poller
+      - 轮询 /bridge/source/chatgpt-web/next 获取待处理 prompt
+      - 填充到 ChatGPT composer 并提交
+      - 等待响应稳定，提取回复
+      - POST 结果到 /bridge/source/chatgpt-web/results
+      - 路由到 inbound 或 pending-prompt
+      ✅ 闭环完整
+
+    路径2 - Goal 驱动的自动化执行:
+      - 创建 Goal → 生成 Plan → 审批 Plan → 启动 GoalLoop
+      - Gate 审批 → ExecutionDispatcher 分发 → Executor 执行
+      - 轮询结果 → 验证 (TODO) → 记录 Artifact
+      ⚠️ 验证步骤是 TODO，闭环不完整
+
+  不完整路径:
+    - 错误恢复路径: Source Relay 失败后重试逻辑存在，但 UI 反馈不够明确
+    - 手动干预路径: Pause/Resume/Cancel Automation 按钮存在，但状态同步可能延迟
+
+# ─────────────────────────────────────────────
+# 3. 状态处理分析
+# ─────────────────────────────────────────────
+
+状态处理:
+  评分: B (82%)
+
+  优点:
+    - 使用 structuredClone 防止状态意外修改
+    - 原子性操作: claimNext 使用 compare-and-swap 模式
+    - 清晰的状态机: pending → claimed → returned/failed
+    - Source Relay 健康状态追踪: consecutiveFailures, isInBackoff, backoffAttempts
+    - Execution Task 状态: pending → claimed → returned/failed
+    - Gate 审批状态: pendingGateApprovals Map 管理
+
+  问题:
+    - 状态持久化不一致: 部分状态持久化(如 packetStore)，部分不持久化(如 endpointRegistry online status)
+    - 并发状态竞争: 虽然有 compare-and-swap，但 Map 遍历和更新不是原子操作
+    - 状态清理: cleanup() 方法存在但未自动调用
+    - 内存泄漏风险: completionTimestamps/claimTimestamps 有 MAX_SAMPLE_SIZE 限制，但其他数组无限制
+
+# ─────────────────────────────────────────────
+# 4. 具体问题列表
+# ─────────────────────────────────────────────
+
+issues:
+  - id: PF-001
+    severity: medium
+    category: 功能缺失
+    file: apps/local-server/src/goal/goal-loop-runner.ts
+    line: 348
+    description: "验证步骤未实现 - autoVerify 选项存在但验证触发是 TODO"
+    impact: "Gate 审批后的自动验证流程不完整"
+    suggestion: "实现 verifyStep() 方法，调用 runVerificationProfile"
+
+  - id: PF-002
+    severity: low
+    category: 状态管理
+    file: apps/local-server/src/goal/goal-loop-runner.ts
+    line: 290
+    description: "getStatus() 返回的 lastResult 始终为 null"
+    impact: "调用者无法获取最后执行结果"
+    suggestion: "在 tick() 中更新 lastResult 状态"
+
+  - id: PF-003
+    severity: medium
+    category: 配置不完整
+    file: apps/local-server/src/routes/bridge-api.ts
+    line: 1586
+    description: "automationBindingStore 在 runtime 中使用但未在 createBridgeRuntime 中初始化"
+    impact: "可能在使用时未定义导致错误"
+    suggestion: "添加 automationBindingStore: InMemoryAutomationBindingStore 初始化"
+
+  - id: PF-004
+    severity: low
+    category: 状态同步
+    file: apps/extension/src/ui/bridge-panel.tsx
+    line: 1025
+    description: "health 状态更新间隔 5 秒可能导致 UI 显示滞后"
+    impact: "用户看到的连接状态可能不是最新的"
+    suggestion: "考虑在关键事件后立即触发更新"
+
+  - id: PF-005
+    severity: low
+    category: 内存管理
+    file: apps/local-server/src/conversation/chatgpt-web-source-adapter.ts
+    line: 234-242
+    description: "cleanup() 方法存在但未在代码中自动调用"
+    impact: "长时间运行后可能积累过期请求"
+    suggestion: "添加定时 cleanup 或在 getMetrics 时清理"
+
+# ─────────────────────────────────────────────
+# 5. 安全与健壮性
+# ─────────────────────────────────────────────
+
+安全与健壮性:
+  评分: A- (88%)
+
+  优点:
+    - WORKBUDDY_PAYLOAD 白名单过滤 (bridge-api.ts:1219-1248)
+    - OpenCode 执行器工作目录验证 (opencode-executor.ts:88-101)
+    - 禁用 shell: false 防止命令注入 (opencode-executor.ts:111)
+    - 请求体大小限制 MAX_BODY_BYTES = 1_000_000 (bridge-api.ts:127)
+    - Token 验证和存储 (bridge-client.ts)
+
+  改进建议:
+    - Source Relay 心跳间隔较长 (30s)，可能无法及时发现连接断开
+    - Backoff 最大 60s，对于某些场景可能过长
+
+# ─────────────────────────────────────────────
+# 6. 整体评估
+# ─────────────────────────────────────────────
+
+overall:
+  completeness: 85%
+  path_closure: 80%
+  state_handling: 82%
+  security: 88%
+  avg_score: 83.75%
+
+  summary: |
+    代码功能整体较为完整，核心链路(Goal→Plan→Execute、Source Relay)工作正常。
+    主要问题集中在验证步骤未实现、状态管理细节需要优化。
+    安全方面做得较好，但部分边界情况需要加强。
+
+recommendations:
+  - "优先级高: 实现 PF-001 验证触发逻辑"
+  - "优先级中: 检查 automationBindingStore 初始化"
+  - "优先级低: 优化状态清理机制"
+  - "优先级低: 考虑增加 Source Relay 心跳频率"

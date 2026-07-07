@@ -4,6 +4,9 @@ import {
   PROTECTED_HEALTH_PATH,
 } from '../../../../packages/shared/src/constants.ts';
 
+// Re-export for convenience
+export { PAIRING_TOKEN_HEADER };
+
 export interface BridgeClientConfig {
   baseUrl: string;
   pairingToken: string | null;
@@ -300,6 +303,44 @@ export function listPendingPrompts() {
 
 export function listPackets() {
   return bridgeFetch('/bridge/packets', 'GET');
+}
+
+// ADR-0036: List online endpoints for observability in the bridge panel.
+export function listOnlineEndpoints() {
+  return bridgeFetch<{ endpoints: EndpointInfo[] }>('/bridge/endpoints?online=true', 'GET');
+}
+
+// ADR-0035: Get Source Relay (ChatGPT Web) queue metrics and activity.
+export function getSourceRelayStatus() {
+  return bridgeFetch<{
+    metrics: {
+      depth: number;
+      inFlight: number;
+      completedInWindow: number;
+      avgWaitTime: number;
+      throughput: number;
+      extensionConnected: boolean;
+      lastHeartbeatAt: number | null;
+    };
+    recent: Array<{
+      id: string;
+      status: string;
+      projectId: string;
+      prompt: string;
+      createdAt: number;
+      claimedAt?: number;
+      returnedAt?: number;
+      failedAt?: number;
+    }>;
+  }>('/bridge/source/chatgpt-web/status', 'GET');
+}
+
+export interface EndpointInfo {
+  id: string;
+  type: string;
+  description?: string;
+  online: boolean;
+  lastHeartbeatAt: string | null;
 }
 
 export async function loadPairingTokenFromStorage(): Promise<string | null> {

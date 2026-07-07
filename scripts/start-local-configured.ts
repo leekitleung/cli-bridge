@@ -606,6 +606,14 @@ export function formatStartupSummary(
     lines.push('');
     lines.push(`GitHub token loaded (memory-only) for: ${tokenProjects.join(', ')}`);
   }
+  // ADR-0036: Show WorkBuddy Worker status in startup summary.
+  if (config.workbuddyWorker?.enabled) {
+    lines.push('');
+    const mode = config.workbuddyExecutorBackend ? 'real-execution' : 'diagnostic-only';
+    lines.push(`WorkBuddy Worker: enabled (${mode})`);
+    lines.push(`  endpoint: ${config.workbuddyWorker.endpointId ?? 'workbuddy'}`);
+    lines.push(`  poll interval: ${config.workbuddyWorker.pollIntervalMs ?? 1000}ms`);
+  }
   return lines;
 }
 

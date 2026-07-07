@@ -4,6 +4,7 @@
 // 支持的执行器：WorkBuddy、OpenCode、Claude Code、Codex 等。
 
 import { randomUUID } from 'node:crypto';
+import { logger } from '../utils/structured-logger.ts';
 
 /**
  * 执行结果结构 - 所有执行器必须返回此格式
@@ -125,11 +126,12 @@ export class ExecutorRegistry {
    */
   register(executor: ExecutorBackend): void {
     if (this.executors.has(executor.id)) {
-      console.warn(`[ExecutorRegistry] Executor ${executor.id} already registered, replacing`);
+      logger.warn('[ExecutorRegistry] Executor already registered, replacing', { executorId: executor.id });
     }
     this.executors.set(executor.id, executor);
     this.healthyExecutors.add(executor.id);
-    console.log(`[ExecutorRegistry] Registered executor: ${executor.id} (${executor.getCapabilities().name})`);
+    const caps = executor.getCapabilities();
+    logger.info('[ExecutorRegistry] Registered executor', { executorId: executor.id, name: caps.name });
   }
 
   /**
@@ -138,7 +140,7 @@ export class ExecutorRegistry {
   unregister(executorId: string): void {
     this.executors.delete(executorId);
     this.healthyExecutors.delete(executorId);
-    console.log(`[ExecutorRegistry] Unregistered executor: ${executorId}`);
+    logger.info('[ExecutorRegistry] Unregistered executor', { executorId });
   }
 
   /**
@@ -168,7 +170,7 @@ export class ExecutorRegistry {
   select(options?: { preferredTags?: string[] }): ExecutorBackend | undefined {
     const healthy = this.listHealthy();
     if (healthy.length === 0) {
-      console.warn('[ExecutorRegistry] No healthy executors available');
+      logger.warn('[ExecutorRegistry] No healthy executors available');
       return undefined;
     }
 
@@ -320,7 +322,7 @@ export class ExecutorRegistry {
               const healthy = await executor.healthCheck();
               this.updateHealth(executor.id, healthy);
             } catch (err) {
-              console.error(`[ExecutorRegistry] Health check failed for ${executor.id}:`, err);
+              logger.error('[ExecutorRegistry] Health check failed', { executorId: executor.id, error: err instanceof Error ? err.message : String(err) });
               this.updateHealth(executor.id, false);
             }
           }

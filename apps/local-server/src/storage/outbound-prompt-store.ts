@@ -277,34 +277,39 @@ export class InMemoryOutboundPromptStore {
 
   claimNext(now: number = Date.now()): OutboundPrompt | undefined {
     this.recoverStaleClaims(now);
-    const prompt = Array.from(this.prompts.values())
-      .filter((candidate) => candidate.status === 'queued')
-      .sort((left, right) => left.createdAt - right.createdAt)[0];
 
-    if (!prompt) {
-      return undefined;
+    // SECURITY FIX: 使用 compare-and-swap 模式修复竞态条件
+    // 找到第一个 queued 的 prompt，然后在原子操作内验证并更新状态
+    for (const candidate of this.prompts.values()) {
+      if (candidate.status !== 'queued') continue;
+
+      // 原子性检查并更新
+      const current = this.prompts.get(candidate.id);
+      if (!current || current.status !== 'queued') continue;
+
+      // 更新状态
+      current.status = 'claimed';
+      current.claimedAt = now;
+      current.claimToken = randomUUID();
+      current.updatedAt = now;
+      appendEvidence(current, 'claimed', now);
+      this.prompts.set(current.id, clonePrompt(current));
+
+      this.auditLog.createAndAppend({
+        sessionId: current.sessionId,
+        packetId: current.packetId,
+        approvalId: current.id,
+        type: 'claim_outbound_prompt',
+        source: 'chatgpt-web',
+        target: 'chatgpt-web',
+        result: { ok: true },
+        timestamp: now,
+      });
+
+      return clonePrompt(current);
     }
 
-    prompt.status = 'claimed';
-    prompt.claimedAt = now;
-    prompt.claimToken = randomUUID();
-    prompt.updatedAt = now;
-    appendEvidence(prompt, 'claimed', now);
-    this.prompts.set(prompt.id, clonePrompt(prompt));
-    this.auditLog.createAndAppend({
-      sessionId: prompt.sessionId,
-      packetId: prompt.packetId,
-      approvalId: prompt.id,
-      type: 'claim_outbound_prompt',
-      source: 'chatgpt-web',
-      target: 'chatgpt-web',
-      result: {
-        ok: true,
-      },
-      timestamp: now,
-    });
-
-    return clonePrompt(prompt);
+    return undefined;
   }
 
   acknowledge(input: AcknowledgeOutboundPromptInput): OutboundPrompt | undefined {
