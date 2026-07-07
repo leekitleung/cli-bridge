@@ -1,0 +1,47 @@
+name: default
+description: Normal implementation quality gate for PR-sized changes
+
+required_reviewers:
+  - product-flow
+  - destructive-qa
+  - terminal-veteran
+
+conditional_reviewers:
+  native-designer:
+    when:
+      - changed_files_match: ["**/*.css", "**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.html", "**/ui/**"]
+      - evidence_has: ["screenshots", "design-files"]
+  zero-doc-user:
+    when:
+      - is_user_facing: true
+      - is_public_release: true
+      - changed_files_match: ["**/README.md", "**/docs/**", "**/onboarding/**"]
+  data-security:
+    when:
+      - changed_files_match: ["**/auth/**", "**/storage/**", "**/sync/**", "**/token/**"]
+      - diff_contains: ["token", "secret", "password", "key", "credential", "localStorage", "cookie", "session"]
+  terminal-veteran:
+    when:
+      - changed_files_match: ["**/cli/**", "**/scripts/**", "**/bin/**", "**/commands/**"]
+
+thresholds:
+  min_score: 90
+  fail_on_redlines: true
+  fail_on_p0_p1_blockers: true
+
+commands:
+  test: "pnpm test"
+  build: "pnpm build"
+  lint: "pnpm lint"
+
+evidence_required:
+  - manifest.yaml
+  - git-diff.patch
+  - test.log
+  - build.log
+
+aliases:
+  vibe-coder: product-flow
+  new-user: zero-doc-user
+  aesthetic-designer: native-designer
+  quality-breaker: destructive-qa

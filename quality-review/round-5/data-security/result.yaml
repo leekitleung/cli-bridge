@@ -1,0 +1,9 @@
+reviewer: data-security
+score: 89
+dimension_scores:
+  token_security: 92
+  credential_handling: 90
+  input_validation: 85
+blockers: []
+redlines: []
+recommendation: fail

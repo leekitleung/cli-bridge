@@ -1,0 +1,71 @@
+# Product Flow Reviewer Result
+reviewer: product-flow
+profile: release-gate
+round: skill-release
+
+# Overall score (0-100)
+score: 72
+
+# Dimension scores
+dimension_scores:
+  completeness: 75
+  correctness: 80
+  maintainability: 70
+  robustness: 65
+  polish: 70
+
+# Blocking issues
+blockers:
+  - id: BLOCKER-001
+    severity: P1
+    category: testing
+    description: Skill has no tests - no unit tests for review-gate.mjs or review-runner.mjs
+    files:
+      - skills/release-quality-review/scripts/review-gate.mjs
+      - skills/release-quality-review/scripts/review-runner.mjs
+    evidence:
+      lines: all
+      type: code
+    fix_effort: medium
+
+  - id: BLOCKER-002
+    severity: P2
+    category: docs
+    description: Inconsistent language - SKILL.md contains Chinese text ("常驻", "条件触发") mixed with English
+    files:
+      - skills/release-quality-review/SKILL.md
+    evidence:
+      lines: "16-36"
+      type: doc
+    fix_effort: low
+
+  - id: BLOCKER-003
+    severity: P2
+    category: architecture
+    description: Reviewer definitions have inconsistent format - some use YAML frontmatter, others don't
+    files:
+      - skills/release-quality-review/reviewers/*.md
+    evidence:
+      lines: all
+      type: doc
+    fix_effort: medium
+
+# Redlines
+redlines: []
+
+# Recommendation
+recommendation: fail
+
+# Notes
+notes: |
+  The skill provides a solid framework but has critical gaps:
+  - No tests for the gate script itself
+  - Inconsistent language in documentation
+  - Format inconsistency across reviewer definitions
+
+  Fix BLOCKER-001 (tests) before considering this skill production-ready.
+
+# Metadata
+reviewed_at: 2026-07-07T00:00:00Z
+reviewer_type: constant
+triggered_by: release-gate profile always-on

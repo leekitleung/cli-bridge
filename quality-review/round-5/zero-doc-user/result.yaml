@@ -1,0 +1,14 @@
+reviewer: zero-doc-user
+score: 74
+dimension_scores:
+  onboarding: 70
+  documentation: 82
+  discoverability: 80
+  error_clarity: 65
+blockers:
+  - id: ZU-001
+    severity: P2
+    description: 错误消息可操作性需要提升
+    files: [README.md]
+redlines: []
+recommendation: fail

@@ -1,0 +1,13 @@
+reviewer: product-flow
+score: 82
+dimension_scores:
+  completeness: 70
+  path_closure: 92
+  state_handling: 85
+blockers:
+  - id: PF-001
+    severity: P2
+    description: verifyStepOutput 验证逻辑需要更完善
+    files: [apps/local-server/src/goal/goal-automation-loop.ts]
+redlines: []
+recommendation: fail

@@ -1,0 +1,14 @@
+reviewer: terminal-veteran
+score: 78
+dimension_scores:
+  error_handling: 88
+  logging: 70
+  timeouts: 82
+  degradation: 72
+blockers:
+  - id: TV-001
+    severity: P2
+    description: 需要更结构化的日志系统
+    files: [apps/local-server/src/server.ts]
+redlines: []
+recommendation: fail

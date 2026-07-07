@@ -1,0 +1,15 @@
+reviewer: native-designer
+score: 86
+dimension_scores:
+  visual_hierarchy: 80
+  component_states: 82
+  design_consistency: 88
+  polish: 85
+  language_consistency: 95
+blockers:
+  - id: ND-001
+    severity: P3
+    description: UI 语言已统一为英文
+    files: [apps/extension/src/ui/bridge-panel.tsx]
+redlines: []
+recommendation: fail

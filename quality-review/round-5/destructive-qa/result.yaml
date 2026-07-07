@@ -1,0 +1,12 @@
+reviewer: destructive-qa
+score: 83
+dimension_scores:
+  security_posture: 75
+  boundary_handling: 88
+  error_recovery: 85
+blockers: []
+redlines: 
+  - id: DQ-RL-001
+    description: 缺少 Shell 元字符验证
+    severity: P0
+recommendation: fail

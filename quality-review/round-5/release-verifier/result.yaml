@@ -1,0 +1,10 @@
+reviewer: release-verifier
+score: 86
+dimension_scores:
+  build_verification: 75
+  health_check: 95
+  documentation: 85
+  test_coverage: 88
+blockers: []
+redlines: []
+recommendation: fail

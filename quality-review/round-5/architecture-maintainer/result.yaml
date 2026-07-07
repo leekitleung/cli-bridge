@@ -1,0 +1,10 @@
+reviewer: architecture-maintainer
+score: 89
+dimension_scores:
+  modularity: 92
+  abstraction: 88
+  type_safety: 90
+  error_handling: 85
+blockers: []
+redlines: []
+recommendation: fail
