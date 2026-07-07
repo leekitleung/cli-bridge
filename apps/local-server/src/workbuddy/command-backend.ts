@@ -2,6 +2,16 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
+/**
+ * Maximum argument count to prevent DoS via argument list
+ */
+const MAX_ARG_COUNT = 20;
+
+/**
+ * Maximum total argument length to prevent DoS
+ */
+const MAX_ARG_LENGTH = 4096;
+
 export interface CommandBackendConfig {
   /** Allowlist of command names or absolute paths that may be executed. */
   allowlist: string[];
@@ -34,6 +44,10 @@ export function createCommandBackend(config: CommandBackendConfig) {
   const outputCapBytes = config.outputCapBytes || 65_536;
 
   function isAllowed(command: string): boolean {
+    // On Windows, allow cmd.exe to run built-in commands
+    if (process.platform === 'win32' && command.toLowerCase() === 'cmd.exe') {
+      return true;
+    }
     return config.allowlist.some(entry => {
       if (entry === command) return true;
       // Allow absolute path match.
@@ -65,6 +79,19 @@ export function createCommandBackend(config: CommandBackendConfig) {
       };
     }
 
+    // SECURITY FIX: 检查 shell 元字符防止命令注入
+    // 即使 shell: false，也拒绝包含危险元字符的输入
+    const SHELL_METACHARACTERS = /[;|&$`()<>\\]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
+    if (SHELL_METACHARACTERS.test(prompt)) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: 'Command contains forbidden shell metacharacters.',
+        exitCode: 1,
+        failureReason: 'shell-metacharacter-detected',
+      };
+    }
+
     // Parse argv from prompt (respects simple quoting).
     const argv = parseArgv(prompt);
     if (argv.length === 0) {
@@ -74,6 +101,29 @@ export function createCommandBackend(config: CommandBackendConfig) {
         stderr: 'Could not parse command from prompt.',
         exitCode: 1,
         failureReason: 'No command parsed from prompt',
+      };
+    }
+
+    // Validate argument count to prevent DoS
+    if (argv.length > MAX_ARG_COUNT) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: `Too many arguments (max ${MAX_ARG_COUNT}).`,
+        exitCode: 1,
+        failureReason: `too-many-arguments: ${argv.length} > ${MAX_ARG_COUNT}`,
+      };
+    }
+
+    // Validate total argument length
+    const totalLength = argv.reduce((sum, arg) => sum + arg.length, 0);
+    if (totalLength > MAX_ARG_LENGTH) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: `Total argument length exceeds ${MAX_ARG_LENGTH} bytes.`,
+        exitCode: 1,
+        failureReason: `arguments-too-long: ${totalLength} > ${MAX_ARG_LENGTH}`,
       };
     }
 
@@ -90,8 +140,14 @@ export function createCommandBackend(config: CommandBackendConfig) {
 
     const workDir = task.workingDirectory ? resolve(task.workingDirectory) : cwd;
 
+    // On Windows, use cmd.exe to execute commands through /c flag
+    // This allows built-in commands like echo, type, del to work properly
+    const isWindows = process.platform === 'win32';
+    const execArgv = isWindows ? ['/c', ...argv] : argv;
+    const execCommand = isWindows ? 'cmd.exe' : command;
+
     return new Promise<CommandBackendResult>((resolveResult) => {
-      const child = spawn(command, argv.slice(1), {
+      const child = spawn(execCommand, execArgv, {
         cwd: workDir,
         env: config.env ? { ...process.env, ...config.env } : process.env,
         shell: false,
