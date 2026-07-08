@@ -136,6 +136,19 @@ export async function startLocalServer(
   port: number = DEFAULT_LOCAL_SERVER_PORT,
   runtimeOptions?: BridgeRuntimeOptions,
 ): Promise<LocalServerHandle> {
+  // Configure structured logger with file transport if log directory specified
+  const logDir = process.env['LOG_DIR'];
+  if (logDir) {
+    logger.configure({
+      logDir,
+      logFile: 'cli-bridge',
+      maxFileSize: 10 * 1024 * 1024, // 10MB
+      maxFiles: 5,
+      fileLevel: 'info',
+    });
+    logger.info('Logger configured', { logDir });
+  }
+
   const pairingToken = createPairingToken();
   const autoPairStore: LocalAutoPairSessionStore = createLocalAutoPairSessionStore();
   const bridgeRuntime: BridgeRuntime = createBridgeRuntime(runtimeOptions);
@@ -546,6 +559,8 @@ export async function startLocalServer(
       }
     }
 
+    // Flush log file before exit
+    logger.flush();
     logger.info('[Server] Graceful shutdown complete');
     process.exit(0);
   };

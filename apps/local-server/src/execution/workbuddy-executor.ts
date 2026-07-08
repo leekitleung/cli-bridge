@@ -37,7 +37,38 @@ export interface WorkBuddyExecutorOptions {
   timeoutMs?: number;
   /** 是否启用诊断模式 */
   diagnosticMode?: boolean;
+  /** 重试配置 */
+  retry?: RetryConfig;
 }
+
+/** 重试配置接口 */
+export interface RetryConfig {
+  /** 最大重试次数 (默认: 3) */
+  maxRetries?: number;
+  /** 初始退避延迟 (ms, 默认: 1000) */
+  initialDelayMs?: number;
+  /** 最大退避延迟 (ms, 默认: 30000) */
+  maxDelayMs?: number;
+  /** 指数退避基数 (默认: 2) */
+  backoffBase?: number;
+  /** 可重试的错误类型 */
+  retryableErrors?: string[];
+}
+
+const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 30000,
+  backoffBase: 2,
+  retryableErrors: [
+    'workbuddy-timeout',
+    'network-error',
+    'connection-refused',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+  ],
+};
 
 /**
  * WorkBuddy 执行器 - 实现 ExecutorBackend 接口
@@ -54,12 +85,14 @@ export class WorkBuddyExecutor implements ExecutorBackend {
     workingDirectory: string;
     timeoutMs: number;
     diagnosticMode: boolean;
+    retry: Required<RetryConfig>;
   };
   private worker?: WorkBuddyWorker;
   private workerInterval?: ReturnType<typeof setInterval>;
 
   constructor(options: WorkBuddyExecutorOptions) {
     this.adapter = options.adapter;
+    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...options.retry };
     this.options = {
       baseUrl: options.baseUrl ?? 'http://127.0.0.1:31337',
       pairingToken: options.pairingToken ?? '',
@@ -67,6 +100,7 @@ export class WorkBuddyExecutor implements ExecutorBackend {
       workingDirectory: options.workingDirectory ?? process.cwd(),
       timeoutMs: options.timeoutMs ?? 120_000,
       diagnosticMode: options.diagnosticMode ?? false,
+      retry: retryConfig,
     };
   }
 
@@ -119,10 +153,75 @@ export class WorkBuddyExecutor implements ExecutorBackend {
    * 执行任务 - 实现 ExecutorBackend 接口
    *
    * 将任务放入 WorkBuddy 的 inbox，等待执行结果。
+   * 包含自动重试逻辑，使用指数退避策略。
    */
   async execute(task: ExecutorTask): Promise<ExecutorResult> {
     const startTime = Date.now();
+    const retry = this.options.retry;
+    let lastError: string = '';
 
+    for (let attempt = 0; attempt <= retry.maxRetries; attempt++) {
+      try {
+        const result = await this.executeOnce(task, startTime);
+
+        // 如果成功或有不可重试的错误，直接返回
+        if (result.ok || !this.isRetryableError(result.failureReason)) {
+          return result;
+        }
+
+        lastError = result.failureReason ?? 'Unknown error';
+
+        // 如果还有重试次数，等待后重试
+        if (attempt < retry.maxRetries) {
+          const delayMs = this.calculateBackoff(attempt);
+          logger.info('[WorkBuddyExecutor] Retrying after failure', {
+            attempt: attempt + 1,
+            maxRetries: retry.maxRetries,
+            delayMs,
+            error: lastError,
+            taskId: task.taskId,
+          });
+          await this.sleep(delayMs);
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+
+        // 检查是否是可重试的错误
+        if (!this.isRetryableError(lastError) || attempt >= retry.maxRetries) {
+          return {
+            ok: false,
+            stdout: '',
+            stderr: lastError,
+            failureReason: `executor-error: ${lastError}`,
+            durationMs: Date.now() - startTime,
+          };
+        }
+
+        const delayMs = this.calculateBackoff(attempt);
+        logger.info('[WorkBuddyExecutor] Retrying after exception', {
+          attempt: attempt + 1,
+          maxRetries: retry.maxRetries,
+          delayMs,
+          error: lastError,
+        });
+        await this.sleep(delayMs);
+      }
+    }
+
+    // 所有重试都失败了
+    return {
+      ok: false,
+      stdout: '',
+      stderr: `All ${retry.maxRetries + 1} attempts failed. Last error: ${lastError}`,
+      failureReason: 'all-retries-failed',
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * 执行一次任务（无重试）
+   */
+  private async executeOnce(task: ExecutorTask, startTime: number): Promise<ExecutorResult> {
     // 创建任务
     const workbuddyTask = this.adapter.enqueue({
       endpointId: 'local-workbuddy',
@@ -137,10 +236,8 @@ export class WorkBuddyExecutor implements ExecutorBackend {
     });
 
     // 轮询结果 - 使用 2s 间隔减少 CPU 占用
-    // 注: 事件驱动需要 WorkBuddy 支持 WebSocket/Server-Sent Events，
-    // 当前采用轮询模式是出于兼容性和简单性考虑
     const timeoutAt = startTime + (task.timeoutMs ?? this.options.timeoutMs);
-    const pollIntervalMs = 2000; // 从 1000ms 增加到 2000ms 减少 CPU 占用
+    const pollIntervalMs = 2000;
 
     while (Date.now() < timeoutAt) {
       const result = this.adapter.getResult(workbuddyTask.taskId);
@@ -157,7 +254,7 @@ export class WorkBuddyExecutor implements ExecutorBackend {
       }
 
       // 等待后再检查
-      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      await this.sleep(pollIntervalMs);
     }
 
     // 超时
@@ -168,6 +265,36 @@ export class WorkBuddyExecutor implements ExecutorBackend {
       failureReason: 'workbuddy-timeout',
       durationMs: Date.now() - startTime,
     };
+  }
+
+  /**
+   * 检查错误是否可重试
+   */
+  private isRetryableError(error?: string): boolean {
+    if (!error) return false;
+    const retryable = this.options.retry.retryableErrors;
+    return retryable.some(e => error.includes(e));
+  }
+
+  /**
+   * 计算退避延迟（指数退避 + jitter）
+   */
+  private calculateBackoff(attempt: number): number {
+    const { initialDelayMs, maxDelayMs, backoffBase } = this.options.retry;
+    const baseDelay = Math.min(
+      initialDelayMs * Math.pow(backoffBase, attempt),
+      maxDelayMs
+    );
+    // 添加 0-25% 的随机 jitter 防止雷群效应
+    const jitter = baseDelay * (Math.random() * 0.25);
+    return Math.floor(baseDelay + jitter);
+  }
+
+  /**
+   * 异步等待
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

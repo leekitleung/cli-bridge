@@ -133,26 +133,33 @@ export function createLocalAutoPairSessionStore(
       diagnostics.extensionClaimsAttempted++;
       diagnostics.lastExtensionClaimAttemptedAt = now();
       const record = byClaim.get(extensionClaimNonce);
-      if (!record || !isActive(record)) {
-        const message = 'extension claim nonce invalid or expired';
+
+      // SECURITY FIX: 使用固定时间检查避免时序攻击
+      // 始终检查所有条件，而不是提前返回
+      const hasRecord = record !== undefined;
+      const isRecordActive = hasRecord && isActive(record);
+      const claimNotUsed = !record?.claimUsedAt;
+      const claimNotExpired = (record?.claimExpiresAt ?? 0) > now();
+      const recordIsValid = hasRecord && isRecordActive && claimNotUsed && claimNotExpired;
+
+      // 始终更新诊断统计（无论成功与否）
+      if (!recordIsValid) {
         diagnostics.extensionClaimsRejected++;
         diagnostics.lastExtensionClaimRejectedAt = now();
-        diagnostics.lastExtensionClaimRejectedReason = message;
-        return { ok: false, message };
+        // 统一错误消息，不泄露具体失败原因
+        diagnostics.lastExtensionClaimRejectedReason = 'extension claim nonce invalid or expired';
       }
-      if (record.claimUsedAt || record.claimExpiresAt <= now()) {
-        const message = 'extension claim nonce already used or expired';
-        diagnostics.extensionClaimsRejected++;
-        diagnostics.lastExtensionClaimRejectedAt = now();
-        diagnostics.lastExtensionClaimRejectedReason = message;
-        return { ok: false, message };
+
+      if (recordIsValid) {
+        record.claimUsedAt = now();
+        record.extensionSessionToken = token();
+        byExtension.set(record.extensionSessionToken, record);
+        diagnostics.extensionClaimsSucceeded++;
+        diagnostics.lastExtensionClaimSucceededAt = record.claimUsedAt;
+        return { ok: true, extensionSessionToken: record.extensionSessionToken };
       }
-      record.claimUsedAt = now();
-      record.extensionSessionToken = token();
-      byExtension.set(record.extensionSessionToken, record);
-      diagnostics.extensionClaimsSucceeded++;
-      diagnostics.lastExtensionClaimSucceededAt = record.claimUsedAt;
-      return { ok: true, extensionSessionToken: record.extensionSessionToken };
+
+      return { ok: false, message: 'extension claim nonce invalid or expired' };
     },
     verifyExtensionSession(extensionSessionToken: string): boolean {
       const record = byExtension.get(extensionSessionToken);

@@ -12,6 +12,7 @@ import type { WorkBuddyExecutionResult } from '../adapters/workbuddy-execution-a
 import { GoalOrchestrator, type AdvanceResult } from './goal-orchestrator.ts';
 import { logger } from '../utils/structured-logger.ts';
 import type { InMemoryAutomationLoopStore } from '../automation/automation-loop-store.ts';
+import { verifyStepOutput, requiresVerification } from '../shared/step-verification.ts';
 
 /**
  * Goal Loop Tick 结果
@@ -301,7 +302,9 @@ function handleExecutionResult(
 
   // 触发验证（如果启用）
   if (config?.autoVerify ?? true) {
-    const verificationResult = verifyStepOutput(result);
+    const verificationResult = verifyStepOutput(result.stdout ?? '', {
+      errorKeywords: VERIFICATION_ERROR_KEYWORDS,
+    });
     if (!verificationResult.passed) {
       return {
         type: 'verification-fail',
@@ -329,18 +332,13 @@ function handleExecutionResult(
  * 检查步骤是否需要验证
  */
 function shouldVerify(stepKind: string): boolean {
-  const verifiableKinds = new Set([
-    'run-command',
-    'apply-patch',
-    'write-file',
-  ]);
-  return verifiableKinds.has(stepKind);
+  return requiresVerification(stepKind);
 }
 
 /**
  * 错误关键词列表（用于检测 stderr 中的失败信号）
  */
-const ERROR_KEYWORDS = [
+const VERIFICATION_ERROR_KEYWORDS = [
   'error',
   'failed',
   'failure',
@@ -355,77 +353,6 @@ const ERROR_KEYWORDS = [
   'command not found',
   'not found',
 ];
-
-/**
- * 验证步骤输出
- *
- * 验证策略:
- * 1. exitCode !== 0 → 失败
- * 2. stderr 包含错误关键词 → 失败
- * 3. stdout 包含特定成功模式 → 通过
- * 4. 否则根据 ok 字段判断
- */
-function verifyStepOutput(
-  result: WorkBuddyExecutionResult,
-): { passed: boolean; output?: string; reason?: string } {
-  // 1. 检查 ok 字段
-  if (!result.ok) {
-    const reason = result.failureReason
-      ?? result.stderr
-      ?? `Execution failed with exit code ${result.exitCode ?? 'unknown'}`;
-    return { passed: false, reason };
-  }
-
-  // 2. 检查 exitCode
-  if (result.exitCode !== undefined && result.exitCode !== 0) {
-    return {
-      passed: false,
-      reason: `Non-zero exit code: ${result.exitCode}`,
-    };
-  }
-
-  // 3. 检查 stderr 中的错误关键词
-  if (result.stderr) {
-    const stderrLower = result.stderr.toLowerCase();
-    for (const keyword of ERROR_KEYWORDS) {
-      if (stderrLower.includes(keyword)) {
-        // 排除误报：某些关键词在成功输出中也可能出现
-        const isFalsePositive = isLikelyFalsePositive(keyword, result.stderr);
-        if (!isFalsePositive) {
-          return {
-            passed: false,
-            reason: `Error keyword "${keyword}" found in stderr`,
-          };
-        }
-      }
-    }
-  }
-
-  // 4. 成功
-  return { passed: true, output: result.stdout };
-}
-
-/**
- * 检测误报：某些关键词在成功输出中也可能出现
- */
-function isLikelyFalsePositive(keyword: string, stderr: string): boolean {
-  const falsePositivePatterns: Record<string, RegExp[]> = {
-    'not found': [
-      /could not find.*but continuing/i,
-      /warning.*not found/i,
-    ],
-    'error': [
-      /no error/i,
-      /error handling.*continuing/i,
-      /error recovery/i,
-    ],
-  };
-
-  const patterns = falsePositivePatterns[keyword];
-  if (!patterns) return false;
-
-  return patterns.some(pattern => pattern.test(stderr));
-}
 
 /**
  * 从 cycle 历史获取最新的 tick 结果

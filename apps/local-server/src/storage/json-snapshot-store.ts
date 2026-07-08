@@ -94,6 +94,8 @@ export interface BridgeSnapshot {
   /** ADR-0028: bounded automation work-cycle loop runs and cycles. */
   automationLoopRuns?: AutomationLoopRun[];
   automationLoopCycles?: AutomationLoopCycle[];
+  /** ADR-0035: persisted ChatGPT Web source relay queue state. */
+  chatGptWebSourceQueue?: { requests: import('../conversation/chatgpt-web-source-adapter.ts').ChatGptSourceRequest[] };
 }
 
 export interface SnapshotWriteResult {

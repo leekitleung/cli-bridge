@@ -14,17 +14,9 @@ import { ExecutionDispatcher, createExecutionDispatcher } from '../execution/exe
 import { ExecutorRegistry, getExecutorRegistry } from '../execution/executor-registry.ts';
 import { WorkBuddyExecutor, createWorkBuddyExecutor } from '../execution/workbuddy-executor.ts';
 import { OpenCodeExecutor, createOpenCodeExecutor } from '../execution/opencode-executor.ts';
+import { verifyStepOutput, VERIFICATION_ERROR_KEYWORDS, requiresVerification } from '../shared/step-verification.ts';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../utils/structured-logger.ts';
-
-/**
- * 错误关键词列表（用于检测 stderr 中的失败信号）
- */
-const VERIFICATION_ERROR_KEYWORDS = [
-  'error', 'failed', 'failure', 'panic', 'exception', 'fatal',
-  'critical', 'cannot', 'unable to', 'permission denied',
-  'no such file', 'command not found', 'not found',
-];
 
 export interface GoalLoopRunnerOptions {
   /** 步数上限 (ADR-0033 默认 10) */
@@ -39,7 +31,12 @@ export interface GoalLoopRunnerOptions {
   defaultExecutor?: 'workbuddy' | 'opencode' | 'auto';
   /** 清理间隔 (ms)，默认 5 分钟 */
   cleanupIntervalMs?: number;
+  /** Gate 审批超时 (ms)，默认 30 分钟 */
+  gateTimeoutMs?: number;
 }
+
+/** 默认 Gate 超时: 30 分钟 */
+const DEFAULT_GATE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface GoalLoopRunnerStatus {
   goalId: string;
@@ -110,6 +107,7 @@ export class GoalLoopRunner {
   private readonly activeLoops = new Map<string, {
     stopRequested: boolean;
     startedAt: number;
+    lastResult: AdvanceResult | null;
   }>();
 
   /** 轮询定时器 */
@@ -121,12 +119,16 @@ export class GoalLoopRunner {
   /** 清理间隔 (默认 5 分钟) */
   private readonly cleanupIntervalMs: number;
 
+  /** Gate 审批超时 (默认 30 分钟) */
+  private readonly gateTimeoutMs: number;
+
   constructor(
     runtime: BridgeRuntime,
     options: GoalLoopRunnerOptions = {},
   ) {
     this.runtime = runtime;
     this.cleanupIntervalMs = options.cleanupIntervalMs ?? 5 * 60 * 1000;
+    this.gateTimeoutMs = options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
     this.options = {
       stepCeiling: options.stepCeiling ?? 10,
       pollIntervalMs: options.pollIntervalMs ?? 5000,
@@ -134,6 +136,7 @@ export class GoalLoopRunner {
       verifyTimeoutMs: options.verifyTimeoutMs ?? 60_000,
       defaultExecutor: options.defaultExecutor ?? 'auto',
       cleanupIntervalMs: this.cleanupIntervalMs,
+      gateTimeoutMs: this.gateTimeoutMs,
     };
 
     this.orchestrator = new GoalOrchestrator(runtime.goalStore, {
@@ -215,6 +218,7 @@ export class GoalLoopRunner {
     this.activeLoops.set(loop.id, {
       stopRequested: false,
       startedAt: Date.now(),
+      lastResult: null,
     });
 
     // 启动轮询
@@ -348,6 +352,7 @@ export class GoalLoopRunner {
     const goalId = loop.goalId ?? '';
     const goal = this.runtime.goalStore.getGoal(goalId);
     const plan = goalId ? this.runtime.goalStore.getPlanByGoal(goalId) : null;
+    const loopState = this.activeLoops.get(loopId);
 
     return {
       goalId,
@@ -356,7 +361,7 @@ export class GoalLoopRunner {
       totalSteps: plan?.steps.length ?? 0,
       goalStatus: goal?.status ?? 'unknown',
       planStatus: plan?.status ?? 'unknown',
-      lastResult: null,
+      lastResult: loopState?.lastResult ?? null,
       executionStats: {
         stepsCompleted: plan?.steps.filter(s => s.status === 'done').length ?? 0,
         stepsFailed: plan?.steps.filter(s => s.status === 'failed').length ?? 0,
@@ -410,6 +415,8 @@ export class GoalLoopRunner {
       case 'step-gated':
         // 需要 Gate 审批
         this.handleStepGated(goalId, result);
+        // 更新最后结果
+        loopState.lastResult = result;
         // 继续轮询（等待审批）
         this.scheduleNextTick(loopId, goalId, planId);
         break;
@@ -419,22 +426,23 @@ export class GoalLoopRunner {
         if (this.options.autoVerify && this.shouldVerify(result.stepKind)) {
           this.verifyStepCompletion(goalId, result);
         }
+        // 更新最后结果
+        loopState.lastResult = result;
         // 继续轮询
         this.scheduleNextTick(loopId, goalId, planId);
         break;
 
       case 'step-failed':
         // 步骤失败，停止
-        // 使用 cancelGoal 代替 updateGoalStatus
+        loopState.lastResult = result;
         this.runtime.goalStore.cancelGoal(goalId);
         this.runtime.automationLoopStore.cancel(loopId);
         this.activeLoops.delete(loopId);
         break;
 
       case 'plan-completed':
-        // 计划完成 - 使用 cancelGoal 并设置 status 为 done
-        // 注意: cancelGoal 不会设置 done 状态，需要用其他方式
-        // 暂时使用 pausePlan 作为替代
+        // 计划完成
+        loopState.lastResult = result;
         this.runtime.goalStore.pausePlan(goalId, 'Goal completed');
         this.runtime.automationLoopStore.cancel(loopId);
         this.activeLoops.delete(loopId);
@@ -442,12 +450,16 @@ export class GoalLoopRunner {
 
       case 'ceiling-reached':
         // 达到步数上限
+        loopState.lastResult = result;
         logger.info('[GoalLoopRunner] Step ceiling reached', { stepCeiling: result.stepCeiling });
         this.scheduleNextTick(loopId, goalId, planId);
         break;
 
       case 'noop':
         // 无事可做（可能是所有步骤都在等待 Gate）
+        // 检查 Gate 超时
+        this.checkGateTimeouts(loopId);
+        // noop 不更新 lastResult，保持上次状态
         this.scheduleNextTick(loopId, goalId, planId);
         break;
 
@@ -542,48 +554,52 @@ export class GoalLoopRunner {
     const step = plan.steps.find(s => s.id === stepId);
     if (!step) return;
 
-    // 检查 stderr 中的错误关键词
+    // 使用共享的验证函数
     const stepOutput = step.output ?? '';
-    let verificationPassed = true;
-    let failureReason = '';
+    const verification = verifyStepOutput(stepOutput, { errorKeywords: VERIFICATION_ERROR_KEYWORDS });
 
-    // 如果步骤包含执行结果，检查错误关键词
-    if (stepOutput && typeof stepOutput === 'string') {
-      const outputLower = stepOutput.toLowerCase();
-      for (const keyword of VERIFICATION_ERROR_KEYWORDS) {
-        if (outputLower.includes(keyword)) {
-          // 检查误报
-          if (!this.isLikelyFalsePositive(keyword, stepOutput)) {
-            verificationPassed = false;
-            failureReason = `Error keyword "${keyword}" found in output`;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!verificationPassed) {
-      logger.warn('[GoalLoopRunner] Step verification failed', { stepId, reason: failureReason });
-      this.runtime.goalStore.failStep(goalId, stepId, failureReason);
+    if (!verification.passed) {
+      logger.warn('[GoalLoopRunner] Step verification failed', { stepId, reason: verification.reason });
+      this.runtime.goalStore.failStep(goalId, stepId, verification.reason ?? 'Verification failed');
     } else {
       logger.info('[GoalLoopRunner] Step verification passed', { stepId });
     }
   }
 
   /**
-   * 检测误报：某些关键词在成功输出中也可能出现
+   * 检查 Gate 审批超时
+   *
+   * 如果 pending gate 等待时间超过 gateTimeoutMs，则自动取消。
+   * 这是防止 Gate 永远悬停导致 Loop 卡死的安全机制。
    */
-  private isLikelyFalsePositive(keyword: string, output: string): boolean {
-    const falsePositivePatterns: Record<string, RegExp[]> = {
-      'not found': [/could not find.*but continuing/i, /warning.*not found/i, /file not found.*skipping/i],
-      'error': [/no error/i, /error handling/i, /error-codes/i],
-      'failed': [/did not fail/i, /test failed.*expected/i],
-    };
+  private checkGateTimeouts(loopId: string): void {
+    const now = Date.now();
+    const expiredGates: string[] = [];
 
-    const patterns = falsePositivePatterns[keyword.toLowerCase()];
-    if (!patterns) return false;
+    for (const [executionId, approval] of this.pendingGateApprovals.entries()) {
+      const waitingMs = now - approval.createdAt;
+      if (waitingMs > this.gateTimeoutMs) {
+        expiredGates.push(executionId);
+        logger.warn('[GoalLoopRunner] Gate approval timed out', {
+          executionId,
+          stepId: approval.stepId,
+          waitingMs,
+          timeoutMs: this.gateTimeoutMs,
+        });
+      }
+    }
 
-    return patterns.some(pattern => pattern.test(output));
+    // 批量清理过期的 gates
+    for (const executionId of expiredGates) {
+      this.pendingGateApprovals.delete(executionId);
+    }
+
+    if (expiredGates.length > 0) {
+      logger.info('[GoalLoopRunner] Cleaned up expired gates', {
+        count: expiredGates.length,
+        loopId,
+      });
+    }
   }
 
   /**

@@ -328,6 +328,32 @@ export class ChatGptWebSourceQueue {
       lastHeartbeatAt: this.heartbeat?.lastHeartbeatAt ?? null,
     };
   }
+
+  /**
+   * Serialize queue state for persistence.
+   * Returns pending requests that should survive a restart.
+   */
+  toJSON(): { requests: ChatGptSourceRequest[] } {
+    // Only persist pending requests (not claimed/completed/failed)
+    const pendingRequests = Array.from(this.requests.values())
+      .filter(req => req.status === 'pending');
+    return { requests: pendingRequests };
+  }
+
+  /**
+   * Restore queue state from persisted data.
+   * Re-hydrates pending requests after a server restart.
+   */
+  fromJSON(data: { requests: ChatGptSourceRequest[] }): void {
+    if (!data?.requests) return;
+
+    for (const req of data.requests) {
+      // Only restore requests that were pending (not yet claimed)
+      if (req.status === 'pending' && !this.requests.has(req.id)) {
+        this.requests.set(req.id, { ...req });
+      }
+    }
+  }
 }
 
 /**

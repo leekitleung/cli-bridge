@@ -17,6 +17,23 @@ const MAX_ARG_LENGTH = 4096;
  */
 const MAX_ARG_LENGTH_PER = 1024;
 
+/**
+ * ADR-0034: Minimal command-backend for WorkBuddy real execution.
+ * Only executes allowlisted commands. Never accepts raw shell from the user.
+ * Working directory is server-owned. Timeout and output cap are enforced.
+ */
+
+/** Default safe environment variables that can always be passed to child processes */
+const DEFAULT_SAFE_ENV_VARS = new Set([
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR',
+  'HOME', 'USER', 'USERNAME', 'LOGNAME',
+  'LANG', 'LC_ALL', 'LC_MESSAGES',
+  'SHELL', 'TERM', 'TERM_SESSION_ID',
+  'NODE_OPTIONS', 'NODE_ENV',
+  'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
+  'OS', 'COMPUTERNAME', 'USERDOMAIN', 'USERNAME',
+]);
+
 export interface CommandBackendConfig {
   /** Allowlist of command names or absolute paths that may be executed. */
   allowlist: string[];
@@ -26,8 +43,50 @@ export interface CommandBackendConfig {
   timeoutMs: number;
   /** Maximum output size in bytes (default: 65536). */
   outputCapBytes: number;
-  /** Environment variables to pass to the command. */
+  /**
+   * Environment variables to pass to the command.
+   * If specified, only these variables (plus DEFAULT_SAFE_ENV_VARS) are passed.
+   * If omitted, all safe default env vars are passed.
+   */
   env?: Record<string, string>;
+  /**
+   * Additional safe environment variable names to always allow.
+   * These are merged with DEFAULT_SAFE_ENV_VARS.
+   */
+  additionalSafeEnvVars?: string[];
+}
+
+/** Build filtered environment for child process */
+function buildChildEnv(config: CommandBackendConfig): Record<string, string> | undefined {
+  const additionalSafe = new Set(config.additionalSafeEnvVars ?? []);
+  const allSafe = new Set([...DEFAULT_SAFE_ENV_VARS, ...additionalSafe]);
+
+  // If no custom env specified, return filtered process.env with only safe vars
+  if (!config.env) {
+    const filtered: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (allSafe.has(key) && typeof value === 'string') {
+        filtered[key] = value;
+      }
+    }
+    return filtered;
+  }
+
+  // If custom env specified, merge with safe defaults
+  const result: Record<string, string> = {};
+  // First add safe defaults
+  for (const key of DEFAULT_SAFE_ENV_VARS) {
+    if (process.env[key] !== undefined) {
+      result[key] = process.env[key] as string;
+    }
+  }
+  // Then overlay custom env vars (takes precedence)
+  for (const [key, value] of Object.entries(config.env)) {
+    if (typeof value === 'string') {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 export interface CommandBackendResult {
@@ -128,15 +187,17 @@ export function createCommandBackend(config: CommandBackendConfig) {
     // 添加换行符检查防止多行注入攻击
     // 注意: backtick (`) 未在字符类中，因为它在正则表达式中有特殊含义
     // 使用独立的正则或转义来检测 backtick
-    const SHELL_METACHARACTERS = /[;|&$`()<>\\\r\n]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
-    const SHELL_METACHARACTERS_STRICT = /[;|&$`()<>\\\r\n]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
+
+    // 基础 shell 元字符（包含单引号和空字节检查）
+    const SHELL_METACHARACTERS = /[;|&$`()<>\\'\r\n\0]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
+    const SHELL_METACHARACTERS_STRICT = /[;|&$`()<>\\'\r\n\0]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
     // 检测 backtick（命令替换）和 !（历史扩展）
     const COMMAND_SUBSTITUTION = /[`!]/;
     if (SHELL_METACHARACTERS.test(prompt) || COMMAND_SUBSTITUTION.test(prompt)) {
       return {
         ok: false,
         stdout: '',
-        stderr: 'Command contains forbidden shell metacharacters.',
+        stderr: 'Command contains forbidden shell metacharacters (including single quotes and null bytes).',
         exitCode: 1,
         failureReason: 'shell-metacharacter-detected',
       };
@@ -250,9 +311,10 @@ export function createCommandBackend(config: CommandBackendConfig) {
     }
 
     return new Promise<CommandBackendResult>((resolveResult) => {
+      const childEnv = buildChildEnv(config);
       const child = spawn(execCommand, execArgv, {
         cwd: workDir,
-        env: config.env ? { ...process.env, ...config.env } : process.env,
+        env: childEnv,
         shell: false,
         timeout: timeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
