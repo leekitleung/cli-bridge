@@ -26,6 +26,53 @@ Unlike `release-quality-review` which gates pass/fail, `deep-optimization-lab` r
 8. NO SILENT SKIPS: Log all exceptions, don't hide failures
 ```
 
+## Quality Assurance Principles
+
+This skill implements the five core quality principles:
+
+### 1. Goal Mode Constraint
+Experiments describe the **final state** (target metrics), not the steps to get there.
+```
+❌ Bad: "Add error handling to the function"
+✅ Good: "Error rate < 1%, all errors logged with context"
+```
+
+### 2. Execution Gate
+All experiments must produce **real evidence** before claiming success:
+- Actual test output
+- Build success/failure
+- File changes committed
+- Metrics measured, not estimated
+
+### 3. Adversarial Review
+Independent evaluation prevents self-certification:
+- Baseline evaluator ≠ Experiment evaluator
+- Reviewer cannot reference code they wrote
+- Must cite external evidence (existing files, prior reports)
+
+### 4. Persistent Handoff
+Every phase writes its state to disk for human review:
+```
+experiment-logs/
+├── baseline.yaml          # Starting metrics
+├── experiment-001/
+│   ├── hypothesis.md      # What to test
+│   ├── change.patch       # What changed
+│   ├── evaluation.md      # Independent assessment
+│   └── decision.yaml      # KEEP or REVERT with evidence
+└── decision-log.yaml      # Full decision history
+```
+
+### 5. Right-Size Throttle
+Experiment complexity matches change scope:
+| Change Size | Files | Lines | Experiment Type |
+|-------------|-------|-------|-----------------|
+| Micro | 1-2 | <100 | Quick hypothesis test |
+| Small | 3-5 | <500 | Standard single-variable |
+| Medium | 6-20 | <2000 | Full experiment with control |
+| Large | 21-50 | <5000 | Multi-round with validation |
+| XLarge | 50+ | 5000+ | Full process with human checkpoint |
+
 ## When to Use
 
 Use `deep-optimization-lab` after:

@@ -1,0 +1,16 @@
+reviewer: release-verifier
+score: 98
+status: pass
+timestamp: "2026-07-08T09:05:12.378Z"
+
+dimensions:
+  framework-completeness: 85
+  documentation-quality: 85
+  script-reliability: 85
+  scalability: 80
+
+blockers:
+  []
+
+recommendation: |
+  可以通过发布。

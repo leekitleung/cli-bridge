@@ -1,0 +1,16 @@
+reviewer: evidence-integrity
+score: 75
+status: fail
+timestamp: "2026-07-08T09:02:39.334Z"
+
+dimensions:
+  framework-completeness: 85
+  documentation-quality: 85
+  script-reliability: 85
+  scalability: 80
+
+blockers:
+  []
+
+recommendation: |
+  需要修复上述 P0/P1 问题后再进行评审。

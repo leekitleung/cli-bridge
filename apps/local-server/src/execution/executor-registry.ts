@@ -131,7 +131,44 @@ export interface ExecutorRegistryOptions {
   defaultExecutorId?: string;
   /** 健康检查间隔 (ms) */
   healthCheckIntervalMs?: number;
+  /** 重试配置 */
+  retry?: RetryConfig;
 }
+
+/**
+ * 重试配置
+ */
+export interface RetryConfig {
+  /** 是否启用重试 (默认: true) */
+  enabled?: boolean;
+  /** 最大重试次数 (默认: 3) */
+  maxRetries?: number;
+  /** 初始延迟 (ms，默认: 1000) */
+  initialDelayMs?: number;
+  /** 最大延迟 (ms，默认: 10000) */
+  maxDelayMs?: number;
+  /** 指数倍率 (默认: 2) */
+  backoffMultiplier?: number;
+  /** 可重试的错误类型 */
+  retryableErrors?: string[];
+}
+
+/** 默认重试配置 */
+const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
+  enabled: true,
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 10000,
+  backoffMultiplier: 2,
+  retryableErrors: [
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'timeout',
+    'network',
+  ],
+};
 
 /**
  * 执行器注册表 - 管理所有可用的执行器
@@ -144,11 +181,22 @@ export class ExecutorRegistry {
   private healthCheckIntervalMs: number;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private roundRobinIndex = 0;
+  /** 重试配置 */
+  private readonly retryConfig: Required<RetryConfig>;
 
   constructor(options: ExecutorRegistryOptions = {}) {
     this.selectionStrategy = options.selectionStrategy ?? 'auto';
     this.defaultExecutorId = options.defaultExecutorId;
     this.healthCheckIntervalMs = options.healthCheckIntervalMs ?? 30_000;
+    // 合并默认重试配置
+    this.retryConfig = {
+      enabled: options.retry?.enabled ?? DEFAULT_RETRY_CONFIG.enabled,
+      maxRetries: options.retry?.maxRetries ?? DEFAULT_RETRY_CONFIG.maxRetries,
+      initialDelayMs: options.retry?.initialDelayMs ?? DEFAULT_RETRY_CONFIG.initialDelayMs,
+      maxDelayMs: options.retry?.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
+      backoffMultiplier: options.retry?.backoffMultiplier ?? DEFAULT_RETRY_CONFIG.backoffMultiplier,
+      retryableErrors: options.retry?.retryableErrors ?? DEFAULT_RETRY_CONFIG.retryableErrors,
+    };
   }
 
   /**
@@ -252,11 +300,42 @@ export class ExecutorRegistry {
   }
 
   /**
-   * 执行任务
+   * 判断错误是否可重试
+   */
+  private isRetryableError(error: unknown, executorId: string): boolean {
+    if (!this.retryConfig.enabled) return false;
+
+    const errorStr = String(error).toLowerCase();
+
+    // 检查是否匹配可重试错误类型
+    for (const pattern of this.retryConfig.retryableErrors) {
+      if (errorStr.includes(pattern.toLowerCase())) {
+        logger.info('[ExecutorRegistry] Retryable error detected', { executorId, error: String(error) });
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * 计算重试延迟（指数退避 + jitter）
+   */
+  private calculateRetryDelay(attempt: number): number {
+    const exponentialDelay = this.retryConfig.initialDelayMs * Math.pow(this.retryConfig.backoffMultiplier, attempt);
+    const cappedDelay = Math.min(exponentialDelay, this.retryConfig.maxDelayMs);
+    // 添加 ±20% jitter 防止惊群效应
+    const jitter = cappedDelay * 0.2 * (Math.random() * 2 - 1);
+    return Math.round(cappedDelay + jitter);
+  }
+
+  /**
+   * 执行任务（带重试）
    */
   async execute(task: ExecutorTask, options?: {
     executorId?: string;
     preferredTags?: string[];
+    skipRetry?: boolean; // 用于测试或手动禁用重试
   }): Promise<ExecutorResult> {
     const executor = options?.executorId
       ? this.get(options.executorId)
@@ -271,22 +350,86 @@ export class ExecutorRegistry {
       };
     }
 
-    const startTime = Date.now();
-    try {
-      const result = await executor.execute(task);
-      return {
-        ...result,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        stdout: '',
-        stderr: String(error),
-        failureReason: `executor-error: ${String(error)}`,
-        durationMs: Date.now() - startTime,
-      };
+    const maxAttempts = this.retryConfig.maxRetries + 1; // +1 因为第一次尝试也算一次
+    let lastError: unknown;
+    let lastResult: ExecutorResult | undefined;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const startTime = Date.now();
+
+      try {
+        const result = await executor.execute(task);
+
+        // 如果成功或结果不是可重试错误，直接返回
+        if (result.ok || !this.isRetryableError(result.failureReason ?? result.stderr, executor.id)) {
+          return {
+            ...result,
+            durationMs: Date.now() - startTime,
+          };
+        }
+
+        // 可重试的错误，记录并重试
+        lastResult = result;
+        lastError = result.failureReason ?? result.stderr;
+
+        // 如果不是最后一次尝试，等待后重试
+        if (attempt < maxAttempts - 1) {
+          const delay = this.calculateRetryDelay(attempt);
+          logger.info('[ExecutorRegistry] Retrying execution', {
+            executorId: executor.id,
+            attempt: attempt + 1,
+            maxAttempts,
+            delayMs: delay,
+            error: String(lastError),
+          });
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      } catch (error) {
+        lastError = error;
+
+        // 如果不是可重试的错误，立即返回失败
+        if (!this.isRetryableError(error, executor.id)) {
+          logger.warn('[ExecutorRegistry] Non-retryable error', { executorId: executor.id, error: String(error) });
+          return {
+            ok: false,
+            stdout: '',
+            stderr: String(error),
+            failureReason: `executor-error: ${String(error)}`,
+            durationMs: Date.now() - startTime,
+          };
+        }
+
+        // 如果不是最后一次尝试，等待后重试
+        if (attempt < maxAttempts - 1) {
+          const delay = this.calculateRetryDelay(attempt);
+          logger.info('[ExecutorRegistry] Retrying after error', {
+            executorId: executor.id,
+            attempt: attempt + 1,
+            maxAttempts,
+            delayMs: delay,
+            error: String(error),
+          });
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
+
+    // 所有重试都失败
+    const duration = lastResult?.durationMs ?? 0;
+    const errorMsg = lastError !== undefined ? String(lastError) : 'Max retries exceeded';
+    logger.error('[ExecutorRegistry] All retries exhausted', {
+      executorId: executor.id,
+      maxAttempts,
+      finalError: errorMsg,
+    });
+
+    return {
+      ok: false,
+      stdout: lastResult?.stdout ?? '',
+      stderr: errorMsg,
+      failureReason: `retry-exhausted: ${errorMsg}`,
+      durationMs: duration,
+    };
   }
 
   /**

@@ -2,6 +2,43 @@
 
 跨 Agent 工具的质量评审框架。基于「4 个常驻 Reviewer + 条件触发 Reviewer」的设计，支持 Claude Code、Codex 和其他 Agent 工具。
 
+## 核心原则 (Core Principles)
+
+### P1: Goal 模式约束 ⭐
+- **只描述最终状态，不写实现步骤**
+- 执行者有自主决策空间
+- Reviewer 检查结果是否对齐目标，不检查过程
+- 禁止: "按以下步骤实现..."、"参考此代码..."
+- 要求: "系统应支持 X"、"Y 功能应返回 Z 格式"
+
+### P2: 执行门禁 ⭐
+- **每个 reviewer 必须提供可验证的证据**
+- 禁止"代码看起来正确"作为评分依据
+- 自动化检查 (build/test/typecheck) 是门槛，不是加分项
+- 门槛证据必须存在才能进入评审
+
+### P3: 对抗性审查 ⭐
+- **Reviewer 必须独立运行**，不能依赖执行者的自我总结
+- 存在专门的 adversarial-completion reviewer 检测伪完成
+- 证据链必须可追溯、可复现
+- 执行者声称的完成 ≠ 实际完成
+
+### P4: 持久化交接 ⭐
+- **每个 phase 的计划和结果写入文件**
+- 交接记录包含：输入 → 变更 → 输出 → 验收状态
+- 支持回溯和问题定位
+- Round N 的结果是 Round N+1 的输入
+
+### P5: Right-size Throttle ⭐
+- **根据变更规模自动调整流程复杂度**
+- Micro/Small (<5 文件, <100 行): quick profile
+- Medium (5-20 文件): default profile
+- Large (>20 文件): release-gate profile
+- XLarge (多模块): full + agentic profile
+- 可用 `--profile` 覆盖自动选择
+
+---
+
 ## 核心设计
 
 ```
@@ -42,6 +79,23 @@ node skills/release-quality-review/scripts/review-gate.mjs --reviewer destructiv
 | `default` | PR 合并前 | product-flow, destructive-qa, terminal-veteran | ~15 分钟 |
 | `release-gate` | 发布前必须通过 | 全部常驻 + terminal-veteran | ~30 分钟 |
 | `full` | 重大版本发布 | 全部 8 个 | ~60 分钟 |
+| `agentic-release-gate` | XLarge 规模强制 | 全部 + 4 个对抗性审查器 | ~90 分钟 |
+
+## 对抗性审查器 (Adversarial Reviewers)
+
+> XLarge 规模 (50+ 文件或 2000+ 行) 或 AI Agent 执行的变更必须启用
+
+| Reviewer | 职责 | 检测内容 |
+|----------|------|----------|
+| `adversarial-completion` | 伪完成检测 | Happy Path Only、Selective Testing、Documentation Skipped、Scope Creep |
+| `evidence-integrity` | 证据完整性 | 证据真实性、时间戳一致性、跨轮次一致性 |
+| `goal-compliance` | Goal 合规性 | Goal 定义质量、反模式检测、可验证性 |
+| `handoff-integrity` | 交接完整性 | 交付物完整性、上下文传递、下一步清晰度 |
+
+**自动启用条件**:
+- 变更规模为 XLarge (50+ 文件或 2000+ 行)
+- 变更由 AI Agent 执行
+- `--profile agentic-release-gate` 显式指定
 
 ## 评分标准
 
@@ -65,29 +119,35 @@ skills/release-quality-review/
 ├── SKILL.md                      # 本文件
 ├── review-config.yaml            # 项目级配置
 ├── profiles/
-│   ├── quick.yaml
-│   ├── default.yaml
-│   ├── release-gate.yaml
-│   └── full.yaml
+│   ├── quick.yaml               # Micro/Small 变更
+│   ├── default.yaml             # Medium 变更
+│   ├── release-gate.yaml        # Large 变更
+│   ├── full.yaml                # 完整评审
+│   └── agentic-release-gate.yaml # XLarge 变更 (对抗性)
 ├── reviewers/                     # Reviewer 定义 (canonical source)
 │   ├── TEMPLATE.md               # 新建 Reviewer 模板
-│   ├── product-flow.md           # 产品闭环审查官
+│   ├── product-flow.md            # 产品闭环审查官
 │   ├── architecture-maintainer.md # 工程架构审查官
-│   ├── release-verifier.md       # 验收发布审查官
-│   ├── destructive-qa.md         # 破坏性质量官
-│   ├── native-designer.md        # 原生审美设计师
-│   ├── zero-doc-user.md          # 零文档新用户
-│   ├── terminal-veteran.md       # 终端十年老兵
-│   └── data-security.md          # 数据安全审查官
+│   ├── release-verifier.md        # 验收发布审查官
+│   ├── destructive-qa.md          # 破坏性质量官
+│   ├── native-designer.md         # 原生审美设计师
+│   ├── zero-doc-user.md           # 零文档新用户
+│   ├── terminal-veteran.md        # 终端十年老兵
+│   ├── data-security.md            # 数据安全审查官
+│   ├── adversarial-completion.md   # 对抗性完成度审查
+│   ├── evidence-integrity.md       # 证据完整性审查
+│   ├── goal-compliance.md         # Goal 合规性审查
+│   └── handoff-integrity.md       # 交接完整性审查
 ├── rubrics/
-│   ├── scoring.md                # 评分标准
-│   ├── redlines.md               # 红线规则
-│   └── evidence.md               # 证据收集指南
+│   ├── scoring.md                  # 评分标准
+│   ├── redlines.md                # 红线规则
+│   ├── evidence.md                 # 证据收集指南
+│   └── right-size-throttle.md      # 规模适配规则
 ├── scripts/
-│   ├── review-gate.mjs           # 门禁检查器
-│   └── review-runner.mjs         # 编排器
+│   ├── review-gate.mjs            # 门禁检查器 (含规模检测)
+│   └── review-runner.mjs          # 编排器 (含 Phase 持久化)
 └── templates/
-    └── result.yaml               # 结构化结果模板
+    └── result.yaml                # 结构化结果模板
 
 .claude/                           # Claude Code 适配层
 ├── REVIEW-ORCHESTRATOR.md         # 评审编排器

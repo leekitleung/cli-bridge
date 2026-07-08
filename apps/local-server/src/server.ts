@@ -62,6 +62,7 @@ import {
   AUTH_RATE_LIMIT_CONFIG,
   type SimpleRateLimiter,
 } from './security/rate-limiter.ts';
+import { renderMetrics, collectRuntimeMetrics, recordRequest, trackRequest, sendMetrics } from './routes/metrics.ts';
 
 export interface LocalServerHandle {
   server: ReturnType<typeof createServer>;
@@ -269,14 +270,18 @@ export async function startLocalServer(
   }
 
   const requestHandler: RequestListener = (request, response) => {
+    const startTime = Date.now();
     const url = new URL(request.url ?? '/', `http://${LOCAL_SERVER_HOST}`);
+
+    // Track active requests for Prometheus metrics
+    trackRequest(request);
 
     // 获取客户端 IP（不再信任 X-Forwarded-For，防止 IP 欺骗）
     // SECURITY FIX: X-Forwarded-For 可以被攻击者伪造，不再使用
     const clientIp = request.socket.remoteAddress ?? 'unknown';
 
     // 速率限制检查（公共端点）
-    const publicPaths = [PUBLIC_HEALTH_PATH, CONSOLE_PATH, CONSOLE_GOALS_PATH, CONSOLE_PROJECT_PATH];
+    const publicPaths = [PUBLIC_HEALTH_PATH, CONSOLE_PATH, CONSOLE_GOALS_PATH, CONSOLE_PROJECT_PATH, '/metrics'];
     const authPaths = ['/bridge/local-auto-pair/extension-claim'];
     const isPublicPath = publicPaths.includes(url.pathname);
     const isAuthPath = authPaths.some(p => url.pathname.startsWith(p));
@@ -296,15 +301,28 @@ export async function startLocalServer(
 
     if (request.method === 'GET' && url.pathname === PUBLIC_HEALTH_PATH) {
       writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort, pairingToken), response);
+      recordRequest(request.method ?? 'GET', PUBLIC_HEALTH_PATH, 200, Date.now() - startTime);
       return;
     }
 
     if (request.method === 'GET' && url.pathname === PROTECTED_HEALTH_PATH) {
       if (!checkAuth(request, response)) {
+        recordRequest(request.method ?? 'GET', PROTECTED_HEALTH_PATH, 401, Date.now() - startTime);
         return;
       }
 
       writeJson(200, createHealthPayload(LOCAL_SERVER_HOST, boundPort, pairingToken), response);
+      recordRequest(request.method ?? 'GET', PROTECTED_HEALTH_PATH, 200, Date.now() - startTime);
+      return;
+    }
+
+    // Prometheus metrics endpoint (public, no auth required)
+    if (request.method === 'GET' && url.pathname === '/metrics') {
+      // Collect runtime metrics
+      collectRuntimeMetrics(bridgeRuntime);
+      const metrics = renderMetrics();
+      sendMetrics(response, metrics);
+      recordRequest(request.method ?? 'GET', '/metrics', 200, Date.now() - startTime);
       return;
     }
 

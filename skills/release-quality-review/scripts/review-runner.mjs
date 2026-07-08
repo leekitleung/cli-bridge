@@ -434,6 +434,121 @@ function detectConditionalReviewers(profile, evidence) {
   return triggered;
 }
 
+// Detect change scale and suggest appropriate profile
+// Right-size throttle: small changes = minimal ceremony, large changes = full process
+function detectChangeScale(evidence) {
+  const fileCount = evidence.git.changedFiles?.length || 0;
+  const diffLines = evidence.git.diff?.split('\n').length || 0;
+  const addedLines = (evidence.git.diff?.match(/^\+[^+]/gm) || []).length;
+  const deletedLines = (evidence.git.diff?.match(/^-[^-]/gm) || []).length;
+  const totalLines = addedLines + deletedLines;
+
+  // Check for specific high-impact patterns
+  const changedFiles = evidence.git.changedFiles || [];
+  const hasSecurity = changedFiles.some(f =>
+    f.includes('/auth/') || f.includes('/security/') || f.includes('token')
+  );
+  const hasSchema = changedFiles.some(f =>
+    f.includes('schema') || f.includes('migration') || f.includes('.prisma')
+  );
+  const hasApi = changedFiles.some(f =>
+    f.includes('/api/') || f.includes('route') || f.includes('handler')
+  );
+
+  let scale = 'none';
+  let suggestedProfile = 'quick';
+  let reason = '';
+
+  if (fileCount === 0) {
+    scale = 'none';
+    suggestedProfile = 'quick';
+    reason = 'No changes detected';
+  } else if (fileCount <= 2 && totalLines < 100 && !hasSecurity && !hasSchema) {
+    scale = 'micro';
+    suggestedProfile = 'quick';
+    reason = `${fileCount} files, ${totalLines} lines - micro change`;
+  } else if (fileCount <= 5 && totalLines < 500) {
+    scale = 'small';
+    suggestedProfile = 'quick';
+    reason = `${fileCount} files, ${totalLines} lines - small change`;
+  } else if (fileCount <= 20 && totalLines < 2000) {
+    scale = 'medium';
+    suggestedProfile = 'default';
+    reason = `${fileCount} files, ${totalLines} lines - medium change`;
+  } else if (fileCount <= 50 && totalLines < 5000) {
+    scale = 'large';
+    suggestedProfile = 'release-gate';
+    reason = `${fileCount} files, ${totalLines} lines - large change`;
+  } else {
+    scale = 'xlarge';
+    suggestedProfile = 'full';
+    reason = `${fileCount} files, ${totalLines} lines - xlarge change`;
+  }
+
+  // Security changes always require security review
+  if (hasSecurity && suggestedProfile === 'quick') {
+    suggestedProfile = 'default';
+    reason += ' (security-sensitive files detected, upgraded to default)';
+  }
+
+  // Schema changes always require full review
+  if (hasSchema && suggestedProfile !== 'full') {
+    suggestedProfile = 'release-gate';
+    reason += ' (schema changes detected, upgraded to release-gate)';
+  }
+
+  // API changes with large scale
+  if (hasApi && scale === 'large') {
+    suggestedProfile = 'release-gate';
+    reason += ' (API + large scale, upgraded to release-gate)';
+  }
+
+  return {
+    scale,
+    suggestedProfile,
+    reason,
+    fileCount,
+    totalLines,
+    hasSecurity,
+    hasSchema,
+    hasApi,
+  };
+}
+
+// Suggest profile based on change scale
+function suggestProfileFromScale(scaleResult) {
+  const { scale, suggestedProfile, reason } = scaleResult;
+
+  const profileMessages = {
+    none: {
+      profile: 'quick',
+      message: 'No changes to review. Consider skipping the review or doing a quick sanity check.',
+    },
+    micro: {
+      profile: 'quick',
+      message: `Micro change detected (${reason}). Quick review sufficient.`,
+    },
+    small: {
+      profile: 'quick',
+      message: `Small change detected (${reason}). Quick review sufficient.`,
+    },
+    medium: {
+      profile: 'default',
+      message: `Medium change detected (${reason}). Standard review recommended.`,
+    },
+    large: {
+      profile: 'release-gate',
+      message: `Large change detected (${reason}). Full release gate required.`,
+    },
+    xlarge: {
+      profile: 'full',
+      message: `XLarge change detected (${reason}). Full review with all reviewers required.`,
+    },
+  };
+
+  return profileMessages[scale] || profileMessages.medium;
+}
+
 // Load config
 function loadConfig() {
   try {
@@ -479,6 +594,19 @@ function generateReviewerPrompt(reviewerName) {
 4. 列出发现的 blocker (P0/P1 必须修复, P2/P3 建议改进)
 5. 列出改进建议
 
+## ⚠️ 对抗性审查规则（必须遵守）
+
+**禁止行为：**
+- ❌ 不要引用你自己刚刚修改的代码作为"证据"
+- ❌ 不要在没有实际运行的情况下声称"功能正常"
+- ❌ 不要使用模糊描述如"代码看起来正确"
+
+**必须行为：**
+- ✅ 引用**现有文件**中的代码行号（不是你刚写的）
+- ✅ 引用**已有测试**的输出结果
+- ✅ 引用**历史报告**或**其他 Reviewer 的发现**
+- ✅ 提供具体的错误信息、堆栈跟踪或命令输出
+
 ## 输出要求
 在 ${REPORT_DIR}/round-{N}/${reviewerName}/ 目录下创建:
 - result.yaml - 机器可读结果
@@ -513,11 +641,42 @@ function autoGenerateReview(reviewerName, reviewerDir, evidence) {
   // Calculate a base score based on what we can detect
   const baseScore = calculateBaseScore(reviewerName, evidence);
 
+  // === HOLLOW DESCRIPTION PENALTY ===
+  // When using auto mode, check if this is a hollow assessment
+  const hasRealEvidence = evidence.git?.changedFiles?.length > 0 ||
+                          evidence.testResults?.passed ||
+                          evidence.typecheckResults?.passed;
+
+  // If no real evidence AND this is not a self-review of the skill itself,
+  // heavily penalize the score
+  let finalScore = baseScore;
+  if (!hasRealEvidence && !isSelfReview) {
+    finalScore = Math.min(baseScore, 55); // Cap at 55 if no evidence
+  } else if (!hasRealEvidence && isSelfReview) {
+    finalScore = Math.min(baseScore, 70); // Cap at 70 for skill self-review without evidence
+  }
+
+  // Additional penalty for hollow patterns in the review itself
+  const hollowPatterns = [
+    /需要人工补充|人工评审|manual review/i,
+    /未完成|pending|further check/i,
+    /需要进一步检查|需确认/i
+  ];
+
+  const hasHollowPattern = hollowPatterns.some(p => p.test(reviewerContent));
+  if (hasHollowPattern) {
+    finalScore = Math.min(finalScore, 65);
+  }
+
   // Generate result.yaml
   const resultYaml = `reviewer: ${reviewerName}
-score: ${baseScore}
-status: ${baseScore >= 90 ? 'pass' : 'fail'}
+score: ${finalScore}
+status: ${finalScore >= 90 ? 'pass' : 'fail'}
 timestamp: "${new Date().toISOString()}"
+auto_generated: true
+evidence_quality:
+  has_real_evidence: ${hasRealEvidence}
+  hollow_penalty_applied: ${hasHollowPattern}
 
 dimensions:
 ${dimensions.map(d => `  ${d.key}: ${d.score}`).join('\n')}
@@ -526,13 +685,18 @@ blockers:
 ${blockers.length > 0 ? blockers.map(b => `  - ${b}`).join('\n') : '  []'}
 
 recommendation: |
-  ${baseScore >= 90 ? '可以通过发布。' : '需要修复上述 P0/P1 问题后再进行评审。'}
+  ${finalScore >= 90 ? '可以通过发布。' : '需要修复上述 P0/P1 问题后再进行评审。'}
+  ${!hasRealEvidence && !isSelfReview ? '\n⚠️ 警告：此评分基于自动生成，缺少真实证据。' : ''}
 `;
 
-  // Generate score.md
+  // Generate score.md with evidence warnings
+  const evidenceWarning = !hasRealEvidence && !isSelfReview
+    ? `\n\n${c?.yellow || ''}⚠️ **警告：此评分由自动生成器生成，缺少真实证据。建议运行完整评审以获得准确评分。**${c?.reset || ''}\n`
+    : '';
+
   const scoreMd = `# ${reviewerName} Review - Self Assessment
 
-## Overall Score: **${baseScore}/100**
+## Overall Score: **${finalScore}/100**${!hasRealEvidence ? ' (自动生成，证据不足)' : ''}
 
 ## Score Breakdown
 
@@ -540,11 +704,12 @@ ${dimensions.map(d => `### ${d.name} (${d.score}/25)
 ${d.description}`).join('\n\n')}
 
 ---
-
+${evidenceWarning}
 ## Evidence
 
 - **Files reviewed**: ${evidence.structure?.totalFiles || 'N/A'}
-- **Git changes**: ${evidence.git?.changedFiles || 0} files
+- **Git changes**: ${evidence.git?.changedFiles?.length || 0} files
+- **Has real evidence**: ${hasRealEvidence ? 'Yes' : 'No (auto-generated)'}
 - **Timestamp**: ${evidence.timestamp}
 
 ## What Works
@@ -1121,6 +1286,141 @@ function checkFailedReviewers(roundDir, minScore) {
   return scores.filter(s => s.score < minScore);
 }
 
+// ============================================================================
+// Phase Persistence: Plan and Result files
+// ============================================================================
+
+/**
+ * Persist phase plan before starting a round
+ */
+function persistPhasePlan(roundDir, phase, reviewers, evidence, profileConfig) {
+  const planFile = join(roundDir, `phase-${phase}-plan.md`);
+  const scaleInfo = evidence.scale || { scale: 'unknown', files: 0, total: 0 };
+
+  const content = `# Phase ${phase} Plan
+
+## Metadata
+
+| Field | Value |
+|-------|-------|
+| Started | ${new Date().toISOString()} |
+| Profile | ${profileConfig.name} |
+| Scale | ${scaleInfo.scale} (${scaleInfo.files} files, ${scaleInfo.total} lines) |
+| Round | ${phase} |
+
+## Input
+
+- **Changed files:** ${evidence.git?.changedFiles?.length || 0}
+- **Git branch:** ${evidence.git?.branch || 'unknown'}
+- **Git commit:** ${evidence.git?.commit || 'unknown'}
+
+## Reviewers
+
+${reviewers.map(r => `- ${r}`).join('\n')}
+
+## Goals
+
+${reviewers.map(r => `- ${r}: Verify ${getReviewerFocus(r)}`).join('\n')}
+
+## Exit Criteria
+
+- [ ] All reviewers >= ${profileConfig.gate?.min_score || 90}
+- [ ] No P0 redlines
+- [ ] Evidence collected for all dimensions
+
+## Notes
+
+_(Add notes before starting this phase)_
+`;
+
+  writeFileSync(planFile, content);
+  log.success(`Phase plan written: ${planFile}`);
+  return planFile;
+}
+
+/**
+ * Get reviewer focus for plan documentation
+ */
+function getReviewerFocus(reviewerName) {
+  const focuses = {
+    'product-flow': 'user-facing functionality and completion',
+    'architecture-maintainer': 'code structure and module boundaries',
+    'release-verifier': 'test coverage and build reproducibility',
+    'destructive-qa': 'security vulnerabilities and edge cases',
+    'terminal-veteran': 'CLI/terminal UX and error messages',
+    'native-designer': 'UI consistency and design system compliance',
+    'zero-doc-user': 'documentation and onboarding experience',
+    'data-security': 'token handling and data protection',
+    'adversarial-completion': 'pseudo-completion detection',
+    'evidence-integrity': 'evidence authenticity and completeness',
+    'goal-compliance': 'goal alignment and scope adherence',
+    'regression-risk': 'regression risk and backward compatibility',
+    'handoff-integrity': 'handoff completeness and artifact quality',
+  };
+  return focuses[reviewerName] || 'quality and correctness';
+}
+
+/**
+ * Persist phase result after completing a round
+ */
+function persistPhaseResult(roundDir, phase, scores, gatePassed, failedReviewers) {
+  const resultFile = join(roundDir, `phase-${phase}-result.md`);
+  const completedAt = new Date().toISOString();
+
+  const scoresTable = Object.entries(scores)
+    .map(([r, s]) => {
+      const scoreVal = typeof s === 'number' ? s : (s.score ?? 'N/A');
+      const pass = typeof scoreVal === 'number' ? scoreVal >= 90 : false;
+      return `| ${r} | ${scoreVal}/100 | ${pass ? '✅ PASS' : '❌ FAIL'} |`;
+    })
+    .join('\n');
+
+  const failedList = failedReviewers.length > 0
+    ? failedReviewers.map(f => `- [ ] **[${f.reviewer}]** Score: ${f.score}/100`).join('\n')
+    : '_None_';
+
+  const content = `# Phase ${phase} Result
+
+## Metadata
+
+| Field | Value |
+|-------|-------|
+| Completed | ${completedAt} |
+| Gate Status | ${gatePassed ? '✅ PASSED' : '❌ FAILED'} |
+| Round | ${phase} |
+
+## Scores
+
+| Reviewer | Score | Status |
+|----------|-------|--------|
+${scoresTable}
+
+## Gate Status
+
+**${gatePassed ? 'ALL GATES PASSED' : 'GATES FAILED'}**
+
+${gatePassed ? '## Ready for Release' : `## Failed Reviewers
+
+${failedList}
+
+## Next Actions
+
+1. Fix the issues identified by failed reviewers
+2. Re-run the review: \`node review-runner.mjs --round ${phase + 1}\`
+3. Or run specific reviewers: \`node review-gate.mjs --reviewer <name>\`
+`}
+
+## Timeline
+
+- Phase started: See phase-${phase}-plan.md
+- Phase completed: ${completedAt}
+`;
+
+  writeFileSync(resultFile, content);
+  log.success(`Phase result written: ${resultFile}`);
+  return resultFile;
+}
+
 // Run single review iteration
 async function runSingleReviewIteration(profileConfig, currentRound, onReviewComplete) {
   const roundDir = join(REPORT_DIR, `round-${String(currentRound).padStart(3, '0')}`);
@@ -1145,11 +1445,25 @@ async function runSingleReviewIteration(profileConfig, currentRound, onReviewCom
   // Collect evidence
   const evidence = skipEvidence ? { timestamp: new Date().toISOString(), git: {}, structure: {} } : collectEvidence();
 
+  // Detect change scale (right-size throttle)
+  const scaleInfo = detectChangeScale(evidence);
+  evidence.scale = scaleInfo; // Attach scale info to evidence
+
+  // Log scale detection result
+  console.log(`\n${c.blue}ℹ Change Scale:${c.reset} ${scaleInfo.scale} (${scaleInfo.fileCount} files, ${scaleInfo.totalLines} lines)`);
+  console.log(`${c.blue}ℹ Suggested Profile:${c.reset} ${scaleInfo.suggestedProfile}`);
+  if (scaleInfo.reason !== `${scaleInfo.fileCount} files, ${scaleInfo.totalLines} lines - ${scaleInfo.scale} change`) {
+    console.log(`${c.blue}ℹ Reason:${c.reset} ${scaleInfo.reason}`);
+  }
+
   // Detect conditional reviewers
   const triggeredConditional = detectConditionalReviewers(profileConfig, evidence);
   const allReviewers = reviewerOverride
     ? [reviewerOverride]
     : [...profileConfig.resident_reviewers, ...triggeredConditional];
+
+  // Persist phase plan BEFORE running reviews
+  persistPhasePlan(roundDir, currentRound, allReviewers, evidence, profileConfig);
 
   console.log(`\n${c.cyan}Reviewers:${c.reset}`);
   console.log(`  Resident: ${profileConfig.resident_reviewers.join(', ')}`);
@@ -1197,6 +1511,7 @@ async function runSingleReviewIteration(profileConfig, currentRound, onReviewCom
     triggeredConditional,
     timestamp: new Date().toISOString(),
     gate: profileConfig.gate,
+    scale: scaleInfo, // Change scale detection result
     evidence: {
       git: evidence.git,
       structure: evidence.structure,
@@ -1277,6 +1592,12 @@ async function main() {
       if (gateResult.passed) {
         console.log(`\n${c.green}${c.bright}✓ GATE PASSED!${c.reset}`);
         console.log(`${c.green}All reviewers scored >= ${minScore}${c.reset}`);
+
+        // Persist phase result on success
+        const scores = extractScoresFromRound(result.roundDir);
+        const scoresObj = {};
+        scores.forEach(s => { scoresObj[s.reviewer] = s.score; });
+        persistPhaseResult(result.roundDir, currentRound, scoresObj, true, []);
         return;
       }
 
@@ -1285,6 +1606,11 @@ async function main() {
 
       if (lastFailed.length === 0) {
         console.log(`\n${c.yellow}⚠ No specific failures found but gate did not pass${c.reset}`);
+        // Persist phase result
+        const scores = extractScoresFromRound(result.roundDir);
+        const scoresObj = {};
+        scores.forEach(s => { scoresObj[s.reviewer] = s.score; });
+        persistPhaseResult(result.roundDir, currentRound, scoresObj, false, lastFailed);
         break;
       }
 
@@ -1294,6 +1620,12 @@ async function main() {
         console.log(`  ${c.red}✗${c.reset} ${f.reviewer}: ${f.score}/100`);
       }
       console.log(`\n${c.blue}ℹ${c.reset} Fixing issues and retrying...`);
+
+      // Persist phase result on failure
+      const scoresForFail = extractScoresFromRound(result.roundDir);
+      const scoresObjForFail = {};
+      scoresForFail.forEach(s => { scoresObjForFail[s.reviewer] = s.score; });
+      persistPhaseResult(result.roundDir, currentRound, scoresObjForFail, false, lastFailed);
 
       // Increment round for next iteration
       roundNumber = null;
@@ -1330,6 +1662,13 @@ async function main() {
   // Run gate check
   console.log(`\n${c.cyan}═══ Running Gate Check ═══${c.reset}`);
   const gateResult = runGateCheck(roundDir, profile, currentRound);
+
+  // Persist phase result AFTER gate check
+  const scores = extractScoresFromRound(roundDir);
+  const scoresObj = {};
+  scores.forEach(s => { scoresObj[s.reviewer] = s.score; });
+  const failedReviewers = scores.filter(s => s.score < minScore);
+  persistPhaseResult(roundDir, currentRound, scoresObj, gateResult.passed, failedReviewers);
 
   console.log(`\n${c.cyan}═══ Summary ═══${c.reset}\n`);
   console.log(`  Reviewers: ${currentRound}`);

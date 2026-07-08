@@ -20,6 +20,19 @@ All notable changes to CLI Bridge are documented here.
 ## [Unreleased] — v2.x
 
 ### Implemented
+- **EX-3 quality hardening and release-review system expansion** —
+  added Prometheus-style `/metrics` exposure, executor retry/backoff settings,
+  gate-approval timeout handling, modular bridge route scaffolding, and an
+  expanded release-quality-review framework with adversarial reviewers,
+  evidence validators, delivery-packet templates, scale-aware review gating,
+  and persisted round reports.
+  - **route module alignment**: adjusted the new modular route handlers to use
+    the existing goal, automation binding, execution proposal, and automation
+    loop store APIs so they typecheck against the current runtime contracts.
+  - **reports**: recorded project completion assessment plus quality review
+    rounds 012-018 and final report updates.
+  - **verification**: `pnpm.cmd typecheck`; `pnpm.cmd test` (275 passing,
+    1 skipped).
 - **EX-2.20-1 RP-2.20: Codex-like command-first middle-layer UI reset** —
   reshaped `/console/project` toward a left project/history rail, single
   conversation workspace, and bottom composer without changing backend

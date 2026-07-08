@@ -1,0 +1,16 @@
+reviewer: regression-risk
+score: 75
+status: fail
+timestamp: "2026-07-08T08:56:46.688Z"
+
+dimensions:
+  framework-completeness: 85
+  documentation-quality: 85
+  script-reliability: 85
+  scalability: 80
+
+blockers:
+  []
+
+recommendation: |
+  需要修复上述 P0/P1 问题后再进行评审。

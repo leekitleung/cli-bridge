@@ -56,6 +56,9 @@ export interface GoalLoopRunnerStatus {
 /**
  * Gate 审批记录
  */
+/**
+ * Gate 审批记录
+ */
 interface GateApproval {
   executionId: string;
   stepId: string;
@@ -64,8 +67,10 @@ interface GateApproval {
   workingDirectory?: string;
   timeoutMs: number;
   createdAt: number;
-  status: 'pending' | 'dispatched';
+  status: 'pending' | 'dispatched' | 'expired';
   dispatchId?: string;
+  /** 过期原因 */
+  expiredReason?: string;
 }
 
 /**
@@ -105,6 +110,8 @@ export class GoalLoopRunner {
 
   /** 活跃的 Goal Loop */
   private readonly activeLoops = new Map<string, {
+    goalId: string;
+    planId: string;
     stopRequested: boolean;
     startedAt: number;
     lastResult: AdvanceResult | null;
@@ -216,6 +223,8 @@ export class GoalLoopRunner {
 
     // 记录活跃 Loop
     this.activeLoops.set(loop.id, {
+      goalId,
+      planId,
       stopRequested: false,
       startedAt: Date.now(),
       lastResult: null,
@@ -574,12 +583,12 @@ export class GoalLoopRunner {
    */
   private checkGateTimeouts(loopId: string): void {
     const now = Date.now();
-    const expiredGates: string[] = [];
+    const expiredGates: { executionId: string; approval: GateApproval }[] = [];
 
     for (const [executionId, approval] of this.pendingGateApprovals.entries()) {
       const waitingMs = now - approval.createdAt;
       if (waitingMs > this.gateTimeoutMs) {
-        expiredGates.push(executionId);
+        expiredGates.push({ executionId, approval });
         logger.warn('[GoalLoopRunner] Gate approval timed out', {
           executionId,
           stepId: approval.stepId,
@@ -589,8 +598,30 @@ export class GoalLoopRunner {
       }
     }
 
-    // 批量清理过期的 gates
-    for (const executionId of expiredGates) {
+    // 批量处理过期的 gates
+    for (const { executionId, approval } of expiredGates) {
+      // 标记 gate 为过期
+      approval.status = 'expired';
+      approval.expiredReason = `Gate approval timeout after ${this.gateTimeoutMs}ms`;
+
+      // 获取关联的 goalId 并标记步骤失败
+      const goalId = this.getGoalIdForLoop(loopId);
+      if (goalId) {
+        const plan = this.runtime.goalStore.getPlanByGoal(goalId);
+        if (plan) {
+          const step = plan.steps.find(s => s.id === approval.stepId);
+          if (step) {
+            this.runtime.goalStore.failStep(goalId, approval.stepId, approval.expiredReason);
+            logger.warn('[GoalLoopRunner] Marked step as failed due to gate timeout', {
+              goalId,
+              stepId: approval.stepId,
+              stepIntent: approval.stepIntent,
+            });
+          }
+        }
+      }
+
+      // 清理
       this.pendingGateApprovals.delete(executionId);
     }
 
@@ -600,6 +631,13 @@ export class GoalLoopRunner {
         loopId,
       });
     }
+  }
+
+  /**
+   * 获取关联的 Goal ID
+   */
+  private getGoalIdForLoop(loopId: string): string | undefined {
+    return this.activeLoops.get(loopId)?.goalId;
   }
 
   /**

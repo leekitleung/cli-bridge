@@ -1,0 +1,16 @@
+reviewer: regression-risk
+score: 98
+status: pass
+timestamp: "2026-07-08T11:04:04.858Z"
+
+dimensions:
+  framework-completeness: 85
+  documentation-quality: 85
+  script-reliability: 85
+  scalability: 80
+
+blockers:
+  []
+
+recommendation: |
+  可以通过发布。

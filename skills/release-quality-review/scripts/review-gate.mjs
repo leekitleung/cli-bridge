@@ -60,11 +60,14 @@ let parallel = false;
 let collectEvidence = true;
 let dryRun = false;
 let excludeReviewers = [];
+let detectScale = false;
+let userSpecifiedProfile = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--profile' && args[i + 1]) {
     profile = args[i + 1];
+    userSpecifiedProfile = true;
     i++;
   } else if (arg === '--reviewer' && args[i + 1]) {
     singleReviewer = args[i + 1];
@@ -87,11 +90,144 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === '--exclude-reviewer' && args[i + 1]) {
     excludeReviewers.push(args[i + 1]);
     i++;
+  } else if (arg === '--detect-scale') {
+    detectScale = true;
   } else if (arg === '--help' || arg === '-h') {
     printHelp();
     process.exit(0);
   }
 }
+
+// ============================================================================
+// Right-size Throttle: Change Scale Detection
+// ============================================================================
+
+/**
+ * Detect the scale of changes based on git diff stats
+ * @returns {{ scale: string, files: number, additions: number, deletions: number, total: number, suggestedProfile: string }}
+ */
+function detectChangeScale() {
+  try {
+    const diff = execSync('git diff --stat --numstat HEAD 2>/dev/null', {
+      encoding: 'utf-8',
+      cwd: PROJECT_ROOT,
+      timeout: 10000,
+    });
+
+    let totalFiles = 0;
+    let totalAdditions = 0;
+    let totalDeletions = 0;
+
+    for (const line of diff.split('\n')) {
+      const match = line.match(/^(\d+|-)\s+(\d+|-)\s+(.+)$/);
+      if (match) {
+        totalFiles++;
+        totalAdditions += parseInt(match[1]) || 0;
+        totalDeletions += parseInt(match[2]) || 0;
+      }
+    }
+
+    const totalChanges = totalAdditions + totalDeletions;
+
+    // Determine scale based on file count and line count
+    let scale = 'micro';
+    let reason = '';
+
+    if (totalFiles >= 50 || totalChanges >= 2000) {
+      scale = 'xlarge';
+      reason = 'Very large change (50+ files or 2000+ lines)';
+    } else if (totalFiles >= 21 || totalChanges >= 500) {
+      scale = 'large';
+      reason = 'Large change (21-50 files or 500-2000 lines)';
+    } else if (totalFiles >= 6 || totalChanges >= 100) {
+      scale = 'medium';
+      reason = 'Medium change (6-20 files or 100-500 lines)';
+    } else if (totalFiles >= 3 || totalChanges >= 50) {
+      scale = 'small';
+      reason = 'Small change (3-5 files or 50-100 lines)';
+    } else {
+      scale = 'micro';
+      reason = 'Micro change (1-2 files and <50 lines)';
+    }
+
+    // Profile mapping
+    const profileMap = {
+      micro: 'quick',
+      small: 'quick',
+      medium: 'default',
+      large: 'release-gate',
+      xlarge: 'full',
+    };
+
+    return {
+      scale,
+      files: totalFiles,
+      additions: totalAdditions,
+      deletions: totalDeletions,
+      total: totalChanges,
+      suggestedProfile: profileMap[scale],
+      reason,
+      requiresAgentic: scale === 'xlarge',
+    };
+  } catch (e) {
+    return {
+      scale: 'unknown',
+      files: 0,
+      additions: 0,
+      deletions: 0,
+      total: 0,
+      suggestedProfile: 'release-gate',
+      reason: 'Could not detect changes, using default',
+      requiresAgentic: false,
+    };
+  }
+}
+
+/**
+ * Print scale detection results
+ */
+function printScaleDetection(scaleInfo) {
+  console.log('');
+  console.log(`${colors.bright}${colors.cyan}═══════════════════════════════════════════════════${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}    Release Quality Gate - Change Scale Detection${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}═══════════════════════════════════════════════════${colors.reset}`);
+  console.log('');
+
+  console.log(`${colors.blue}ℹ${colors.reset} Detected Changes:`);
+  console.log(`   Files: ${scaleInfo.files}`);
+  console.log(`   Additions: ${scaleInfo.additions > 0 ? '+' : ''}${scaleInfo.additions}`);
+  console.log(`   Deletions: ${scaleInfo.deletions > 0 ? '-' : ''}${scaleInfo.deletions}`);
+  console.log(`   Total: ${scaleInfo.total} lines`);
+  console.log('');
+
+  console.log(`${colors.blue}ℹ${colors.reset} Scale: ${colors.bright}${scaleInfo.scale}${colors.reset}`);
+  console.log(`   ${scaleInfo.reason}`);
+  console.log('');
+
+  console.log(`${colors.blue}ℹ${colors.reset} Suggested Profile: ${colors.bright}${scaleInfo.suggestedProfile}${colors.reset}`);
+  if (scaleInfo.requiresAgentic) {
+    console.log(`   ${colors.yellow}⚠${colors.reset} XLarge change: agentic-review is recommended`);
+  }
+  console.log('');
+
+  if (userSpecifiedProfile) {
+    console.log(`${colors.blue}ℹ${colors.reset} User Override: Using --profile ${profile}`);
+  } else {
+    console.log(`${colors.blue}ℹ${colors.reset} Override with: ${colors.cyan}--profile <name>${colors.reset}`);
+  }
+  console.log('');
+}
+
+// Run scale detection and exit if requested
+if (detectScale) {
+  const scaleInfo = detectChangeScale();
+  printScaleDetection(scaleInfo);
+  process.exit(0);
+}
+
+// Detect scale at startup (non-blocking)
+const startupScaleInfo = detectChangeScale();
+
 
 function printHelp() {
   console.log(`
@@ -109,6 +245,7 @@ Options:
   --no-collect          Skip automatic evidence collection
   --collect-evidence    Force evidence collection (default)
   --exclude-reviewer N  Exclude reviewer N from this run
+  --detect-scale         Detect change scale and suggest profile
   --dry-run             Validate configuration without running
   --help, -h            Show this help
 
@@ -125,6 +262,7 @@ Exit Codes:
 
 Examples:
   node review-gate.mjs --profile release-gate
+  node review-gate.mjs --detect-scale
   node review-gate.mjs --round 2 --profile default
   node review-gate.mjs --reviewer destructive-qa --dry-run
   `);
@@ -490,6 +628,10 @@ function parseScore(scoreContent) {
 
 // Parse blockers from review report
 function parseBlockers(blockerContent) {
+  if (!blockerContent || typeof blockerContent !== 'string') {
+    return [];
+  }
+
   const lines = blockerContent.split('\n');
   const blockers = [];
   let currentBlocker = null;
@@ -690,6 +832,17 @@ function reviewerReportExists(roundDir, reviewer) {
 // Simple YAML parser for result.yaml
 // SECURITY: Used to validate reviewer scores - must be correct
 function parseYamlResult(yamlContent) {
+  if (!yamlContent || typeof yamlContent !== 'string') {
+    return {
+      reviewer: null,
+      score: null,
+      status: null,
+      blockers: [],
+      redlines: [],
+      dimensions: {},
+    };
+  }
+
   const result = {
     reviewer: null,
     score: null,
@@ -1072,8 +1225,37 @@ function generateFinalReport(scores, evidence = null) {
   return reportPath;
 }
 
+// ============================================================================
+// Right-size Throttle: Include scale in metadata
+// ============================================================================
+
+/**
+ * Update metadata.json with scale information
+ */
+function updateMetadataWithScale(roundDir) {
+  const metaPath = join(roundDir, 'metadata.json');
+  try {
+    let meta = {};
+    if (existsSync(metaPath)) {
+      meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+    }
+    meta.scale = startupScaleInfo;
+    writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  } catch (e) {
+    // Ignore - metadata update is best-effort
+  }
+}
+
 // Main gate check
 async function runGate() {
+  // Show scale detection at startup
+  if (!userSpecifiedProfile) {
+    log.info(`Change scale: ${colors.bright}${startupScaleInfo.scale}${colors.reset} (${startupScaleInfo.files} files, ${startupScaleInfo.total} lines)`);
+    if (startupScaleInfo.suggestedProfile !== profile) {
+      log.info(`Suggested profile: ${colors.cyan}${startupScaleInfo.suggestedProfile}${colors.reset} (use --profile to override)`);
+    }
+  }
+
   const config = loadConfig();
 
   // Determine reviewers to run
