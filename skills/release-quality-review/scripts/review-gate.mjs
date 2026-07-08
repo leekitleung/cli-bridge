@@ -182,56 +182,86 @@ function loadYamlProfile(profileName) {
       }
     };
 
-    // Simple YAML parser
+    // Simple YAML parser for profile files
     const lines = content.split('\n');
     let currentSection = '';
+    let currentArrayKey = '';
+    let currentTriggerKey = '';
     let inCodeBlock = false;
+    let codeBlockContent = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const trimmed = line.trim();
 
-      // Skip code blocks
-      if (line.trim().startsWith('```')) {
-        inCodeBlock = !inCodeBlock;
+      // Track code blocks - extract YAML content
+      if (trimmed.startsWith('```')) {
+        if (inCodeBlock) {
+          // End of code block - parse the accumulated content
+          inCodeBlock = false;
+          parseYamlContent(codeBlockContent, profile, currentArrayKey, currentTriggerKey);
+          codeBlockContent = '';
+        } else {
+          // Check if this is a YAML code block
+          const langMatch = trimmed.match(/^```(yaml)?/);
+          if (langMatch) {
+            inCodeBlock = true;
+          }
+        }
         continue;
       }
-      if (inCodeBlock) continue;
 
-      // Section headers
-      if (line.match(/^#{1,3}\s+/)) {
-        currentSection = line.replace(/^#{1,3}\s+/, '').trim().toLowerCase();
+      if (inCodeBlock) {
+        codeBlockContent += line + '\n';
         continue;
       }
 
-      // Key-value pairs
-      const kvMatch = line.match(/^(\w[\w-]*):\s*(.*)$/);
+      // Skip comments and empty lines
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      // Section headers (## or ###)
+      const sectionMatch = trimmed.match(/^#{2,3}\s+(.+)$/);
+      if (sectionMatch) {
+        currentSection = sectionMatch[1].trim().toLowerCase();
+        continue;
+      }
+
+      // Detect indentation level
+      const indentMatch = line.match(/^(\s*)/);
+      const indent = indentMatch ? indentMatch[1].length : 0;
+
+      // Key-value pairs outside code blocks
+      const kvMatch = trimmed.match(/^(\w[\w-]*):\s*(.*)$/);
       if (kvMatch) {
         const key = kvMatch[1].trim();
         const value = kvMatch[2].trim();
 
-        if (key === 'profile') {
-          profile.name = value;
-        } else if (key === 'description') {
-          profile.description = value;
-        } else if (key === 'resident_reviewers' || key === 'conditional_reviewers') {
-          // Parse array values
-          const arrMatch = value.match(/^\[(.*)\]$/);
-          if (arrMatch) {
-            profile[key] = arrMatch[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
-          }
-        } else if (key === 'min_score') {
-          profile.gate.min_score = parseInt(value, 10) || 90;
-        } else if (key === 'fail_on_redlines') {
-          profile.gate.fail_on_redlines = value === 'true';
-        } else if (key === 'fail_on_p0_p1_blockers') {
-          profile.gate.fail_on_p0_p1_blockers = value === 'true';
+        // Array keys
+        if (key === 'resident_reviewers') {
+          currentArrayKey = 'resident_reviewers';
+        } else if (key === 'conditional_reviewers') {
+          currentArrayKey = 'conditional_reviewers';
+        } else if (key === 'trigger_conditions') {
+          currentArrayKey = '';
         }
-      }
 
-      // List items (hyphen prefix)
-      const listMatch = line.match(/^-\s+(.+)$/);
-      if (listMatch && currentSection === 'trigger conditions') {
-        // Parse trigger conditions
+        if (currentSection === 'trigger conditions') {
+          if (['terminal-veteran', 'native-designer', 'data-security', 'zero-doc-user'].includes(key)) {
+            currentTriggerKey = key;
+            if (!profile.trigger_conditions[key]) {
+              profile.trigger_conditions[key] = { files: [], patterns: [] };
+            }
+          }
+        }
+
+        // Top-level scalar values
+        if (indent === 0) {
+          if (key === 'profile') profile.name = value;
+          else if (key === 'description') profile.description = value;
+          else if (key === 'min_score') profile.gate.min_score = parseInt(value, 10) || 90;
+          else if (key === 'fail_on_redlines') profile.gate.fail_on_redlines = value === 'true';
+          else if (key === 'fail_on_p0_p1_blockers') profile.gate.fail_on_p0_p1_blockers = value === 'true';
+        }
       }
     }
 
@@ -239,6 +269,77 @@ function loadYamlProfile(profileName) {
   } catch (e) {
     log.warn(`Could not load profile ${profileName}: ${e.message}`);
     return null;
+  }
+}
+
+// Parse YAML content from code block
+function parseYamlContent(yamlContent, profile, defaultArrayKey, defaultTriggerKey) {
+  if (!yamlContent) return;
+
+  const lines = yamlContent.split('\n');
+  let currentArrayKey = defaultArrayKey || '';
+  let currentTriggerKey = defaultTriggerKey || '';
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/^\s+/, ''); // Remove leading whitespace
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // Key-value pairs
+    const kvMatch = trimmed.match(/^(\w[\w-]*):\s*(.*)$/);
+    if (kvMatch) {
+      const key = kvMatch[1].trim();
+      const value = kvMatch[2].trim();
+
+      if (key === 'resident_reviewers') {
+        currentArrayKey = 'resident_reviewers';
+        currentTriggerKey = '';
+      } else if (key === 'conditional_reviewers') {
+        currentArrayKey = 'conditional_reviewers';
+        currentTriggerKey = '';
+      } else if (key === 'trigger_conditions') {
+        currentArrayKey = '';
+        currentTriggerKey = '';
+      } else if (key === 'gate') {
+        currentArrayKey = '';
+      } else if (key === 'files' && currentTriggerKey) {
+        const filesStr = value.replace(/^\[|\]$/g, '');
+        const files = filesStr.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+        profile.trigger_conditions[currentTriggerKey].files = files;
+      } else if (key === 'patterns' && currentTriggerKey) {
+        const patternsStr = value.replace(/^\[|\]$/g, '');
+        const patterns = patternsStr.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+        profile.trigger_conditions[currentTriggerKey].patterns = patterns;
+      } else if (['terminal-veteran', 'native-designer', 'data-security', 'zero-doc-user'].includes(key)) {
+        currentTriggerKey = key;
+        currentArrayKey = '';
+        if (!profile.trigger_conditions[key]) {
+          profile.trigger_conditions[key] = { files: [], patterns: [] };
+        }
+      } else if (key === 'min_score') {
+        profile.gate.min_score = parseInt(value, 10) || 90;
+      } else if (key === 'fail_on_redlines') {
+        profile.gate.fail_on_redlines = value === 'true';
+      } else if (key === 'fail_on_p0_p1_blockers') {
+        profile.gate.fail_on_p0_p1_blockers = value === 'true';
+      }
+      continue;
+    }
+
+    // List items
+    const listMatch = trimmed.match(/^-\s+(.+)$/);
+    if (listMatch) {
+      let item = listMatch[1].trim();
+      item = item.replace(/\s*#.*$/, '').trim();
+      item = item.replace(/^['"]|['"]$/g, '');
+
+      if (currentArrayKey === 'resident_reviewers' && item) {
+        profile.resident_reviewers.push(item);
+      } else if (currentArrayKey === 'conditional_reviewers' && item) {
+        profile.conditional_reviewers.push(item);
+      }
+    }
   }
 }
 
@@ -983,6 +1084,8 @@ async function runGate() {
   const yamlProfile = loadYamlProfile(profile);
   if (yamlProfile) {
     log.info(`Loaded YAML profile: ${yamlProfile.name}`);
+    log.info(`  Resident reviewers: ${JSON.stringify(yamlProfile.resident_reviewers)}`);
+    log.info(`  Conditional reviewers: ${JSON.stringify(yamlProfile.conditional_reviewers)}`);
 
     // Start with resident reviewers
     reviewers = [...yamlProfile.resident_reviewers];

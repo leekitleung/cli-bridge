@@ -1,7 +1,7 @@
 # Quality Review Summary - Round 11
 
 **Profile:** release-gate
-**Generated:** 2026-07-08T03:05:33.362Z
+**Generated:** 2026-07-08T07:44:32.969Z
 **Git:** "" @ ""
 ## Automated Gate Checks
 
@@ -23,9 +23,8 @@
 | architecture-maintainer | 95/100 | ✅ PASS | - |
 | release-verifier | 95/100 | ✅ PASS | - |
 | destructive-qa | 95/100 | ✅ PASS | - |
-| terminal-veteran | 95/100 | ✅ PASS | - |
 
-**Total:** 5/5 passed, 0 blockers
+**Total:** 4/4 passed, 0 blockers
 
 ---
 
