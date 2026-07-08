@@ -1,0 +1,15 @@
+reviewer: native-designer
+score: 75
+status: fail
+timestamp: "2026-07-08T00:39:28.932Z"
+
+dimensions:
+  functionality: 75
+  code-quality: 75
+  security: 75
+
+blockers:
+  []
+
+recommendation: |
+  需要修复上述 P0/P1 问题后再进行评审。

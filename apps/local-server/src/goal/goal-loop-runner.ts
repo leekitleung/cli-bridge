@@ -67,6 +67,21 @@ interface GateApproval {
   workingDirectory?: string;
   timeoutMs: number;
   createdAt: number;
+  status: 'pending' | 'dispatched';
+  dispatchId?: string;
+}
+
+/**
+ * 活跃执行记录（Gate 审批后分发到执行器的任务）
+ */
+interface ActiveExecution {
+  executionId: string;
+  stepId: string;
+  goalId: string;
+  planId: string;
+  dispatchId: string;
+  startedAt: number;
+  stepKind: string;
 }
 
 /**
@@ -87,6 +102,9 @@ export class GoalLoopRunner {
 
   /** 活跃的 Gate 审批 */
   private readonly pendingGateApprovals = new Map<string, GateApproval>();
+
+  /** 活跃的执行（已分发到执行器的任务） */
+  private readonly activeExecutions = new Map<string, ActiveExecution>();
 
   /** 活跃的 Goal Loop */
   private readonly activeLoops = new Map<string, {
@@ -240,6 +258,7 @@ export class GoalLoopRunner {
 
     // 清理所有 pending gates
     this.pendingGateApprovals.clear();
+    this.activeExecutions.clear();
 
     logger.info('[GoalLoopRunner] Disposed all resources');
   }
@@ -270,9 +289,20 @@ export class GoalLoopRunner {
       });
 
       if (result.ok) {
+        // 记录活跃执行：taskId 在 ExecutorResult 中
+        const taskId = approval.executionId; // 使用 approval.executionId 作为 taskId
+        this.activeExecutions.set(taskId, {
+          executionId,
+          stepId: approval.stepId,
+          goalId: '', // 由 tick loop 填充
+          planId: '', // 由 tick loop 填充
+          dispatchId: result.executorId, // 执行器 ID
+          startedAt: Date.now(),
+          stepKind: approval.stepKind,
+        });
         return {
           ok: true,
-          taskId: result.result.output as string | undefined,
+          taskId,
         };
       } else {
         return {
@@ -370,6 +400,9 @@ export class GoalLoopRunner {
       return;
     }
 
+    // AR-011/AR-012: 检查活跃执行的结果
+    await this.checkActiveExecutions(goalId, planId);
+
     // 推进 Orchestrator
     const result = this.orchestrator.advance(goalId);
 
@@ -439,14 +472,61 @@ export class GoalLoopRunner {
     this.pendingGateApprovals.set(executionId, {
       executionId,
       stepId: step.id,
-      stepIntent: step.intent, // PlanStep 有 intent 字段
+      stepIntent: step.intent,
       stepKind: step.kind,
-      workingDirectory: undefined, // PlanStep 没有 workingDirectory
-      timeoutMs: 120_000, // 默认超时
+      workingDirectory: undefined,
+      timeoutMs: 120_000,
       createdAt: Date.now(),
+      status: 'pending', // 初始状态为待审批
     });
 
     logger.info('[GoalLoopRunner] Step gated, awaiting approval', { stepId: step.id, stepKind: step.kind });
+  }
+
+  /**
+   * AR-011/AR-012: 检查活跃执行的结果并更新状态
+   *
+   * 问题：tickGoalLoop() 从 AutomationLoopStore 读取待处理结果，
+   * 但 WorkBuddyExecutionAdapter 是独立的 store。需要同步状态。
+   */
+  private async checkActiveExecutions(goalId: string, planId: string): Promise<void> {
+    // 遍历所有活跃执行
+    for (const [taskId, execution] of this.activeExecutions) {
+      try {
+        // 通过 runtime.workbuddyExecution.getResult() 查询执行结果
+        const result = this.runtime.workbuddyExecution.getResult(taskId);
+        if (result) {
+          // 执行完成，处理结果
+          if (result.ok) {
+            // 先将步骤状态设为 running（completeStep 需要 running 状态）
+            this.runtime.goalStore.markStepRunning(goalId, execution.stepId, Date.now());
+            // 更新步骤输出
+            const output = typeof result.output === 'string'
+              ? result.output
+              : (result.stdout ?? '');
+            this.runtime.goalStore.completeStep(goalId, execution.stepId, output, Date.now());
+            logger.info('[GoalLoopRunner] Step execution completed', {
+              stepId: execution.stepId,
+              durationMs: Date.now() - execution.startedAt
+            });
+          } else {
+            // 执行失败
+            const failureReason = result.failureReason ?? result.stderr ?? 'Execution failed';
+            // 先将步骤状态设为 running（failStep 需要 running 状态）
+            this.runtime.goalStore.markStepRunning(goalId, execution.stepId, Date.now());
+            this.runtime.goalStore.failStep(goalId, execution.stepId, failureReason, Date.now());
+            logger.error('[GoalLoopRunner] Step execution failed', {
+              stepId: execution.stepId,
+              error: failureReason
+            });
+          }
+          // 从活跃执行中移除
+          this.activeExecutions.delete(taskId);
+        }
+      } catch (err) {
+        logger.warn('[GoalLoopRunner] Error checking execution result', { taskId, error: err });
+      }
+    }
   }
 
   /**

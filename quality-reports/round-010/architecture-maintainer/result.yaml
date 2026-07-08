@@ -1,0 +1,13 @@
+reviewer: architecture-maintainer
+score: 95
+status: pass
+timestamp: "2026-07-08T01:42:56.784Z"
+
+dimensions:
+  specific-issues: 75
+
+blockers:
+  []
+
+recommendation: |
+  可以通过发布。

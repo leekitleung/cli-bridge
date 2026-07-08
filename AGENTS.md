@@ -2,21 +2,30 @@
 
 This repository implements a multi-agent quality review system that works across Claude Code, Codex, and other AI coding agents.
 
+**Design Philosophy**: Reviewers are NOT personas with personalities - they are **evaluation dimensions** with:
+- Input evidence requirements
+- Scoring criteria
+- Redline rules
+- Output format
+
+This allows the same reviewer definition to work across different agent platforms.
+
 ## Project Structure
 
 ```
 .
-├── AGENTS.md              # This file - cross-tool rules
+├── AGENTS.md              # This file - cross-tool rules (tool-agnostic)
 ├── CLAUDE.md              # Claude Code specific rules
 ├── skills/
 │   └── release-quality-review/
-│       ├── SKILL.md       # Review workflow definition
-│       ├── profiles/      # Review profiles (default, release-gate)
-│       ├── reviewers/     # Reviewer definitions
-│       ├── rubrics/       # Scoring rubrics
-│       └── scripts/       # Automation scripts
-├── quality-reports/       # Review outputs (round-N/)
-└── .claude/               # Claude Code adapters
+│       ├── SKILL.md           # Review workflow (tool-agnostic)
+│       ├── profiles/          # Profile configs (YAML)
+│       ├── reviewers/         # Reviewer definitions (Markdown)
+│       ├── rubrics/           # Scoring standards
+│       ├── scripts/           # Automation (Node.js, tool-agnostic)
+│       └── templates/         # Output templates
+├── quality-reports/           # Generated reports (round-N/)
+└── .claude/                  # Claude Code adapters only
 ```
 
 ## Quality Review System
@@ -180,9 +189,83 @@ Feature Development
               Re-run Review
 ```
 
+### Round-Based Review Process
+
+```
+Feature Development (EX-* batch)
+         ↓
+    [EX-* ends - control returns]
+         ↓
+    Round 1 Review (RP-* batch)
+         ↓
+    ┌─────────────────────────────────┐
+    │  All reviewers >= 90?           │
+    │  No P0/P1 redlines?            │
+    │  Tests pass?                    │
+    └─────────────────────────────────┘
+         ↓              ↓
+       PASS          FAIL
+         ↓              ↓
+    MERGE/RELEASE    ↓
+                 Round N Review
+                       ↓
+               Fix P0/P1 Blockers
+                       ↓
+                 Re-run Review
+```
+
+### Review Round Rules
+
+1. **Round 1**: Run all reviewers, identify blockers
+2. **Round N**: Only run reviewers that failed in previous rounds, plus:
+   - Reviewers whose domain was affected by fixes
+   - `destructive-qa` for sanity check
+   - `release-verifier` for final gate
+3. **Max Rounds**: 5 (after that, require manual intervention)
+4. **Scoring Delta**: If a reviewer drops >10 points between rounds, investigate
+
+### How to Invoke
+
+**Claude Code:**
+```bash
+/skill release-quality-review --profile release-gate --round 1
+```
+
+**Codex (explicit subagent invocation):**
+```bash
+# Read the review system
+node skills/release-quality-review/scripts/review-runner.mjs --help
+
+# Run a round
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round 1
+
+# Spawn subagents for each reviewer (Codex must be explicit):
+# - Spawn product-flow agent → reviewers/product-flow.md
+# - Spawn architecture-maintainer agent → reviewers/architecture-maintainer.md
+# - Spawn release-verifier agent → reviewers/release-verifier.md
+# - Spawn destructive-qa agent → reviewers/destructive-qa.md
+```
+
+**Generic (any agent):**
+```bash
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round N
+```
+
+## Review System Maintenance
+
+When updating the review system:
+
+1. **Add new reviewer**: Create `reviewers/[name].md`, add to `profiles/*.yaml`
+2. **Update scoring**: Edit `rubrics/scoring.md`
+3. **Add new profile**: Create `profiles/[name].yaml` with reviewer list
+4. **Update automation**: Edit `scripts/review-runner.mjs`
+
+**Breaking changes to reviewer definitions require a new profile version.**
+
 ## Contact
 
 For questions about this review system, refer to:
 - `skills/release-quality-review/SKILL.md` - Workflow details
 - `skills/release-quality-review/rubrics/scoring.md` - Score interpretation
 - `skills/release-quality-review/rubrics/redlines.md` - Redline definitions
+- `skills/release-quality-review/profiles/release-gate.yaml` - Release profile config

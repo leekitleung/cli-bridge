@@ -1,0 +1,15 @@
+reviewer: release-verifier
+score: 50
+status: fail
+timestamp: "2026-07-08T00:39:28.917Z"
+
+dimensions:
+  functionality: 75
+  code-quality: 75
+  security: 75
+
+blockers:
+  - P1: 测试覆盖率不足 (<30%)
+
+recommendation: |
+  需要修复上述 P0/P1 问题后再进行评审。

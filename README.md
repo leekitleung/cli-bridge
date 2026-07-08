@@ -1,16 +1,38 @@
 # CLI Bridge
 
-CLI Bridge is a **safe, verifiable, controlled-automation context relay** between
-a CLI coding agent (Codex) and ChatGPT Web. It helps move CLI output into
-ChatGPT and turn ChatGPT replies into reviewed prompts while keeping shell
-execution and terminal control out of the product surface.
+A **safe, verifiable, controlled-automation context relay** between a CLI coding agent and ChatGPT Web.
 
-It is **not** a terminal controller. It does not expose shell endpoints. As of
-ADR-0001 and ADR-0002, automation is allowed only in staged, auditable slices:
-v1.5a can queue an outbound prompt and let the browser extension drive ChatGPT
-Web as an automatic source relay, while v1.5b is planned as fixed review-only
-local CLI command transport. It still does not expose terminal control or run
-unattended agent loops.
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLI Bridge v1.5                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌──────────┐     ┌──────────────┐     ┌─────────────────────────┐ │
+│  │ Claude   │────▶│ Local Server │◀────│ Browser Extension       │ │
+│  │ Code     │     │ (127.0.0.1)  │     │ ┌─────────────────────┐ │ │
+│  │ Codex    │     │              │     │ │ Bridge Panel        │ │ │
+│  └──────────┘     │ ┌──────────┐ │     │ │ - Fill/Extract      │ │ │
+│        │          │ │Bridge API│ │     │ │ - Source Relay      │ │ │
+│        │          │ └──────────┘ │     │ │ - Goal Status       │ │ │
+│        │          │      │       │     │ └─────────────────────┘ │ │
+│        ▼          │      ▼       │     └─────────────────────────┘ │
+│  ┌──────────┐     │ ┌──────────┐ │                                   │
+│  │WorkBuddy │◀────│ │ Executor │─┼──▶ Goal → Plan → Gate → Execute  │
+│  │ Worker   │     │ │ Registry │ │     └──▶ verifyStepOutput()      │
+│  └──────────┘     │ └──────────┘ │                                   │
+│        │          │      │       │     ┌─────────────────────────┐ │
+│        │          │      ▼       │     │ Project Console         │ │
+│        ▼          │ ┌──────────┐ │     │ /console/project        │ │
+│  ┌──────────┐     │ │ Goal     │ │     │ - Goals / Plans         │ │
+│  │Command   │     │ │ Store    │ │     │ - Reviews / Audit       │ │
+│  │Backend   │     │ └──────────┘ │     │ - Tasks / Metrics       │ │
+│  │(allowlist│     └──────────────┘     └─────────────────────────┘ │
+│  │only)     │                                                       │
+│  └──────────┘                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 

@@ -280,6 +280,65 @@ Round N: 迭代直到通过或放弃
 | `4` | 配置文件错误 | 检查 profile/yaml |
 | `5` | Agent 执行失败 | 查看错误日志 |
 
+## 失败恢复指南
+
+当 Gate 检查失败时，按以下顺序修复：
+
+### 1. 读取失败报告
+```bash
+cat quality-reports/round-XXX/summary.md
+```
+
+### 2. 识别 P0/P1 Blocker
+查看每个 reviewer 的 `blockers.md`，按优先级排序：
+
+| 优先级 | 定义 | 行动 |
+|--------|------|------|
+| P0 | 安全漏洞、数据丢失风险 | **立即修复** |
+| P1 | 功能破坏、严重 UX 问题 | **本轮修复** |
+| P2 | 改进建议 | 下个 milestone |
+| P3 | 优化建议 | 随意 |
+
+### 3. 修复策略
+
+**单轮聚焦原则**：每轮只修复 2-3 个最高优先级问题，避免同时改太多。
+
+**修复顺序**：
+1. P0 blockers → 必须先修
+2. 评分最低的 reviewer → 重点突破
+3. 共享问题（如架构问题影响多个 reviewer）
+
+### 4. 运行下一轮评审
+```bash
+# 继续下一轮评审
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round N+1
+
+# 或只运行失败的 reviewers
+node skills/release-quality-review/scripts/review-gate.mjs --reviewer <failed-reviewer>
+```
+
+### 5. 典型问题修复
+
+| 问题类型 | 常见原因 | 修复方向 |
+|----------|----------|----------|
+| product-flow 失败 | 用户路径不完整 | 补全功能、添加边界处理 |
+| architecture 失败 | 大文件/职责混乱 | 拆分模块、提取函数 |
+| release-verifier 失败 | 测试覆盖率低 | 添加测试、补全文档 |
+| destructive-qa 失败 | 安全漏洞/注入风险 | 修复漏洞、添加验证 |
+| terminal-veteran 失败 | 错误处理差/日志乱 | 统一错误码、改进日志 |
+
+### 6. 提前检查（dry-run）
+修复前先验证当前状态：
+```bash
+node skills/release-quality-review/scripts/review-gate.mjs --dry-run
+```
+
+### 7. 放弃条件
+如果三轮评审后仍无法通过：
+- 评估 blocker 的实际影响
+- 与团队讨论是否可接受风险
+- 记录为 known issues 到 release notes
+
 ## 常见问题
 
 **Q: 某个 Reviewer 一直不通过怎么办？**

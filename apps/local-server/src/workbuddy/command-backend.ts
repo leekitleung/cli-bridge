@@ -93,9 +93,10 @@ export function createCommandBackend(config: CommandBackendConfig) {
       };
     }
 
-    // Check for path traversal in arguments
+    // Check for path traversal in arguments (Windows + Unix patterns)
+    const PATH_TRAVERSAL_PATTERN = /(\.\.\\|\.\.\/|\.\.\\\\|\\\\\.\.|\/\\|\.\\)/;
     for (let i = 3; i < argv.length; i++) {
-      if (argv[i].includes('..')) {
+      if (PATH_TRAVERSAL_PATTERN.test(argv[i])) {
         return { valid: false, reason: 'Path traversal not allowed in cmd.exe arguments' };
       }
     }
@@ -125,8 +126,13 @@ export function createCommandBackend(config: CommandBackendConfig) {
     // SECURITY FIX: 检查 shell 元字符防止命令注入
     // 即使 shell: false，也拒绝包含危险元字符的输入
     // 添加换行符检查防止多行注入攻击
+    // 注意: backtick (`) 未在字符类中，因为它在正则表达式中有特殊含义
+    // 使用独立的正则或转义来检测 backtick
     const SHELL_METACHARACTERS = /[;|&$`()<>\\\r\n]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
-    if (SHELL_METACHARACTERS.test(prompt)) {
+    const SHELL_METACHARACTERS_STRICT = /[;|&$`()<>\\\r\n]|&&|\|\||\$\(|\$\{|##|%%|<<|>>/;
+    // 检测 backtick（命令替换）和 !（历史扩展）
+    const COMMAND_SUBSTITUTION = /[`!]/;
+    if (SHELL_METACHARACTERS.test(prompt) || COMMAND_SUBSTITUTION.test(prompt)) {
       return {
         ok: false,
         stdout: '',

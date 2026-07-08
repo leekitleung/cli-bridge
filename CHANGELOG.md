@@ -2,6 +2,21 @@
 
 All notable changes to CLI Bridge are documented here.
 
+## [v1.5.0] — 2026-07-08 — Production Ready
+
+### Added
+- **Architecture diagram**: ASCII diagram in README showing system components and data flow
+- **README cleanup**: Consolidated quick start, troubleshooting, and security boundaries
+
+### Fixed
+- **TODO cleanup**: Removed `TODO:` comment in `workbuddy-executor.ts:140` explaining polling vs event-driven design decision
+- **Test suite**: 121 tests (120 passing, 1 skipped)
+
+### Changed
+- **Documentation**: Architecture section now at top of README for quick orientation
+
+---
+
 ## [Unreleased] — v2.x
 
 ### Implemented

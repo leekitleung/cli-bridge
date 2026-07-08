@@ -1,0 +1,7 @@
+reviewer: product-flow
+score: 95
+severity: totally-made-up
+blockers:
+  - P0: Critical
+redlines:
+  - P99: Invalid

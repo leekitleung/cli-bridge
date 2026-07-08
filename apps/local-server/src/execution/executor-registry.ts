@@ -20,21 +20,51 @@ export interface ExecutorResult {
 }
 
 /**
- * 任务结构 - 所有执行器接收的任务格式
+ * 统一任务结构 - 所有执行器接收的任务格式
+ *
+ * 包含核心字段（taskId, prompt）和可选的能力提示字段。
+ * 能力提示用于执行器选择和路由优化。
  */
 export interface ExecutorTask {
+  // === 核心字段 ===
+  /** 任务唯一 ID */
   taskId: string;
+  /** 提案 ID（关联对话上下文） */
   proposalId: string;
+  /** 任务描述/提示 */
   prompt: string;
+  /** 工作目录 */
   workingDirectory?: string;
+  /** 超时 (ms) */
   timeoutMs?: number;
+
+  // === 上下文字段 ===
   /** 项目 ID（用于执行器上下文追踪） */
   projectId?: string;
   /** 计划 ID（用于执行器上下文追踪） */
   planId?: string;
   /** 目标 ID（用于执行器上下文追踪） */
   goalId?: string;
+
+  // === 能力提示字段（用于执行器选择） ===
+  /** 预期输出类型 */
+  expectedOutput?: 'cli-output' | 'code' | 'file-modification' | 'any';
+  /** 是否需要文件操作 */
+  requiresFileOperations?: boolean;
+  /** 是否需要网络访问 */
+  requiresNetworkAccess?: boolean;
+  /** 用户指定的执行器偏好 */
+  preferredExecutor?: string;
+  /** 用户指定的标签偏好 */
+  preferredTags?: string[];
+  /** 元数据 */
+  metadata?: Record<string, unknown>;
 }
+
+/**
+ * @deprecated 使用 ExecutorTask 代替
+ */
+export type TaskDescriptor = ExecutorTask;
 
 /**
  * 执行器能力描述 - 与 AgentEndpointCapabilities 保持一致

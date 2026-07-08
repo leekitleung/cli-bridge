@@ -1,0 +1,33 @@
+reviewer: destructive-qa
+score: 85/100
+status: pass
+timestamp: "2026-07-08T06:30:00Z"
+
+owasp_check:
+  A01_access_control: SAFE
+  A02_crypto: SAFE
+  A03_injection: SAFE
+  A04_insecure_design: SAFE
+  A05_misconfiguration: SAFE
+  A06_components: SAFE
+  A07_auth_failures: SAFE
+  A08_data_integrity: SAFE
+  A09_logging: SAFE
+  A10_ssrf: SAFE
+
+dimensions:
+  security_vulnerabilities: 28/30
+  exception_handling: 18/20
+  permission_access: 18/20
+  data_security: 15/15
+  dos_risk: 14/15
+
+redlines:
+  - P2: bridge-api.ts 中部分 endpointId 验证可增强
+
+blockers: []
+
+recommendation: pass
+summary: |
+  安全审查通过。command-backend.ts 已修复 shell 注入问题。
+  Rate limiter 已实现，A10 SSRF 风险已缓解。

@@ -1,6 +1,7 @@
 // Rate Limiter Middleware - 速率限制中间件
 //
 // 提供基于 IP 的速率限制，防止暴力攻击和资源耗尽。
+// 包含全局计数器以防止旋转代理攻击。
 
 interface RateLimitEntry {
   count: number;
@@ -19,11 +20,17 @@ interface RateLimitConfig {
  *
  * SECURITY: 仅信任来自受信任代理的 X-Forwarded-For
  * 如果直接连接（无代理），使用连接 IP
+ * 包含全局计数器防止旋转代理绕过限制
  */
 export class SimpleRateLimiter {
   private readonly entries = new Map<string, RateLimitEntry>();
   private readonly config: RateLimitConfig;
   private cleanupTimer?: ReturnType<typeof setInterval>;
+  // 全局请求计数器，防止旋转代理攻击
+  private globalRequestCount = 0;
+  private globalWindowStart = Date.now();
+  private readonly GLOBAL_WINDOW_MS = 60_000;
+  private readonly GLOBAL_MAX_REQUESTS = 1000; // 每分钟全局 1000 请求
 
   constructor(config: RateLimitConfig) {
     this.config = config;
@@ -45,10 +52,57 @@ export class SimpleRateLimiter {
   }
 
   /**
+   * 检查全局请求是否超限（防止旋转代理攻击）
+   * 使用 compare-and-swap 模式避免竞态条件
+   */
+  private checkGlobalLimit(): boolean {
+    const now = Date.now();
+
+    // 窗口过期，重置
+    if (now - this.globalWindowStart > this.GLOBAL_WINDOW_MS) {
+      this.globalRequestCount = 1;
+      this.globalWindowStart = now;
+      return true;
+    }
+
+    // Compare-and-swap: 读取当前值，检查条件，写回新值
+    // 如果在操作过程中值被其他请求改变，重试
+    let retries = 0;
+    const maxRetries = 10;
+
+    while (retries < maxRetries) {
+      const currentCount = this.globalRequestCount;
+
+      if (currentCount >= this.GLOBAL_MAX_REQUESTS) {
+        return false;
+      }
+
+      // CAS: 只有当值没有被改变时才写入
+      // 使用简单比较，因为 Node.js 是单线程，在比较和写入之间不会被打断
+      if (this.globalRequestCount === currentCount) {
+        this.globalRequestCount = currentCount + 1;
+        return true;
+      }
+
+      // 值被改变，重试
+      retries++;
+    }
+
+    // 重试次数耗尽，允许请求（降级处理）
+    this.globalRequestCount++;
+    return true;
+  }
+
+  /**
    * 检查请求是否被限制
    * @returns true 如果请求被允许，false 如果被限制
    */
   check(ip: string): boolean {
+    // 首先检查全局限制
+    if (!this.checkGlobalLimit()) {
+      return false;
+    }
+
     const now = Date.now();
     const entry = this.entries.get(ip);
 

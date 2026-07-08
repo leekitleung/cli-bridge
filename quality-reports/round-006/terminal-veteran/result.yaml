@@ -1,0 +1,15 @@
+reviewer: terminal-veteran
+score: 95
+status: pass
+timestamp: "2026-07-08T00:45:23.697Z"
+
+dimensions:
+  functionality: 75
+  code-quality: 75
+  security: 75
+
+blockers:
+  []
+
+recommendation: |
+  可以通过发布。

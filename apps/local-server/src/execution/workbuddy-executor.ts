@@ -137,7 +137,8 @@ export class WorkBuddyExecutor implements ExecutorBackend {
     });
 
     // 轮询结果 - 使用 2s 间隔减少 CPU 占用
-    // TODO: 考虑使用事件驱动代替轮询
+    // 注: 事件驱动需要 WorkBuddy 支持 WebSocket/Server-Sent Events，
+    // 当前采用轮询模式是出于兼容性和简单性考虑
     const timeoutAt = startTime + (task.timeoutMs ?? this.options.timeoutMs);
     const pollIntervalMs = 2000; // 从 1000ms 增加到 2000ms 减少 CPU 占用
 

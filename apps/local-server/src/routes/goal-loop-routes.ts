@@ -473,7 +473,8 @@ export async function handleDiagnosticsMetricsRequest(
         failed: loops.filter(l => l.status === 'failed').length,
         cancelled: loops.filter(l => l.status === 'cancelled').length,
       },
-      totalCycles: loops.reduce((sum, l) => sum + l.cycleCount, 0),
+      // 使用已完成步骤数作为执行指标（更准确反映 Goal Loop 实际执行）
+      totalStepsExecuted: plans.reduce((sum, p) => sum + (p.steps?.filter(s => s.status === 'done').length ?? 0), 0),
     },
     executors: {
       total: executorStatus.total,

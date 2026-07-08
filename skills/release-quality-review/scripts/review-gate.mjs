@@ -72,8 +72,10 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === '--check-redlines') {
     checkRedlinesOnly = true;
   } else if (arg === '--round' && args[i + 1]) {
-    roundNumber = parseInt(args[i + 1], 10);
-    i++;
+    const roundArg = args[++i];
+    // Support both "3" and "round-003" formats
+    const match = roundArg.match(/^round-(\d+)$/i);
+    roundNumber = match ? parseInt(match[1], 10) : parseInt(roundArg, 10);
   } else if (arg === '--parallel') {
     parallel = true;
   } else if (arg === '--no-collect') {
@@ -154,6 +156,152 @@ function loadConfig() {
   return {};
 }
 
+// Load YAML profile configuration
+function loadYamlProfile(profileName) {
+  const profilePath = join(SKILL_DIR, 'profiles', `${profileName}.yaml`);
+  if (!existsSync(profilePath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(profilePath, 'utf-8');
+    const profile = {
+      name: profileName,
+      description: '',
+      resident_reviewers: [],
+      conditional_reviewers: [],
+      trigger_conditions: {},
+      gate: {
+        min_score: 90,
+        fail_on_redlines: true,
+        fail_on_p0_p1_blockers: true,
+      },
+      output: {
+        verbose: true,
+        include_evidence: true,
+      }
+    };
+
+    // Simple YAML parser
+    const lines = content.split('\n');
+    let currentSection = '';
+    let inCodeBlock = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Skip code blocks
+      if (line.trim().startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      if (inCodeBlock) continue;
+
+      // Section headers
+      if (line.match(/^#{1,3}\s+/)) {
+        currentSection = line.replace(/^#{1,3}\s+/, '').trim().toLowerCase();
+        continue;
+      }
+
+      // Key-value pairs
+      const kvMatch = line.match(/^(\w[\w-]*):\s*(.*)$/);
+      if (kvMatch) {
+        const key = kvMatch[1].trim();
+        const value = kvMatch[2].trim();
+
+        if (key === 'profile') {
+          profile.name = value;
+        } else if (key === 'description') {
+          profile.description = value;
+        } else if (key === 'resident_reviewers' || key === 'conditional_reviewers') {
+          // Parse array values
+          const arrMatch = value.match(/^\[(.*)\]$/);
+          if (arrMatch) {
+            profile[key] = arrMatch[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+          }
+        } else if (key === 'min_score') {
+          profile.gate.min_score = parseInt(value, 10) || 90;
+        } else if (key === 'fail_on_redlines') {
+          profile.gate.fail_on_redlines = value === 'true';
+        } else if (key === 'fail_on_p0_p1_blockers') {
+          profile.gate.fail_on_p0_p1_blockers = value === 'true';
+        }
+      }
+
+      // List items (hyphen prefix)
+      const listMatch = line.match(/^-\s+(.+)$/);
+      if (listMatch && currentSection === 'trigger conditions') {
+        // Parse trigger conditions
+      }
+    }
+
+    return profile;
+  } catch (e) {
+    log.warn(`Could not load profile ${profileName}: ${e.message}`);
+    return null;
+  }
+}
+
+// Detect conditional reviewers based on git changes
+function detectConditionalReviewers(profile) {
+  if (!profile.conditional_reviewers || profile.conditional_reviewers.length === 0) {
+    return [];
+  }
+
+  const triggered = [];
+  const triggerConditions = profile.trigger_conditions || {};
+
+  try {
+    // Get changed files
+    const gitOutput = execSync('git diff --name-only HEAD 2>/dev/null || echo ""', {
+      encoding: 'utf-8',
+      cwd: PROJECT_ROOT,
+      timeout: 10000,
+    });
+    const changedFiles = gitOutput.split('\n').filter(f => f.trim());
+
+    for (const reviewer of profile.conditional_reviewers) {
+      const conditions = triggerConditions[reviewer];
+      if (!conditions) {
+        // No specific conditions - always trigger
+        triggered.push(reviewer);
+        continue;
+      }
+
+      const { files = [], patterns = [] } = conditions;
+
+      // Check file patterns
+      let matched = false;
+      for (const pattern of files) {
+        // Simple glob matching
+        const regex = new RegExp(
+          pattern
+            .replace(/\*\*/g, '.*')
+            .replace(/\*/g, '[^/]*')
+            .replace(/\?/g, '.')
+        );
+
+        for (const file of changedFiles) {
+          if (regex.test(file)) {
+            matched = true;
+            break;
+          }
+        }
+        if (matched) break;
+      }
+
+      if (matched) {
+        triggered.push(reviewer);
+      }
+    }
+  } catch (e) {
+    // Git not available - skip conditional detection
+    log.warn('Could not detect conditional reviewers: git not available');
+  }
+
+  return triggered;
+}
+
 // Reviewer profiles
 const PROFILES = {
   'quick': {
@@ -203,23 +351,37 @@ function loadReviewer(name) {
 }
 
 // Parse score from review report
+// SECURITY: This function is critical for gate integrity
 function parseScore(scoreContent) {
-  // Match patterns like:
-  // "Overall Score: 75/100" or "Overall Score: **75/100**"
-  // "总分: 85/100"
-  // "Score: 85"
-  // "75/100" (standalone)
+  if (!scoreContent || typeof scoreContent !== 'string') {
+    return null;
+  }
+
+  // More permissive patterns that match common formats
   const patterns = [
-    /(?:总分|Overall Score|Total Score|Score)[:\s*]*\*\*?(\d+)\*\*?\/100/i,
+    // Pattern 1: "Overall Score: **67/100**" or "Overall Score: 72/100 (Good)"
+    // Handles: spaces around /, bold markers, trailing text
+    /(?:总分|Overall Score|Total Score|Score)[^0-9]*(\d+)[^0-9]*\/?\s*100/i,
+    // Pattern 2: "**75/100**" (standalone bold)
     /\*\*(\d+)\/100\*\*/,
-    /^(\d{2})\/100$/m,
-    /\s(\d{2})\/100\s/,
+    // Pattern 3: "68 / 100" or "72/100" anywhere in text
+    /(\d+)\s*\/\s*100/,
+    // Pattern 4: "Score: 85" (without /100) - less preferred
+    /(?:总分|Overall Score|Total Score|Score)[^0-9]*(\d+)$/gim,
   ];
 
   for (const pattern of patterns) {
     const match = scoreContent.match(pattern);
     if (match) {
-      return parseInt(match[1], 10);
+      // Get the captured number - pattern 3 captures in match[1], others in match[1]
+      const scoreStr = match[1];
+      if (scoreStr) {
+        const score = parseInt(scoreStr, 10);
+        // Validate range (0-100)
+        if (!isNaN(score) && score >= 0 && score <= 100) {
+          return score;
+        }
+      }
     }
   }
   return null;
@@ -238,6 +400,14 @@ function parseBlockers(blockerContent) {
         blockers.push(currentBlocker);
         currentBlocker = null;
       }
+      continue;
+    }
+
+    // Skip lines that explicitly say no blockers
+    if (trimmed.includes('无 P0') || trimmed.includes('无 P1') ||
+        trimmed.includes('no P0') || trimmed.includes('no P1') ||
+        trimmed.includes('无 blockers') || trimmed.includes('no blockers') ||
+        trimmed.match(/^#\s+.*Blockers$/i)) {
       continue;
     }
 
@@ -416,7 +586,120 @@ function reviewerReportExists(roundDir, reviewer) {
   return existsSync(scorePath) || existsSync(blockerPath);
 }
 
+// Simple YAML parser for result.yaml
+// SECURITY: Used to validate reviewer scores - must be correct
+function parseYamlResult(yamlContent) {
+  const result = {
+    reviewer: null,
+    score: null,
+    status: null,
+    blockers: [],
+    redlines: [],
+    dimensions: {},
+  };
+
+  const lines = yamlContent.split('\n');
+  let currentKey = null;
+  let currentArray = null;
+  let inArray = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Skip comments and empty lines
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // Check for array items
+    if (trimmed.startsWith('- ')) {
+      const item = trimmed.substring(2).trim();
+      if (currentArray && item) {
+        if (currentArray === 'blockers' || currentArray === 'redlines') {
+          // Parse blockers like "P1: Description" or "- P2: Description"
+          const blockerMatch = item.match(/^(P[0-3]):\s*(.+)$/i);
+          if (blockerMatch) {
+            result[currentArray].push({ priority: blockerMatch[1].toUpperCase(), text: blockerMatch[2] });
+          } else {
+            result[currentArray].push(item);
+          }
+        } else {
+          result[currentArray].push(item);
+        }
+      }
+      continue;
+    }
+
+    // Check for key: value
+    const colonIndex = trimmed.indexOf(':');
+    if (colonIndex > 0) {
+      const key = trimmed.substring(0, colonIndex).trim().toLowerCase();
+      const value = trimmed.substring(colonIndex + 1).trim();
+
+      // Handle array markers
+      if (value === '' || value === '[]') {
+        currentKey = key;
+        currentArray = key;
+        inArray = true;
+        continue;
+      }
+
+      // Parse values
+      switch (key) {
+        case 'reviewer':
+          result.reviewer = value;
+          break;
+        case 'score':
+          // Handle "85/100" or just "85"
+          const scoreMatch = value.match(/^(\d+)(?:\/100)?$/);
+          if (scoreMatch) {
+            const score = parseInt(scoreMatch[1], 10);
+            if (score >= 0 && score <= 100) {
+              result.score = score;
+            }
+          }
+          break;
+        case 'status':
+          result.status = value;
+          break;
+        default:
+          // Check for dimension scores like "module-clarity: 17/25"
+          const dimMatch = value.match(/^(\d+)\/(\d+)$/);
+          if (dimMatch) {
+            result.dimensions[key] = {
+              score: parseInt(dimMatch[1], 10),
+              max: parseInt(dimMatch[2], 10),
+            };
+          }
+      }
+
+      inArray = false;
+      currentArray = null;
+    }
+  }
+
+  return result;
+}
+
+// Validate reviewer identity
+// SECURITY: Prevents fake reviewers from bypassing the gate
+function validateReviewerIdentity(reviewer, profile) {
+  const reviewerPath = join(SKILL_DIR, 'reviewers', `${reviewer}.md`);
+
+  // Check if reviewer definition exists
+  if (!existsSync(reviewerPath)) {
+    return { valid: false, error: `Unknown reviewer: ${reviewer}` };
+  }
+
+  // Check if reviewer is in the current profile
+  const profileConfig = PROFILES[profile];
+  if (profileConfig && !profileConfig.reviewers.includes(reviewer)) {
+    return { valid: false, error: `Reviewer ${reviewer} not in profile ${profile}` };
+  }
+
+  return { valid: true };
+}
+
 // Load existing scores for a round
+// SECURITY: This function validates score authenticity
 function loadExistingScores(roundDir, reviewers) {
   const results = {};
 
@@ -425,31 +708,99 @@ function loadExistingScores(roundDir, reviewers) {
     const scorePath = join(reviewerDir, 'score.md');
     const blockerPath = join(reviewerDir, 'blockers.md');
     const improvementPath = join(reviewerDir, 'improvement-list.md');
+    const resultYamlPath = join(reviewerDir, 'result.yaml');
 
-    if (existsSync(scorePath)) {
-      const content = readFileSync(scorePath, 'utf-8');
-      results[reviewer] = {
-        score: parseScore(content),
-        hasReport: true,
-        blockers: existsSync(blockerPath) ? parseBlockers(readFileSync(blockerPath, 'utf-8')) : [],
-        improvements: existsSync(improvementPath) ? readFileSync(improvementPath, 'utf-8') : null,
-      };
-    } else if (existsSync(blockerPath)) {
-      const blockerContent = readFileSync(blockerPath, 'utf-8');
-      results[reviewer] = {
-        score: null,
-        hasReport: true,
-        blockers: parseBlockers(blockerContent),
-        improvements: existsSync(improvementPath) ? readFileSync(improvementPath, 'utf-8') : null,
-      };
-    } else {
-      results[reviewer] = {
-        score: null,
-        hasReport: false,
-        blockers: [],
-        improvements: null,
-      };
+    let score = null;
+    let blockers = [];
+    let improvements = null;
+    let hasReport = false;
+    let scoreSource = null;
+
+    // Priority: result.yaml > score.md (for score)
+    // Blockers: blockers.md OR result.yaml OR score.md
+
+    // Try result.yaml first (if exists)
+    if (existsSync(resultYamlPath)) {
+      try {
+        const yamlContent = readFileSync(resultYamlPath, 'utf-8');
+        const yamlResult = parseYamlResult(yamlContent);
+
+        if (yamlResult.score !== null) {
+          score = yamlResult.score;
+          scoreSource = 'result.yaml';
+        }
+
+        if (yamlResult.blockers.length > 0) {
+          blockers = yamlResult.blockers.map(b =>
+            typeof b === 'string' ? b : `${b.priority}: ${b.text}`
+          );
+        }
+
+        hasReport = true;
+      } catch (e) {
+        // result.yaml exists but couldn't be parsed - fall through to score.md
+      }
     }
+
+    // Fall back to score.md for score (if result.yaml didn't have one)
+    if (score === null && existsSync(scorePath)) {
+      try {
+        const content = readFileSync(scorePath, 'utf-8');
+        const parsedScore = parseScore(content);
+        if (parsedScore !== null) {
+          score = parsedScore;
+          scoreSource = 'score.md';
+        }
+
+        // Also extract blockers from score.md if not found in result.yaml
+        if (blockers.length === 0) {
+          // Look for "Blockers" or "## Blockers" section in score.md
+          const blockerMatch = content.match(/(?:##\s+)?Blockers?\s*\n([\s\S]*?)(?:\n##|\n#|$)/i);
+          if (blockerMatch) {
+            const blockerSection = blockerMatch[1];
+            blockers = parseBlockers(blockerSection);
+          }
+        }
+
+        hasReport = true;
+      } catch (e) {
+        // score.md exists but couldn't be read
+      }
+    }
+
+    // Load blockers.md if exists and blockers still empty
+    if (blockers.length === 0 && existsSync(blockerPath)) {
+      try {
+        const blockerContent = readFileSync(blockerPath, 'utf-8');
+        blockers = parseBlockers(blockerContent);
+        hasReport = true;
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    // Load improvements
+    if (existsSync(improvementPath)) {
+      try {
+        improvements = readFileSync(improvementPath, 'utf-8');
+        hasReport = true;
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    // Validate reviewer identity
+    const validation = validateReviewerIdentity(reviewer, profile);
+
+    results[reviewer] = {
+      score,
+      scoreSource, // Track where the score came from
+      hasReport,
+      blockers,
+      improvements,
+      isValidReviewer: validation.valid,
+      validationError: validation.error,
+    };
   }
 
   return results;
@@ -626,11 +977,37 @@ async function runGate() {
 
   // Determine reviewers to run
   let reviewers = [];
+  let profileConfig = PROFILES[profile] || PROFILES['release-gate'];
+
+  // Try to load YAML profile first (overrides PROFILES object)
+  const yamlProfile = loadYamlProfile(profile);
+  if (yamlProfile) {
+    log.info(`Loaded YAML profile: ${yamlProfile.name}`);
+
+    // Start with resident reviewers
+    reviewers = [...yamlProfile.resident_reviewers];
+
+    // Detect and add conditional reviewers
+    const triggeredConditional = detectConditionalReviewers(yamlProfile);
+    if (triggeredConditional.length > 0) {
+      log.info(`Conditional reviewers triggered: ${triggeredConditional.join(', ')}`);
+      reviewers = [...reviewers, ...triggeredConditional];
+    }
+
+    profileConfig = {
+      name: yamlProfile.name,
+      description: yamlProfile.description,
+      reviewers: reviewers,
+      gate: yamlProfile.gate,
+    };
+  } else {
+    // Fall back to PROFILES object
+    reviewers = profileConfig.reviewers.filter(r => !excludeReviewers.includes(r));
+  }
+
+  // Single reviewer mode overrides profile
   if (singleReviewer) {
     reviewers = [singleReviewer];
-  } else {
-    const profileConfig = PROFILES[profile] || PROFILES['release-gate'];
-    reviewers = profileConfig.reviewers.filter(r => !excludeReviewers.includes(r));
   }
 
   // Dry run mode
@@ -724,29 +1101,55 @@ async function runGate() {
   if (completedReviewers.length > 0) {
     log.title('COMPLETED REVIEWS');
     for (const reviewer of completedReviewers) {
-      const score = existingScores[reviewer].score;
-      const blockerCount = existingScores[reviewer].blockers?.length || 0;
+      const reviewerResult = existingScores[reviewer];
+      const score = reviewerResult.score;
+      const blockerCount = reviewerResult.blockers?.length || 0;
+      const isValid = reviewerResult.isValidReviewer;
+      const scoreSource = reviewerResult.scoreSource;
+
+      // Validate reviewer identity
+      if (!isValid) {
+        console.log(`  ${colors.red}✗${colors.reset} ${reviewer}: ${colors.red}INVALID REVIEWER${colors.reset}`);
+        console.log(`    ${colors.yellow}⚠${colors.reset} ${reviewerResult.validationError}`);
+        continue;
+      }
 
       if (score !== null) {
         const icon = score >= 90 ? '✅' : '❌';
-        const blockerIcon = blockerCount > 0 ? ` ⚠${blockerCount}` : '';
-        console.log(`  ${icon} ${reviewer}: ${score}/100${blockerIcon}`);
-      } else if (existingScores[reviewer].hasReport) {
-        console.log(`  ⚠ ${reviewer}: incomplete${blockerCount > 0 ? ` ⚠${blockerCount}` : ''}`);
+        const blockerIcon = blockerCount > 0 ? ` ${colors.yellow}⚠${blockerCount}${colors.reset}` : '';
+        const sourceNote = scoreSource === 'result.yaml' ? ` ${colors.dim}(verified)${colors.reset}` : '';
+        console.log(`  ${icon} ${reviewer}: ${score}/100${blockerIcon}${sourceNote}`);
+      } else if (reviewerResult.hasReport) {
+        console.log(`  ${colors.yellow}⚠${colors.reset} ${reviewer}: incomplete${blockerCount > 0 ? ` ${colors.yellow}⚠${blockerCount}${colors.reset}` : ''}`);
       }
     }
     console.log('');
   }
 
   // Calculate overall status
+  // SECURITY: All reviewers must be valid, have scores, and pass the 90 threshold
+  const allValid = reviewers.every(r => existingScores[r].isValidReviewer !== false);
   const allHaveScores = reviewers.every(r => existingScores[r].score !== null);
   const allPassed = allHaveScores && reviewers.every(r => existingScores[r].score >= 90);
   const hasRedlines = Object.values(existingScores).some(r =>
     r.blockers && r.blockers.length > 0
   );
+  const hasInvalidReviewers = Object.values(existingScores).some(r => !r.isValidReviewer);
 
   // Summary
   log.title('GATE STATUS');
+
+  // SECURITY: Block if any reviewer is invalid
+  if (hasInvalidReviewers) {
+    log.error('GATE BLOCKED - Invalid reviewers detected');
+    for (const [reviewer, result] of Object.entries(existingScores)) {
+      if (!result.isValidReviewer) {
+        log.error(`  - ${reviewer}: ${result.validationError}`);
+      }
+    }
+    generateSummary(roundDir, profile, existingScores, false, evidence);
+    return false;
+  }
 
   if (allHaveScores) {
     if (allPassed && !hasRedlines) {

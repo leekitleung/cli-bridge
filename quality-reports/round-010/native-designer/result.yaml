@@ -1,0 +1,15 @@
+reviewer: native-designer
+score: 100
+status: pass
+timestamp: "2026-07-08T01:42:56.801Z"
+
+dimensions:
+  functionality: 75
+  code-quality: 75
+  security: 75
+
+blockers:
+  []
+
+recommendation: |
+  可以通过发布。

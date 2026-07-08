@@ -1,8 +1,17 @@
 # Quality Review Summary - Round 2
 
-**Profile:** release-gate
-**Generated:** 2026-07-07T08:28:24.508Z
+**Profile:** default
+**Generated:** 2026-07-08T02:58:27.172Z
 **Git:** "" @ ""
+## Automated Gate Checks
+
+| Check | Status | Details |
+|-------|--------|--------|
+| pnpm test | ✅ pass | Tests passed |
+| pnpm typecheck | ✅ pass | Typecheck passed |
+| File sizes | ✅ 0 oversized | OK |
+| Circular deps | ✅ | None found |
+| Secrets scan | ✅ | Clean |
 
 ---
 
@@ -10,13 +19,17 @@
 
 | Reviewer | Score | Status | Blockers |
 |----------|-------|--------|----------|
-| product-flow | - | ⏳ PENDING | - |
-| architecture-maintainer | - | ⏳ PENDING | - |
-| release-verifier | - | ⏳ PENDING | - |
-| destructive-qa | - | ⏳ PENDING | - |
-| terminal-veteran | - | ⏳ PENDING | - |
+| product-flow | 82/100 | ❌ FAIL | ⚠ 1 |
+| destructive-qa | 82/100 | ❌ FAIL | ⚠ 1 |
+| terminal-veteran | 85/100 | ❌ FAIL | ⚠ 1 |
 
-**Total:** 0/5 passed, 0 blockers
+**Total:** 0/3 passed, 3 blockers
+
+## Blockers Detail
+
+- **product-flow:** id: PF-001
+- **destructive-qa:** id: DQA-001
+- **terminal-veteran:** id: TV-001
 
 ---
 
@@ -26,6 +39,11 @@ This release has not passed quality gates. Fix the issues below and re-run revie
 
 **To continue:**
 ```bash
-node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate --round 3
+node skills/release-quality-review/scripts/review-runner.mjs --profile default --round 3
 ```
 
+**Top priorities to fix:**
+
+1. [product-flow] id: PF-001
+2. [destructive-qa] id: DQA-001
+3. [terminal-veteran] id: TV-001

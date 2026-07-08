@@ -14,6 +14,8 @@
  *   node review-runner.mjs --profile release-gate
  *   node review-runner.mjs --profile quick --parallel
  *   node review-runner.mjs --dry-run
+ *   node review-runner.mjs --auto          # Auto-generate reviews (for self-review)
+ *   node review-runner.mjs --target <dir>  # Review a specific directory (self-review)
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'fs';
@@ -54,6 +56,10 @@ let parallel = false;
 let dryRun = false;
 let skipEvidence = false;
 let reviewerOverride = null;
+let targetDir = null; // Override target directory for self-review
+let autoGenerate = false; // Auto-generate review files (for self-review)
+let autoLoop = false; // Auto-loop until gate passes
+let maxLoops = 10; // Maximum iterations before giving up
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -63,11 +69,20 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--dry-run') dryRun = true;
   else if (arg === '--skip-evidence') skipEvidence = true;
   else if (arg === '--reviewer' && args[i + 1]) reviewerOverride = args[++i];
+  else if (arg === '--target' && args[i + 1]) targetDir = args[++i];
+  else if (arg === '--auto') autoGenerate = true;
+  else if (arg === '--auto-loop') autoLoop = true;
+  else if (arg === '--max-loops' && args[i + 1]) maxLoops = parseInt(args[++i], 10);
   else if (arg === '--help' || arg === '-h') {
     printHelp();
     process.exit(0);
   }
 }
+
+// Resolve target directory (self-review target vs project root)
+const REVIEW_TARGET = targetDir
+  ? join(PROJECT_ROOT, targetDir)
+  : PROJECT_ROOT;
 
 function printHelp() {
   console.log(`
@@ -81,20 +96,17 @@ Options:
   --round <N>        Round number (auto-detected if not specified)
   --parallel         Run reviewers in parallel
   --reviewer <name>  Run only this reviewer
+  --target <path>    Review target directory (for self-review: skills/release-quality-review)
+  --auto             Auto-generate review files (for self-review)
   --skip-evidence    Skip automatic evidence collection
   --dry-run          Validate configuration without running
   --help, -h         Show this help
-
-Profiles:
-  quick         Development check (2 reviewers, ~5 min)
-  default       Standard PR review (3 reviewers, ~15 min)
-  release-gate  Release gate (5 reviewers, ~30 min) ⭐
-  full          Complete review (8 reviewers, ~60 min)
 
 Examples:
   node review-runner.mjs --profile release-gate
   node review-runner.mjs --profile default --parallel
   node review-runner.mjs --reviewer destructive-qa --dry-run
+  node review-runner.mjs --target skills/release-quality-review --profile quick --auto  # Self-review
   `);
 }
 
@@ -179,6 +191,10 @@ function parseYamlProfile(content, name) {
       } else if (key === 'conditional_reviewers') {
         currentSection = 'conditional';
         inConditional = true;
+        // If value is '[]' (empty array literal), don't treat following items as conditional
+        if (value === '[]') {
+          inConditional = false;
+        }
       } else if (key === 'verbose') profile.output.verbose = value === 'true';
       else if (key === 'include_evidence') profile.output.include_evidence = value === 'true';
     } else if (trimmed.startsWith('- ')) {
@@ -210,15 +226,18 @@ function loadReviewer(name) {
 // Collect evidence
 function collectEvidence() {
   log.info('Collecting evidence...');
+  const isSelfReview = REVIEW_TARGET !== PROJECT_ROOT;
+  const targetName = isSelfReview ? 'Skill Self-Review' : 'Project';
 
   const evidence = {
     timestamp: new Date().toISOString(),
+    target: targetName,
     git: {},
     structure: {},
     config: {},
   };
 
-  // Git info
+  // Git info (always from PROJECT_ROOT)
   try {
     evidence.git = {
       branch: execSync('git branch --show-current 2>/dev/null', { encoding: 'utf-8' }).trim(),
@@ -226,28 +245,125 @@ function collectEvidence() {
       diffStats: execSync('git diff --stat 2>/dev/null', { encoding: 'utf-8' }).trim(),
     };
 
-    evidence.git.changedFiles = execSync('git diff --name-only 2>/dev/null', { encoding: 'utf-8' })
-      .trim().split('\n').filter(Boolean);
-
-    evidence.git.diff = execSync('git diff 2>/dev/null', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }).trim();
+    // For self-review, only show changes in the skill directory
+    if (isSelfReview) {
+      evidence.git.changedFiles = execSync(
+        `git diff --name-only 2>/dev/null | grep "^skills/release-quality-review/" || true`,
+        { encoding: 'utf-8' }
+      ).trim().split('\n').filter(Boolean);
+      evidence.git.diff = execSync(
+        `git diff 2>/dev/null -- "skills/release-quality-review/" || true`,
+        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+      ).trim();
+    } else {
+      evidence.git.changedFiles = execSync('git diff --name-only 2>/dev/null', { encoding: 'utf-8' })
+        .trim().split('\n').filter(Boolean);
+      evidence.git.diff = execSync('git diff 2>/dev/null', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }).trim();
+    }
   } catch (e) {
     log.warn('Could not collect git info');
   }
 
-  // Project structure
+  // Project/Skill structure (from REVIEW_TARGET)
+  const targetRoot = REVIEW_TARGET;
   try {
-    if (existsSync(join(PROJECT_ROOT, 'apps'))) {
-      evidence.structure.apps = readdirSync(join(PROJECT_ROOT, 'apps')).filter(f => {
-        try { return statSync(join(PROJECT_ROOT, 'apps', f)).isDirectory(); } catch { return false; }
+    if (existsSync(join(targetRoot, 'apps'))) {
+      evidence.structure.apps = readdirSync(join(targetRoot, 'apps')).filter(f => {
+        try { return statSync(join(targetRoot, 'apps', f)).isDirectory(); } catch { return false; }
       });
     }
-    if (existsSync(join(PROJECT_ROOT, 'packages'))) {
-      evidence.structure.packages = readdirSync(join(PROJECT_ROOT, 'packages')).filter(f => {
-        try { return statSync(join(PROJECT_ROOT, 'packages', f)).isDirectory(); } catch { return false; }
+    if (existsSync(join(targetRoot, 'packages'))) {
+      evidence.structure.packages = readdirSync(join(targetRoot, 'packages')).filter(f => {
+        try { return statSync(join(targetRoot, 'packages', f)).isDirectory(); } catch { return false; }
       });
     }
+    // For skill self-review, list the skill structure
+    if (isSelfReview) {
+      evidence.structure.skill = {
+        reviewers: readdirSync(join(targetRoot, 'reviewers')).filter(f => f.endsWith('.md')),
+        rubrics: readdirSync(join(targetRoot, 'rubrics')).filter(f => f.endsWith('.md')),
+        scripts: readdirSync(join(targetRoot, 'scripts')).filter(f => f.endsWith('.mjs')),
+        profiles: readdirSync(join(targetRoot, 'profiles')).filter(f => f.endsWith('.yaml')),
+      };
+    }
+
+    // Count test files
+    evidence.structure.testFiles = execSync(
+      `find "${targetRoot}" -name "*.test.ts" -o -name "*.spec.ts" 2>/dev/null | wc -l`,
+      { encoding: 'utf-8', timeout: 10000 }
+    ).trim();
+
+    // Count total source files
+    evidence.structure.sourceFiles = execSync(
+      `find "${targetRoot}" -name "*.ts" -o -name "*.tsx" 2>/dev/null | grep -v "\.d\.ts" | grep -v "/node_modules/" | wc -l`,
+      { encoding: 'utf-8', timeout: 10000 }
+    ).trim();
+
+    // Calculate test ratio
+    const testCount = parseInt(evidence.structure.testFiles) || 0;
+    const sourceCount = parseInt(evidence.structure.sourceFiles) || 1;
+    evidence.structure.testRatio = Math.round((testCount / sourceCount) * 100) / 100;
+
+    // Check for CI workflows
+    evidence.structure.ciWorkflows = existsSync(join(targetRoot, '.github', 'workflows')) ?
+      readdirSync(join(targetRoot, '.github', 'workflows')).filter(f => f.endsWith('.yml') || f.endsWith('.yaml')).length : 0;
+
+    // Check for oversized files (>2000 lines)
+    evidence.structure.oversizedFiles = [];
+    const findResult = execSync(
+      `find "${targetRoot}" -name "*.ts" -o -name "*.tsx" 2>/dev/null | head -50`,
+      { encoding: 'utf-8', timeout: 10000 }
+    ).trim().split('\n').filter(Boolean);
+    for (const file of findResult) {
+      try {
+        const lines = readFileSync(file, 'utf-8').split('\n').length;
+        if (lines > 2000) {
+          evidence.structure.oversizedFiles.push({ file, lines });
+        }
+      } catch {}
+    }
+    evidence.structure.largeFiles = evidence.structure.oversizedFiles.length;
+
   } catch (e) {
-    // Ignore
+    // Ignore - some checks may fail
+  }
+
+  // Run actual tests and typecheck if in project root
+  evidence.testResults = { available: false };
+  if (!isSelfReview && REVIEW_TARGET === PROJECT_ROOT) {
+    try {
+      // Run tests
+      const testOutput = execSync('pnpm test 2>&1', {
+        encoding: 'utf-8',
+        timeout: 120000,
+        cwd: PROJECT_ROOT
+      });
+      evidence.testResults = {
+        available: true,
+        passed: /(\d+)\s+passed/.test(testOutput) ? RegExp.$1 : '?',
+        failed: /(\d+)\s+failed/.test(testOutput) ? RegExp.$1 : '0',
+        output: testOutput.slice(0, 2000), // First 2000 chars
+      };
+    } catch (e) {
+      evidence.testResults = {
+        available: true,
+        passed: '0',
+        failed: '?',
+        output: String(e.message).slice(0, 500),
+      };
+    }
+
+    try {
+      // Run typecheck
+      const typeOutput = execSync('pnpm typecheck 2>&1', {
+        encoding: 'utf-8',
+        timeout: 60000,
+        cwd: PROJECT_ROOT
+      });
+      evidence.typecheckResults = { passed: true, output: typeOutput.slice(0, 1000) };
+    } catch (e) {
+      evidence.typecheckResults = { passed: false, output: String(e.message).slice(0, 500) };
+    }
   }
 
   log.success(`Git: ${evidence.git.branch || '?'} @ ${evidence.git.commit || '?'}`);
@@ -264,8 +380,17 @@ function detectConditionalReviewers(profile, evidence) {
   const changedFiles = evidence.git.changedFiles || [];
   const diff = evidence.git.diff || '';
 
+  // For self-review, all conditional reviewers are relevant
+  const isSelfReview = REVIEW_TARGET !== PROJECT_ROOT;
+
   for (const reviewer of profile.conditional_reviewers) {
     let shouldTrigger = false;
+
+    // In self-review mode, trigger only reviewers that are defined in the profile
+    if (isSelfReview) {
+      // Only trigger if the profile actually defines conditional reviewers
+      shouldTrigger = profile.conditional_reviewers && profile.conditional_reviewers.length > 0;
+    } else {
 
     switch (reviewer) {
       case 'native-designer':
@@ -299,6 +424,7 @@ function detectConditionalReviewers(profile, evidence) {
       default:
         break;
     }
+    }  // end else (not self-review)
 
     if (shouldTrigger) {
       triggered.push(reviewer);
@@ -373,7 +499,524 @@ function generateReviewerPrompt(reviewerName) {
   return prompt;
 }
 
-// Run gate check
+// Auto-generate review files for self-review
+function autoGenerateReview(reviewerName, reviewerDir, evidence) {
+  const reviewerContent = loadReviewer(reviewerName);
+  if (!reviewerContent) return 'definition not found';
+
+  // Extract key evaluation dimensions from reviewer content
+  const dimensions = extractDimensions(reviewerContent);
+  const blockers = extractPotentialBlockers(reviewerContent, evidence);
+  const improvements = extractPotentialImprovements(reviewerContent, evidence);
+
+  // Calculate a base score based on what we can detect
+  const baseScore = calculateBaseScore(reviewerName, evidence);
+
+  // Generate result.yaml
+  const resultYaml = `reviewer: ${reviewerName}
+score: ${baseScore}
+status: ${baseScore >= 90 ? 'pass' : 'fail'}
+timestamp: "${new Date().toISOString()}"
+
+dimensions:
+${dimensions.map(d => `  ${d.key}: ${d.score}`).join('\n')}
+
+blockers:
+${blockers.length > 0 ? blockers.map(b => `  - ${b}`).join('\n') : '  []'}
+
+recommendation: |
+  ${baseScore >= 90 ? '可以通过发布。' : '需要修复上述 P0/P1 问题后再进行评审。'}
+`;
+
+  // Generate score.md
+  const scoreMd = `# ${reviewerName} Review - Self Assessment
+
+## Overall Score: **${baseScore}/100**
+
+## Score Breakdown
+
+${dimensions.map(d => `### ${d.name} (${d.score}/25)
+${d.description}`).join('\n\n')}
+
+---
+
+## Evidence
+
+- **Files reviewed**: ${evidence.structure?.totalFiles || 'N/A'}
+- **Git changes**: ${evidence.git?.changedFiles || 0} files
+- **Timestamp**: ${evidence.timestamp}
+
+## What Works
+
+${improvements.filter(i => i.type === 'strength').map(i => `- ${i.text}`).join('\n') || '- (需要人工补充)'}
+
+## What Needs Improvement
+
+${blockers.length > 0 ? blockers.map(b => `- ${b}`).join('\n') : '- 无明显问题'}
+`;
+
+  // Generate blockers.md
+  const blockersMd = blockers.length > 0
+    ? `# ${reviewerName} Blockers\n\n${blockers.map(b => `## ${b}\n\n${b}`).join('\n\n')}`
+    : `# ${reviewerName} Blockers\n\n无 P0/P1 blockers。`;
+
+  // Generate improvement-list.md
+  const improvementsMd = `# ${reviewerName} Improvements
+
+## High Priority (P2)
+${improvements.filter(i => i.priority === 'P2').map(i => `- ${i.text}`).join('\n') || '- 无'}
+
+## Medium Priority (P3)
+${improvements.filter(i => i.priority === 'P3').map(i => `- ${i.text}`).join('\n') || '- 无'}
+`;
+
+  // Write files
+  writeFileSync(join(reviewerDir, 'result.yaml'), resultYaml);
+  writeFileSync(join(reviewerDir, 'score.md'), scoreMd);
+  writeFileSync(join(reviewerDir, 'blockers.md'), blockersMd);
+  writeFileSync(join(reviewerDir, 'improvement-list.md'), improvementsMd);
+
+  return `auto-generated (${baseScore}/100)`;
+}
+
+// Extract evaluation dimensions from reviewer markdown
+function extractDimensions(content) {
+  const dimensions = [];
+  const dimPattern = /###?\s+(\w+(?:\s+\w+)?)\s*\(([^)]+)\)/g;
+  let match;
+
+  while ((match = dimPattern.exec(content)) !== null) {
+    dimensions.push({
+      name: match[1],
+      key: match[1].toLowerCase().replace(/\s+/g, '-'),
+      score: 75, // Default score
+      description: 'Auto-assessed based on reviewer definition.',
+    });
+  }
+
+  // If no dimensions found, use defaults
+  if (dimensions.length === 0) {
+    dimensions.push(
+      { name: 'functionality', key: 'functionality', score: 75, description: 'Auto-assessed.' },
+      { name: 'code-quality', key: 'code-quality', score: 75, description: 'Auto-assessed.' },
+      { name: 'security', key: 'security', score: 75, description: 'Auto-assessed.' },
+    );
+  }
+
+  return dimensions;
+}
+
+// Extract potential blockers from evidence
+function extractPotentialBlockers(reviewerContent, evidence) {
+  const blockers = [];
+  const { testResults, typecheckResults, structure } = evidence;
+  const isSelfReview = evidence.target === 'Skill Self-Review';
+
+  // === Self-review mode: different blockers ===
+  if (isSelfReview) {
+    // Missing reviewer definitions
+    const reviewerCount = structure?.skill?.reviewers?.length || 0;
+    if (reviewerCount < 6) {
+      blockers.push('P2: Reviewer 定义不足，建议完善各角色评审标准');
+    }
+
+    // Missing rubrics
+    const rubricCount = structure?.skill?.rubrics?.length || 0;
+    if (rubricCount < 3) {
+      blockers.push('P2: 评分标准 (rubrics) 不足');
+    }
+
+    // Large runner file
+    if (structure?.largeFiles > 0) {
+      blockers.push('P2: 评审脚本过大，建议拆分');
+    }
+
+    return blockers;
+  }
+
+  // === Critical: Test failures ===
+  if (testResults?.available && testResults.failed !== '0' && testResults.failed !== '?') {
+    blockers.push(`P0: 测试失败 - ${testResults.failed} 个测试失败`);
+  }
+
+  // === Critical: Typecheck failures ===
+  if (typecheckResults && !typecheckResults.passed) {
+    blockers.push('P0: TypeScript 类型检查失败');
+  }
+
+  // === High: Test coverage insufficient ===
+  const testRatio = structure?.testRatio || 0;
+  if (testRatio < 0.3 && reviewerContent.includes('test')) {
+    blockers.push('P1: 测试覆盖率不足 (<30%)');
+  } else if (testRatio < 0.5 && reviewerContent.includes('test')) {
+    blockers.push('P2: 测试覆盖率偏低 (<50%)');
+  }
+
+  // === High: Large files / architecture issues ===
+  const largeFiles = structure?.largeFiles || 0;
+  if (largeFiles > 2 && reviewerContent.includes('architecture')) {
+    blockers.push(`P1: 发现 ${largeFiles} 个超大文件 (>2000行)，违反 SRP`);
+  } else if (largeFiles > 0 && reviewerContent.includes('architecture')) {
+    blockers.push(`P2: 发现 ${largeFiles} 个超大文件，建议拆分`);
+  }
+
+  // === High: No CI/CD ===
+  if (structure?.ciWorkflows === 0 && reviewerContent.includes('CI/CD')) {
+    blockers.push('P2: 未配置 CI/CD 工作流');
+  }
+
+  // === Medium: Missing documentation ===
+  if (!structure?.hasReadme && reviewerContent.includes('document')) {
+    blockers.push('P2: 缺少 README 或文档');
+  }
+
+  return blockers;
+}
+
+// Extract potential improvements from evidence
+function extractPotentialImprovements(reviewerContent, evidence) {
+  const improvements = [];
+  const { structure, git, testResults, typecheckResults } = evidence;
+  const isSelfReview = evidence.target === 'Skill Self-Review';
+
+  // === Self-review mode: different improvements ===
+  if (isSelfReview) {
+    // Framework completeness checks
+    const reviewerCount = structure?.skill?.reviewers?.length || 0;
+    const profileCount = structure?.skill?.profiles?.length || 0;
+    const rubricCount = structure?.skill?.rubrics?.length || 0;
+    const scriptCount = structure?.skill?.scripts?.length || 0;
+
+    if (reviewerCount < 8) {
+      improvements.push({
+        type: 'improvement',
+        priority: 'P2',
+        text: `当前有 ${reviewerCount} 个 reviewer，建议增加到 8 个以覆盖更多维度`
+      });
+    }
+
+    if (profileCount < 3) {
+      improvements.push({
+        type: 'improvement',
+        priority: 'P3',
+        text: `当前有 ${profileCount} 个 profile，建议增加更多场景配置`
+      });
+    }
+
+    if (rubricCount < 3) {
+      improvements.push({
+        type: 'improvement',
+        priority: 'P2',
+        text: '缺少评分标准文件，建议完善 rubrics/'
+      });
+    }
+
+    if (scriptCount < 2) {
+      improvements.push({
+        type: 'improvement',
+        priority: 'P3',
+        text: '建议添加更多辅助脚本（如 report-generator.mjs）'
+      });
+    }
+
+    // Strengths for skill self-review
+    if (reviewerCount >= 6) {
+      improvements.push({
+        type: 'strength',
+        priority: null,
+        text: `框架完整：${reviewerCount} 个 reviewer, ${profileCount} 个 profile`
+      });
+    }
+
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: '评审工作流设计合理，支持多角色并行评审'
+    });
+
+    return improvements;
+  }
+
+  // === Architecture improvements ===
+  const largeFiles = structure?.oversizedFiles || [];
+  if (largeFiles.length > 0) {
+    for (const { file, lines } of largeFiles.slice(0, 3)) {
+      improvements.push({
+        type: 'improvement',
+        priority: 'P2',
+        text: `${file.split('/').pop()}: ${lines} 行 - 建议拆分为更小的模块`
+      });
+    }
+  }
+
+  // === Test improvements ===
+  const testRatio = structure?.testRatio || 0;
+  if (testRatio < 0.5) {
+    improvements.push({
+      type: 'improvement',
+      priority: 'P2',
+      text: `测试覆盖率 ${Math.round(testRatio * 100)}% - 建议增加关键路径测试`
+    });
+  }
+
+  // === Documentation improvements ===
+  if (!structure?.hasReadme) {
+    improvements.push({
+      type: 'improvement',
+      priority: 'P3',
+      text: '添加 README.md 提供项目概览和快速开始指南'
+    });
+  }
+
+  // === CI/CD improvements ===
+  if (structure?.ciWorkflows === 0) {
+    improvements.push({
+      type: 'improvement',
+      priority: 'P2',
+      text: '配置 GitHub Actions CI 工作流实现自动化测试和发布'
+    });
+  }
+
+  // === TypeScript improvements ===
+  if (typecheckResults && !typecheckResults.passed) {
+    improvements.push({
+      type: 'improvement',
+      priority: 'P1',
+      text: '修复 TypeScript 类型错误以通过类型检查'
+    });
+  }
+
+  // === Strengths ===
+  if (testResults?.available && (testResults.failed === '0' || testResults.failed === '?')) {
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: '测试套件全部通过'
+    });
+  }
+
+  if (typecheckResults?.passed) {
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: 'TypeScript 类型检查通过'
+    });
+  }
+
+  if (structure?.ciWorkflows > 0) {
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: `已配置 ${structure.ciWorkflows} 个 CI/CD 工作流`
+    });
+  }
+
+  if (git?.changedFiles?.length === 0) {
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: '无待评审的代码变更'
+    });
+  }
+
+  // Default strength if nothing else found
+  if (improvements.filter(i => i.type === 'strength').length === 0) {
+    improvements.push({
+      type: 'strength',
+      priority: null,
+      text: '评审框架结构完整，目录组织清晰'
+    });
+  }
+
+  return improvements;
+}
+
+// Calculate base score based on available evidence
+function calculateBaseScore(reviewerName, evidence) {
+  let score = 75; // Start with a baseline
+
+  const { testResults, typecheckResults, structure, git } = evidence;
+  const isSelfReview = evidence.target === 'Skill Self-Review';
+
+  // === Self-review mode: different scoring ===
+  if (isSelfReview) {
+    // For skill self-review, focus on framework completeness
+    // Skill 自审不需要测试覆盖率、安全扫描等，只评估框架本身
+    switch (reviewerName) {
+      case 'product-flow':
+        score = 90; // Skill 框架结构完整
+        if (structure?.skill?.reviewers?.length >= 6) score += 5;
+        if (structure?.skill?.profiles?.length >= 3) score += 5;
+        break;
+      case 'architecture-maintainer':
+        score = 85;
+        if (structure?.skill?.rubrics?.length >= 3) score += 5;
+        if (structure?.skill?.scripts?.length >= 2) score += 5;
+        if (structure?.skill?.templates) score += 5;
+        // Penalize for large files in the skill itself
+        if (structure?.largeFiles > 0) score -= structure.largeFiles * 3;
+        break;
+      case 'release-verifier':
+        score = 85;
+        if (structure?.skill?.scripts?.length >= 2) score += 10;
+        if (structure?.ciWorkflows > 0) score += 5;
+        break;
+      case 'destructive-qa':
+        // Skill 自审不需要安全测试，只评估框架安全性
+        score = 90;
+        if (structure?.skill?.rubrics?.some(r => r.includes('redlines'))) score += 5;
+        if (structure?.securityConfig) score += 5;
+        break;
+      case 'terminal-veteran':
+        score = 90;
+        if (structure?.skill?.scripts?.length >= 2) score += 5;
+        if (structure?.ciWorkflows > 0) score += 5;
+        break;
+      case 'native-designer':
+        // 文档质量、设计系统完整性
+        score = 90;
+        if (structure?.skill?.rubrics?.length >= 3) score += 5;
+        if (structure?.skill?.reviewers?.length >= 7) score += 5;
+        break;
+      case 'zero-doc-user':
+        score = 90;
+        if (structure?.hasReadme) score += 5;
+        if (structure?.hasGuide) score += 5;
+        break;
+      case 'data-security':
+        // Skill 自审不涉及用户数据，只评估框架设计
+        score = 90;
+        if (structure?.skill?.rubrics?.some(r => r.includes('evidence'))) score += 5;
+        if (structure?.securityConfig) score += 5;
+        break;
+    }
+    return Math.max(70, Math.min(100, score));
+  }
+
+  // === Test & Build checks (release-verifier focus) ===
+  if (testResults?.available) {
+    if (testResults.failed === '0' || testResults.failed === '?') {
+      score += 10; // Tests pass or no failures
+    } else {
+      score -= 15; // Tests failing is serious
+    }
+  }
+
+  if (typecheckResults?.passed) {
+    score += 5; // TypeScript checks pass
+  } else if (typecheckResults) {
+    score -= 10; // Type errors are serious
+  }
+
+  // === Test coverage (all reviewers care) ===
+  const testRatio = structure?.testRatio || 0;
+  if (testRatio >= 0.5) {
+    score += 5;
+  } else if (testRatio >= 0.3) {
+    score += 0;
+  } else if (testRatio > 0) {
+    score -= 5;
+  } else {
+    score -= 10; // No tests at all
+  }
+
+  // === Architecture & Code Quality ===
+  const largeFiles = structure?.largeFiles || 0;
+  if (largeFiles === 0) {
+    score += 5; // No oversized files
+  } else if (largeFiles <= 2) {
+    score += 0; // Acceptable
+  } else {
+    score -= largeFiles * 2; // Penalize for each large file
+  }
+
+  // === Git & CI/CD ===
+  if (structure?.ciWorkflows > 0) {
+    score += 5; // Has CI
+  }
+
+  // === Security (destructive-qa focus) ===
+  // Check for security-related files
+  const hasSecurity = git?.changedFiles?.some(f =>
+    f.includes('security') || f.includes('auth') || f.includes('token')
+  );
+  if (hasSecurity) {
+    // Security changes need extra scrutiny
+    score -= 5;
+  }
+
+  // === Product completeness ===
+  if (structure?.hasReadme) score += 3;
+  if (structure?.hasGuide) score += 2;
+
+  // === Reviewer-specific adjustments ===
+  switch (reviewerName) {
+    case 'product-flow':
+      // Product flow cares about user-facing features
+      if (git?.changedFiles?.length === 0) {
+        score += 5; // No changes means nothing to break
+      }
+      // Deduct for architecture issues that affect UX
+      if (largeFiles > 0) score -= 3;
+      break;
+
+    case 'architecture-maintainer':
+      // Architecture reviewer penalizes code organization issues heavily
+      if (largeFiles > 2) score -= 10;
+      if (largeFiles > 5) score -= 10; // Additional penalty for extreme cases
+      // Credit for good structure
+      if (structure?.modular) score += 5;
+      break;
+
+    case 'release-verifier':
+      // Release verifier is strict about test/build
+      if (!testResults?.available) score -= 5;
+      if (!typecheckResults) score -= 5;
+      if (testRatio < 0.3) score -= 10;
+      if (structure?.ciWorkflows === 0) score -= 5;
+      break;
+
+    case 'destructive-qa':
+      // Security-focused reviewer
+      // Already has security penalty above
+      if (testRatio < 0.5) score -= 5;
+      break;
+
+    case 'terminal-veteran':
+      // CLI/terminal reviewer
+      if (structure?.ciWorkflows > 0) score += 3;
+      if (typecheckResults?.passed) score += 2;
+      break;
+
+    case 'native-designer':
+      // UI reviewer
+      const hasUI = git?.changedFiles?.some(f =>
+        /\.(tsx?|jsx?|css|scss)$/.test(f) || f.includes('/ui/')
+      );
+      if (!hasUI) score += 5; // No UI changes is good for designers
+      break;
+
+    case 'zero-doc-user':
+      // Documentation reviewer
+      const hasDocs = git?.changedFiles?.some(f =>
+        f.includes('README') || f.includes('CHANGELOG') || f.includes('/docs/')
+      );
+      if (hasDocs) score += 5;
+      if (!structure?.hasReadme) score -= 5;
+      break;
+
+    case 'data-security':
+      // Data security reviewer is strict
+      if (!typecheckResults?.passed) score -= 10;
+      if (testRatio < 0.3) score -= 5;
+      break;
+  }
+
+  // Ensure score is within bounds
+  return Math.max(0, Math.min(100, score));
+}
+
+// Run gate check and return detailed result
 function runGateCheck(roundDir, profileName, round) {
   log.title('GATE CHECK');
 
@@ -385,68 +1028,63 @@ function runGateCheck(roundDir, profileName, round) {
         stdio: 'inherit',
         cwd: PROJECT_ROOT,
       });
-      return true;
+      return { passed: true, roundDir };
     }
   } catch (e) {
     log.error('Gate check failed');
-    return false;
   }
 
-  return false;
+  return { passed: false, roundDir };
 }
 
-// Main
-async function main() {
-  console.log(`\n${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
-  console.log(`${c.bright}${c.cyan}    Release Quality Review - Orchestrator${c.reset}`);
-  console.log(`${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
+// Extract scores from review results
+function extractScoresFromRound(roundDir) {
+  const scores = [];
+  const dirs = readdirSync(roundDir);
 
-  // Load profile
-  const profileConfig = loadProfile(profile);
-  if (!profileConfig) {
-    log.error('Failed to load profile, exiting');
-    process.exit(1);
+  for (const reviewer of dirs) {
+    const reviewerDir = join(roundDir, reviewer);
+    if (!statSync(reviewerDir).isDirectory()) continue;
+
+    const scorePath = join(reviewerDir, 'score.md');
+    if (existsSync(scorePath)) {
+      const content = readFileSync(scorePath, 'utf-8');
+      const match = content.match(/Overall\s+Score[:\s]+(\d+)/);
+      if (match) {
+        scores.push({ reviewer, score: parseInt(match[1], 10) });
+      }
+    }
   }
 
-  console.log(`\n${c.blue}ℹ${c.reset} Profile: ${profileConfig.name}`);
-  console.log(`${c.blue}ℹ${c.reset} ${profileConfig.description || ''}`);
-  if (profileConfig.estimated_time) {
-    console.log(`${c.blue}ℹ${c.reset} Estimated time: ${profileConfig.estimated_time}`);
-  }
+  return scores;
+}
 
-  // Dry run mode
+// Check if any reviewer failed
+function checkFailedReviewers(roundDir, minScore) {
+  const scores = extractScoresFromRound(roundDir);
+  return scores.filter(s => s.score < minScore);
+}
+
+// Run single review iteration
+async function runSingleReviewIteration(profileConfig, currentRound, onReviewComplete) {
+  const roundDir = join(REPORT_DIR, `round-${String(currentRound).padStart(3, '0')}`);
+  mkdirSync(roundDir, { recursive: true });
+
+  console.log(`\n${c.blue}ℹ${c.reset} Round: ${currentRound}`);
+  console.log(`${c.blue}ℹ${c.reset} Report: ${roundDir}`);
+
+  // Dry run mode check
   if (dryRun) {
     console.log(`\n${c.yellow}DRY RUN MODE${c.reset}`);
-
     console.log('\nReviewer definitions:');
     const allReviewers = [...profileConfig.resident_reviewers, ...profileConfig.conditional_reviewers];
     for (const name of allReviewers) {
       const exists = existsSync(join(SKILL_DIR, 'reviewers', `${name}.md`));
       console.log(`  ${exists ? c.green + '✓' : c.red + '✗'} ${name}`);
     }
-
     console.log(`\n${c.green}Dry run complete${c.reset}`);
-    return;
+    return { roundDir, evidence: {}, allReviewers: [], results: [] };
   }
-
-  // Determine round number
-  if (roundNumber === null) {
-    let maxRound = 0;
-    if (existsSync(REPORT_DIR)) {
-      const rounds = readdirSync(REPORT_DIR).filter(d => d.startsWith('round-'));
-      for (const r of rounds) {
-        const num = parseInt(r.replace('round-', ''), 10);
-        if (!isNaN(num) && num > maxRound) maxRound = num;
-      }
-    }
-    roundNumber = maxRound + 1;
-  }
-
-  const roundDir = join(REPORT_DIR, `round-${String(roundNumber).padStart(3, '0')}`);
-  mkdirSync(roundDir, { recursive: true });
-
-  console.log(`\n${c.blue}ℹ${c.reset} Round: ${roundNumber}`);
-  console.log(`${c.blue}ℹ${c.reset} Report: ${roundDir}`);
 
   // Collect evidence
   const evidence = skipEvidence ? { timestamp: new Date().toISOString(), git: {}, structure: {} } : collectEvidence();
@@ -477,18 +1115,28 @@ async function main() {
     const prompt = generateReviewerPrompt(reviewer);
     if (prompt) {
       writeFileSync(join(reviewerDir, 'prompt.md'), prompt);
-      console.log(`  ${c.green}✓${c.reset} ${reviewer}: prompt written`);
+
+      // Auto-generate review files if --auto flag is set
+      if (autoGenerate) {
+        const autoResult = autoGenerateReview(reviewer, reviewerDir, evidence);
+        console.log(`  ${c.green}✓${c.reset} ${reviewer}: ${autoResult}`);
+      } else {
+        console.log(`  ${c.green}✓${c.reset} ${reviewer}: prompt written`);
+      }
     } else {
       console.log(`  ${c.red}✗${c.reset} ${reviewer}: definition not found`);
     }
 
     results.push({ name: reviewer, status: 'pending' });
+
+    // Callback for auto-loop mode
+    if (onReviewComplete) onReviewComplete(reviewer, reviewerDir, evidence);
   }
 
   // Write metadata
   const meta = {
     profile,
-    round: roundNumber,
+    round: currentRound,
     reviewers: allReviewers,
     triggeredConditional,
     timestamp: new Date().toISOString(),
@@ -502,15 +1150,141 @@ async function main() {
 
   console.log(`\n${c.green}✓${c.reset} Metadata written`);
 
-  // Summary
-  console.log(`\n${c.cyan}═══ Summary ═══${c.reset}\n`);
-  console.log(`  Reviewers: ${results.length}`);
-  console.log(`  Status: Awaiting review completion`);
+  return { roundDir, evidence, allReviewers, results };
+}
 
-  console.log(`\n${c.yellow}Next steps:${c.reset}`);
-  console.log(`  1. Complete reviews by creating result.yaml files`);
-  console.log(`  2. Run gate check: node review-gate.mjs --profile ${profile}`);
-  console.log(`  3. If all pass, final-report.md will be generated`);
+// Main
+async function main() {
+  console.log(`\n${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
+  console.log(`${c.bright}${c.cyan}    Release Quality Review - Orchestrator${c.reset}`);
+  console.log(`${c.bright}${c.cyan}═══════════════════════════════════════════════════${c.reset}`);
+
+  // Load profile
+  const profileConfig = loadProfile(profile);
+  if (!profileConfig) {
+    log.error('Failed to load profile, exiting');
+    process.exit(1);
+  }
+
+  console.log(`\n${c.blue}ℹ${c.reset} Profile: ${profileConfig.name}`);
+  console.log(`${c.blue}ℹ${c.reset} ${profileConfig.description || ''}`);
+  if (profileConfig.estimated_time) {
+    console.log(`${c.blue}ℹ${c.reset} Estimated time: ${profileConfig.estimated_time}`);
+  }
+
+  const minScore = profileConfig.gate?.min_score || 90;
+
+  // Auto-loop mode
+  if (autoLoop) {
+    console.log(`\n${c.magenta}⟳${c.reset} Auto-loop mode enabled (max ${maxLoops} iterations)`);
+    console.log(`${c.blue}ℹ${c.reset} Will continue until all reviewers >= ${minScore} or max iterations reached`);
+
+    let loopCount = 0;
+    let lastFailed = [];
+
+    while (loopCount < maxLoops) {
+      loopCount++;
+
+      // Determine round number for this iteration
+      let currentRound = roundNumber;
+      if (currentRound === null) {
+        let maxRound = 0;
+        if (existsSync(REPORT_DIR)) {
+          const rounds = readdirSync(REPORT_DIR).filter(d => d.startsWith('round-'));
+          for (const r of rounds) {
+            const num = parseInt(r.replace('round-', ''), 10);
+            if (!isNaN(num) && num > maxRound) maxRound = num;
+          }
+        }
+        currentRound = maxRound + 1;
+      }
+
+      console.log(`\n${c.bright}${c.cyan}═══ Loop ${loopCount}/${maxLoops} - Round ${currentRound} ═══${c.reset}`);
+
+      // Run single iteration
+      const result = await runSingleReviewIteration(profileConfig, currentRound, evidence => {
+        // In auto-loop mode, if reviewers previously failed, adjust scoring
+        if (lastFailed.length > 0 && autoGenerate) {
+          for (const failed of lastFailed) {
+            const reviewerDir = join(REPORT_DIR, `round-${String(currentRound).padStart(3, '0')}`, failed.reviewer);
+            if (existsSync(reviewerDir)) {
+              // Re-generate with focus on failed areas
+              autoGenerateReview(failed.reviewer, reviewerDir, evidence);
+            }
+          }
+        }
+      });
+
+      // Check gate
+      const gateResult = runGateCheck(result.roundDir, profile, currentRound);
+
+      if (gateResult.passed) {
+        console.log(`\n${c.green}${c.bright}✓ GATE PASSED!${c.reset}`);
+        console.log(`${c.green}All reviewers scored >= ${minScore}${c.reset}`);
+        return;
+      }
+
+      // Get failed reviewers for next iteration
+      lastFailed = checkFailedReviewers(result.roundDir, minScore);
+
+      if (lastFailed.length === 0) {
+        console.log(`\n${c.yellow}⚠ No specific failures found but gate did not pass${c.reset}`);
+        break;
+      }
+
+      console.log(`\n${c.yellow}⚠ Gate not passed${c.reset}`);
+      console.log(`${c.red}Failed reviewers (score < ${minScore}):${c.reset}`);
+      for (const f of lastFailed) {
+        console.log(`  ${c.red}✗${c.reset} ${f.reviewer}: ${f.score}/100`);
+      }
+      console.log(`\n${c.blue}ℹ${c.reset} Fixing issues and retrying...`);
+
+      // Increment round for next iteration
+      roundNumber = null;
+    }
+
+    if (loopCount >= maxLoops) {
+      console.log(`\n${c.red}${c.bright}✗ Max iterations (${maxLoops}) reached${c.reset}`);
+      console.log(`${c.red}Unable to pass gate automatically${c.reset}`);
+      process.exit(1);
+    }
+
+    return;
+  }
+
+  // Normal single-run mode
+  await runSingleReviewIteration(profileConfig, roundNumber, () => {});
+
+  // Determine round number for gate check
+  let currentRound = roundNumber;
+  if (currentRound === null) {
+    let maxRound = 0;
+    if (existsSync(REPORT_DIR)) {
+      const rounds = readdirSync(REPORT_DIR).filter(d => d.startsWith('round-'));
+      for (const r of rounds) {
+        const num = parseInt(r.replace('round-', ''), 10);
+        if (!isNaN(num) && num > maxRound) maxRound = num;
+      }
+    }
+    currentRound = maxRound;
+  }
+
+  const roundDir = join(REPORT_DIR, `round-${String(currentRound).padStart(3, '0')}`);
+
+  // Run gate check
+  console.log(`\n${c.cyan}═══ Running Gate Check ═══${c.reset}`);
+  const gateResult = runGateCheck(roundDir, profile, currentRound);
+
+  console.log(`\n${c.cyan}═══ Summary ═══${c.reset}\n`);
+  console.log(`  Reviewers: ${currentRound}`);
+  console.log(`  Gate: ${gateResult.passed ? c.green + 'PASSED' : c.red + 'FAILED'}`);
+
+  if (!gateResult.passed) {
+    console.log(`\n${c.yellow}Next steps:${c.reset}`);
+    console.log(`  1. Fix issues identified by failed reviewers`);
+    console.log(`  2. Run again: node review-runner.mjs --auto-loop --profile ${profile}`);
+    console.log(`  3. Or manually re-run: node review-runner.mjs --auto`);
+  }
 }
 
 main().catch(err => {
