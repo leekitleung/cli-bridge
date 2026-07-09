@@ -1,54 +1,38 @@
 {
-  "profile": "quick",
+  "profile": "release-gate",
   "round": 1,
   "reviewers": [
     "product-flow",
     "architecture-maintainer",
-    "release-verifier (测试/构建验证)",
-    "destructive-qa (安全深度检查)",
-    "条件触发 reviewers"
+    "release-verifier",
+    "destructive-qa"
   ],
-  "triggeredConditional": [
-    "release-verifier (测试/构建验证)",
-    "destructive-qa (安全深度检查)",
-    "条件触发 reviewers"
-  ],
-  "timestamp": "2026-07-07T23:14:57.890Z",
+  "triggeredConditional": [],
+  "timestamp": "2026-07-09T04:40:34.331Z",
   "gate": {
-    "min_score": 85,
+    "min_score": 90,
     "fail_on_redlines": true
+  },
+  "scale": {
+    "scale": "none",
+    "suggestedProfile": "quick",
+    "reason": "No changes detected",
+    "fileCount": 0,
+    "totalLines": 0,
+    "hasSecurity": false,
+    "hasSchema": false,
+    "hasApi": false
   },
   "evidence": {
     "git": {},
     "structure": {
-      "skill": {
-        "reviewers": [
-          "architecture-maintainer.md",
-          "data-security.md",
-          "destructive-qa.md",
-          "native-designer.md",
-          "product-flow.md",
-          "release-verifier.md",
-          "TEMPLATE.md",
-          "terminal-veteran.md",
-          "zero-doc-user.md"
-        ],
-        "rubrics": [
-          "evidence.md",
-          "redlines.md",
-          "scoring.md"
-        ],
-        "scripts": [
-          "review-gate.mjs",
-          "review-runner.mjs"
-        ],
-        "profiles": [
-          "default.yaml",
-          "full.yaml",
-          "quick.yaml",
-          "release-gate.yaml"
-        ]
-      }
+      "apps": [
+        "extension",
+        "local-server"
+      ],
+      "packages": [
+        "shared"
+      ]
     }
   }
 }

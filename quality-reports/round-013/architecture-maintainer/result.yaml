@@ -1,16 +1,102 @@
-reviewer: architecture-maintainer
-score: 98
-status: pass
-timestamp: "2026-07-08T08:58:52.311Z"
+# Architecture Maintainer Review - Round 013
+# Date: 2026-07-09
 
-dimensions:
-  framework-completeness: 85
-  documentation-quality: 85
-  script-reliability: 85
-  scalability: 80
+reviewer: architecture-maintainer
+score: 73
+
+dimension_scores:
+  module_boundary: 78
+  code_duplication: 62
+  interface_design: 75
+  testability: 68
 
 blockers:
-  []
+  - id: AM-001
+    severity: P1
+    description: >
+      重试逻辑在三个地方重复实现：ExecutorRegistry.execute()、WorkBuddyExecutor.execute()、ExecutionDispatcher.dispatch()。
+      各自维护了独立的 RetryConfig 和重试策略，代码行数约 150 行，存在维护风险。
 
-recommendation: |
-  可以通过发布。
+  - id: AM-002
+    severity: P1
+    description: >
+      ExecutorRegistry 和 ExecutionDispatcher 功能重叠。ExecutorRegistry.execute() 已包含重试逻辑，
+      但 ExecutionDispatcher.dispatch() 又包装了一层。职责边界不清晰。
+
+  - id: AM-003
+    severity: P2
+    description: >
+      verifyStepOutput 函数的 falsePositivePatterns 在测试文件 verify-step-output.test.ts 中有部分复制实现，
+      与共享模块 apps/local-server/src/shared/step-verification.ts 不一致。
+
+  - id: AM-004
+    severity: P2
+    description: >
+      ExecutorTask 接口有 16 个字段，但缺少对任务优先级、deadline 的支持。
+      现有 RetryConfig.retryableErrors 是硬编码的，不支持运行时动态配置。
+
+  - id: AM-005
+    severity: P3
+    description: >
+      测试覆盖不完整：executor-registry.test.ts 只测试了 mock executor，未覆盖真实的 register/select/execute 流程。
+      缺少对 ExecutorRegistry.execute() 重试逻辑的单元测试。
+
+recommendation: fail
+
+# === 详细分析 ===
+
+## 模块边界 (78/100)
+**优点：**
+- executor-registry.ts 定义了清晰的 ExecutorBackend 接口（id, getCapabilities, execute, healthCheck）
+- 执行相关代码集中在 apps/local-server/src/execution/ 目录
+- WorkBuddyExecutor 和 OpenCodeExecutor 都实现了统一的 ExecutorBackend 接口
+- shared/step-verification.ts 集中管理验证错误关键词
+
+**问题：**
+- ExecutionDispatcher 和 ExecutorRegistry 职责重叠（见 AM-002）
+- gate-aware-execution.ts 等 goal 相关模块与 execution 模块存在隐式耦合
+
+## 代码重复 (62/100)
+**问题：**
+- 重试逻辑三重实现：ExecutorRegistry (executor-registry.ts:304-330, 332-433)、WorkBuddyExecutor (workbuddy-executor.ts:273-291, 158-219)、ExecutionDispatcher (execution-dispatcher-v2.ts:59-81, 187-247)
+- 错误关键词列表在 step-verification.ts 和 verify-step-output.test.ts 有重复定义
+- calculateBackoff 函数有多个变体，参数略有不同
+
+## 接口设计 (75/100)
+**优点：**
+- ExecutorBackend 接口简洁，职责单一
+- ExecutorTask 设计合理，核心字段清晰
+- ExecutorCapabilities 与 AgentEndpointCapabilities 保持一致
+
+**问题：**
+- ExecutorTask.metadata 泛型 Record<string, unknown> 无法在编译期保证类型安全
+- 缺少 executor-specific 配置的扩展机制（如 WorkBuddy 需要 pollIntervalMs，OpenCode 需要 openCodePath）
+- isRetryableError 只接受 string 参数，但实际调用时传入 result.failureReason ?? result.stderr，可能为 undefined
+
+## 可测试性 (68/100)
+**优点：**
+- ExecutorBackend 接口设计利于 mock 测试
+- step-verification 模块有独立测试文件
+- verify-step-output.test.ts 覆盖了多种场景
+
+**问题：**
+- executor-registry.test.ts 只做类型检查，未测试真实逻辑
+- 缺少对 ExecutionDispatcher 的单元测试
+- 全局单例模式（getExecutorRegistry, getExecutionDispatcher）导致测试需要 reset 状态
+- executor-registry.ts:474-509 的健康检查循环使用 setInterval，测试时需要 mock 时间
+
+## 改进建议
+
+### P0 (必须修复)
+1. 提取公共 RetryConfig 和重试策略到单独的模块（如 utils/retry.ts）
+2. 明确 ExecutorRegistry 和 ExecutionDispatcher 的职责划分，建议只保留一个负责重试
+
+### P1 (强烈建议)
+3. 统一 falsePositivePatterns 定义，测试文件应从共享模块导入
+4. 添加 executor-registry 完整流程的集成测试
+5. 使用依赖注入替代全局单例，便于测试
+
+### P2 (建议)
+6. 为 ExecutorTask 添加类型安全的 metadata 泛型参数
+7. 添加 executor-specific 配置的扩展接口
+8. 为健康检查循环添加 mock 时间支持

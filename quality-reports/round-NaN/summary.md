@@ -1,14 +1,14 @@
 # Quality Review Summary - Round NaN
 
 **Profile:** release-gate
-**Generated:** 2026-07-08T02:58:12.162Z
+**Generated:** 2026-07-09T01:28:29.552Z
 **Git:** "" @ ""
 ## Automated Gate Checks
 
 | Check | Status | Details |
 |-------|--------|--------|
 | pnpm test | ✅ pass | Tests passed |
-| pnpm typecheck | ✅ pass | Typecheck passed |
+| pnpm typecheck | ❌ fail | Command failed: pnpm typecheck 2>&1 |
 | File sizes | ✅ 0 oversized | OK |
 | Circular deps | ✅ | None found |
 | Secrets scan | ✅ | Clean |
@@ -23,9 +23,8 @@
 | architecture-maintainer | - | ⏳ PENDING | - |
 | release-verifier | - | ⏳ PENDING | - |
 | destructive-qa | - | ⏳ PENDING | - |
-| terminal-veteran | - | ⏳ PENDING | - |
 
-**Total:** 0/5 passed, 0 blockers
+**Total:** 0/4 passed, 0 blockers
 
 ---
 

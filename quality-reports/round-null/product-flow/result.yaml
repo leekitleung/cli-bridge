@@ -1,0 +1,20 @@
+reviewer: product-flow
+score: 85
+status: fail
+timestamp: "2026-07-08T07:44:25.123Z"
+
+dimensions:
+  feature-completeness: 75
+  state-completeness: 75
+  discoverability: 75
+  error-resilience: 75
+  red-lines: 75
+  p0: 75
+  p2: 75
+  p3: 75
+
+blockers:
+  - P1: 测试覆盖率不足 (<30%)
+
+recommendation: |
+  需要修复上述 P0/P1 问题后再进行评审。

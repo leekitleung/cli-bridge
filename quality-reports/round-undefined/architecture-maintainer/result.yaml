@@ -1,0 +1,65 @@
+reviewer: architecture-maintainer
+score: 78/100
+status: fail
+timestamp: "2026-07-08T14:30:00.000Z"
+
+dimensions:
+  module-clarity: 18/25
+  maintainability: 20/25
+  state-management: 15/20
+  error-handling: 12/15
+  testability: 13/15
+
+redlines:
+  - id: "AR-001"
+    severity: "P0"
+    description: "Global mutable state in executor-registry.ts:380 - `let globalRegistry` module-level singleton can cause race conditions in concurrent access"
+  - id: "AR-002"
+    severity: "P0"
+    description: "Global mutable state in execution-dispatcher-v2.ts:382 - `let globalDispatcher` module-level singleton"
+  - id: "AR-003"
+    severity: "P0"
+    description: "God Object anti-pattern - bridge-api.ts:5330 lines contains massive switch statements, violates SRP and is extremely hard to test/maintain"
+
+blockers:
+  - id: "AR-004"
+    severity: "P1"
+    description: "Missing barrel exports (no index.ts files found) - module public API is unclear, makes refactoring risky"
+  - id: "AR-005"
+    severity: "P1"
+    description: "RetryConfig interface duplicated in workbuddy-executor.ts:44-56 and execution-dispatcher-v2.ts:34-46 - DRY violation"
+  - id: "AR-006"
+    severity: "P2"
+    description: "No circular dependency detection in CI - need automated cycle detection"
+
+recommendations:
+  - Split bridge-api.ts into smaller modules by feature (e.g., goal-routes.ts, execution-routes.ts, conversation-routes.ts)
+  - Replace module-level singletons with proper DI or explicit factory pattern
+  - Add barrel exports (index.ts) for each module directory
+  - Consolidate RetryConfig into shared/types or create unified retry strategy
+  - Add madge/dependency-cruiser for automated circular dependency detection in CI
+
+specific_issues:
+  - file: "apps/local-server/src/routes/bridge-api.ts"
+    line: 1
+    type: "God Object"
+    description: "5330-line file with massive switch statement handles all bridge API endpoints - violates Single Responsibility Principle"
+  - file: "apps/local-server/src/execution/executor-registry.ts"
+    line: 380
+    type: "Global Mutable State"
+    description: "let globalRegistry: ExecutorRegistry | undefined - module-level singleton with no thread-safety"
+  - file: "apps/local-server/src/execution/execution-dispatcher-v2.ts"
+    line: 382
+    type: "Global Mutable State"
+    description: "let globalDispatcher: ExecutionDispatcher | undefined - module-level singleton"
+  - file: "apps/local-server/src/execution/workbuddy-executor.ts"
+    line: 44
+    type: "Interface Duplication"
+    description: "RetryConfig interface duplicated from execution-dispatcher-v2.ts:34"
+  - file: "apps/local-server/src/goal/goal-loop-runner.ts"
+    line: 101
+    type: "Complex State"
+    description: "pendingGateApprovals Map tracked in memory - consider persistent storage for crash recovery"
+
+pass_criteria_met: false
+reason: "Score 78/100 below threshold of 90, contains P0 redlines (global mutable state, God Object)"

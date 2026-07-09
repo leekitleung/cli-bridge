@@ -125,10 +125,11 @@ import type {
   ReasoningArtifactKind,
 } from '../../../../packages/shared/src/types.ts';
 import { DEFAULT_PROJECT_KEY } from '../../../../packages/shared/src/types.ts';
+import { dispatchToBridgeRoute } from './bridge-routes.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
-export type BridgeAuthKind = 'console-cookie' | 'pairing-token' | 'extension-session';
+export type BridgeAuthKind = 'console-cookie' | 'pairing-token' | 'extension-session' | 'none';
 
 export interface BridgeAuthContext {
   kind: BridgeAuthKind;
@@ -2454,6 +2455,19 @@ export async function handleBridgeRequest(
   if (runtime.getPersistenceFailure()) {
     return error(503, 'Runtime persistence fault; restart after repairing storage');
   }
+
+  // 优先尝试模块化路由处理
+  const modularResult = await dispatchToBridgeRoute(
+    runtime,
+    method,
+    pathname,
+    request,
+    authContext ?? { kind: 'none' },
+  );
+  if (modularResult !== null) {
+    return modularResult;
+  }
+
   if (pathname === BRIDGE_PACKETS_PATH && method === 'GET') {
     return ok({ packets: runtime.packetStore.listPackets() });
   }

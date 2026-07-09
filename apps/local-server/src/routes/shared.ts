@@ -8,26 +8,26 @@ export type { BridgeAuthContext, BridgeAuthKind } from './bridge-api.ts';
 
 export interface BridgeResult {
   statusCode: number;
-  body: unknown;
+  payload: unknown;
 }
 
 /**
  * Standard HTTP result helpers
  */
-export function ok(body: unknown): BridgeResult {
-  return { statusCode: 200, body };
+export function ok(payload: unknown): BridgeResult {
+  return { statusCode: 200, payload };
 }
 
-export function created(body: unknown): BridgeResult {
-  return { statusCode: 201, body };
+export function created(payload: unknown): BridgeResult {
+  return { statusCode: 201, payload };
 }
 
 export function noContent(): BridgeResult {
-  return { statusCode: 204, body: null };
+  return { statusCode: 204, payload: null };
 }
 
 export function error(statusCode: number, message: string): BridgeResult {
-  return { statusCode, body: { status: 'error', message } };
+  return { statusCode, payload: { status: 'error', message } };
 }
 
 export function badRequest(message: string): BridgeResult {

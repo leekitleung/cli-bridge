@@ -1,16 +1,148 @@
+# Product Flow Review - Round 013
+
+## Review Summary
+
 reviewer: product-flow
-score: 98
-status: pass
-timestamp: "2026-07-08T08:58:52.306Z"
+score: 84
+recommendation: pass
 
-dimensions:
-  framework-completeness: 85
-  documentation-quality: 85
-  script-reliability: 85
-  scalability: 80
+## Dimension Scores
 
-blockers:
-  []
+| Dimension | Score | Notes |
+|-----------|-------|-------|
+| completeness | 88 | Goal 驱动链路完整，Gate 机制正确 |
+| user_path | 85 | 核心链路存在，但端到端集成需加强 |
+| state_handling | 92 | 状态机设计正确，Fail-stop 机制完善 |
+| error_recovery | 82 | 基础恢复机制健全，高级机制缺失 |
 
-recommendation: |
-  可以通过发布。
+## Test Results
+
+```
+npm test: 275 passed, 0 failed, 1 skipped
+TypeScript: No errors
+```
+
+## Evidence
+
+### 1. Goal 驱动执行链路完整性
+
+**Goal Orchestrator** (apps/local-server/src/goal/goal-orchestrator.ts):
+- 行 153-280: advance() 方法正确实现状态机转换
+- 行 289-318: runAll() 支持批量执行
+- 行 117-118: 默认 stepCeiling = 10 (ADR-0003)
+
+**InMemoryGoalStore** (apps/local-server/src/storage/goal-store.ts):
+- 行 92-106: createGoal() - Goal 生命周期起点
+- 行 110-146: attachPlan() - Plan 生成
+- 行 149-163: approvePlan() - Plan 审批 (Gate Level 1)
+- 行 232-249: blockStepForGate() / approveStepGate() - Step Gate (Gate Level 2)
+- 行 30-37: STATE_MUTATING_KINDS 明确定义状态变更步骤
+
+### 2. Gate 机制正确性
+
+**Gate Evaluator** (apps/local-server/src/conversation/gate-evaluator.ts):
+- 行 45-116: evaluateGate() 纯函数实现
+- 行 29-43: 风险分级 (SAFE_RISK_HINTS, HIGH_RISK_HINTS)
+- 行 95-106: 安全自动执行条件检查
+
+### 3. Automation Loop 恢复机制
+
+**Automation Loop Store** (apps/local-server/src/automation/automation-loop-store.ts):
+- 行 271-305: evaluateStop() 评估停止条件
+- 行 271-287: 全面停止条件检测 (goal-done/cancelled/failed, endpoint-unavailable, awaiting-gate, action-failed, deadline, max-cycles, no-progress)
+
+**Outbound Prompt Store** (apps/local-server/src/storage/outbound-prompt-store.ts):
+- 行 168-195: recoverStaleClaims() - 过期 claim 自动恢复
+- 行 51-52: CLAIMED_OUTBOUND_PROMPT_TTL_MS = 60s
+
+### 4. 状态一致性
+
+**Fail-stop 机制** (goal-orchestrator.ts 行 187-199):
+- 任何 step 失败立即停止执行
+
+**层级状态同步** (goal-store.ts 行 402-415):
+- Plan 完成后自动同步 Goal 状态为 done
+
+## Blockers
+
+### P1: Source Relay → Goal 链路端到端集成缺失
+
+**Severity:** P1
+**Location:**
+- apps/local-server/src/conversation/source-adapter.ts
+- apps/local-server/src/conversation/planner-adapter.ts
+- apps/local-server/src/routes/bridge-api.ts 行 1610-1634
+
+**Description:**
+Source Relay 输入目前需要手动关联到 Goal。用户无法通过简单流程将 ChatGPT Web 的输入自动创建为 Goal 并生成 Plan:
+1. plannerRegistry 默认无 planner 注册
+2. Console Source Adapter 需要显式传入 consolePlanner
+3. 缺乏 Source → Planner → Goal 的自动链路
+
+**Impact:** 用户路径 Source → Goal → Plan 不完整
+
+**Recommendation:**
+1. 实现 Mock Planner 作为默认 fallback
+2. 添加 Source 输入自动创建 Goal 的端点
+3. 完善端到端流程图
+
+---
+
+### P2: Goal Store 内存状态在重启后丢失
+
+**Severity:** P2
+**Location:** apps/local-server/src/storage/goal-store.ts
+
+**Description:**
+InMemoryGoalStore 是纯内存实现。虽然 bridge-api.ts 有 JSON snapshot 持久化，但 goal/plan 的 hydrate 在 snapshotStore.read() 之后执行，如果 snapshot 写入失败，persistenceFailure 机制会阻止后续操作。
+
+**Impact:** 服务重启可能导致未完成的 Goal 丢失
+
+**Recommendation:**
+1. 考虑添加 WAL (Write-Ahead Log) 机制
+2. 实现增量状态同步而非全量快照
+
+---
+
+### P3: 缺少指数退避重试和 Circuit Breaker
+
+**Severity:** P3
+**Location:**
+- apps/local-server/src/automation/automation-loop-runner.ts
+- apps/local-server/src/storage/outbound-prompt-store.ts
+
+**Description:**
+当前恢复机制:
+- stale claim 自动过期 (60s TTL)
+- deadline 停止条件
+- max-cycles 限制
+
+缺少:
+1. 瞬时失败的指数退避重试
+2. 连续失败后的 circuit breaker
+3. 部分失败的分级处理
+
+**Impact:** 临时性故障可能导致整个 loop 失败
+
+**Recommendation:**
+添加 retryStrategy 配置和连续失败计数达到阈值后暂停 loop
+
+## Findings
+
+### Strengths
+
+1. 状态机设计正确: Goal → Plan → Step 层级清晰
+2. Gate 机制完善: 双层 Gate (Plan 审批 + Step 审批)
+3. Fail-stop 机制健全: 任何 step 失败阻止后续执行
+4. 测试覆盖率高: 275 通过，TypeScript 编译无错误
+5. 审计日志完整: 所有操作都有 AuditEvent 记录
+
+### Weaknesses
+
+1. 默认 Planner 缺失: Source 输入无法自动转为 Goal
+2. 纯内存存储: 服务重启后状态丢失风险
+3. 缺少重试机制: 临时性故障处理不完善
+
+## Conclusion
+
+项目在 Goal 驱动执行链路的核心功能上实现完整，状态机设计和 Gate 机制正确。主要改进点在端到端用户路径的集成和状态持久化。建议优先解决 P1 问题以完善 Source → Goal 链路。

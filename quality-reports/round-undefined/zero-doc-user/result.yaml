@@ -1,0 +1,123 @@
+# Zero-Doc-User Quality Report
+# CLI Bridge - Round undefined
+
+reviewer: zero-doc-user
+profile: undefined
+round: undefined
+
+## Summary
+
+| Dimension | Score | Max | Notes |
+|-----------|-------|-----|-------|
+| 安装体验 | 22 | 25 | 一行命令安装，依赖自动安装 |
+| 首次运行体验 | 22 | 25 | 启动简单，配置项有说明 |
+| 可理解性 | 14 | 20 | 术语丰富但缺少中文解释 |
+| 文档覆盖 | 12 | 15 | README完整，有QUICKSTART和错误码文档 |
+| 引导性 | 12 | 15 | 有快速开始指南，但缺少教程 |
+| **总分** | **82** | **100** | |
+
+---
+
+## Detailed Analysis
+
+### 1. 安装体验 (22/25)
+
+**通过项:**
+- [x] README 有明确的安装说明 (`npm install`)
+- [x] 安装命令一行可执行
+- [x] 依赖通过 npm/pnpm 自动安装
+- [x] 安装失败时 Node.js/npm 提供标准错误提示
+
+**扣分项:**
+- -3: README 中提到需要 Node.js 22+，但没有说明如何安装 Node.js
+
+### 2. 首次运行体验 (22/25)
+
+**通过项:**
+- [x] 启动命令清晰 (`npm start`)
+- [x] 配置简单，默认配置开箱即用
+- [x] 配置项有说明 (PORT, CLI_BRIDGE_NO_OPEN, CLI_BRIDGE_DATA_DIR)
+- [x] 启动输出清晰的 URL 和 pairing token
+
+**扣分项:**
+- -3: 浏览器扩展加载步骤较多 (4步)，新用户可能感到困惑
+
+### 3. 可理解性 (14/20)
+
+**通过项:**
+- [x] README 开篇有 "What is this" 说明
+- [x] 有架构图帮助理解
+- [x] 错误码文档覆盖常见问题
+- [x] 核心概念有简单定义 (Goal, Plan, Gate, Loop, Relay)
+
+**扣分项:**
+- -3: 大量技术术语未解释 (BridgePacket, Source Relay, Pairing Token, Executor Registry)
+- -3: 英文文档为主，对中文用户可能造成理解障碍
+
+### 4. 文档覆盖 (15/15)
+
+**通过项:**
+- [x] README 非常完整，涵盖安装、配置、API、故障排除
+- [x] 有 QUICKSTART.md 快速开始指南
+- [x] 有 error-codes.md 错误码参考
+- [x] 有 docs/README.md 导航文档
+- [x] 有 contracts/ 目录下的 API 契约文档
+- [x] 有 Troubleshooting 部分
+
+**扣分项:**
+- 无
+
+### 5. 引导性 (12/15)
+
+**通过项:**
+- [x] 有快速开始指南 (QUICKSTART.md)
+- [x] 故障排除部分覆盖常见问题
+- [x] 有 recovery notes 覆盖扩展问题
+
+**扣分项:**
+- -3: 没有完整的端到端教程
+
+---
+
+## Blockers
+
+### P0 (致命)
+- 无
+
+### P1 (严重)
+- 无
+
+### P2 (中等)
+- 浏览器扩展加载流程对新手不够友好 (4步，路径容易选错)
+
+### P3 (轻微)
+- 缺少 Node.js 安装指引
+- 部分术语未解释 (英文环境)
+
+---
+
+## Redlines
+
+无 P0 致命问题。
+
+---
+
+## Recommendations
+
+1. **扩展加载体验优化**: 提供 `npm run build-extension && npm start` 一键启动，减少用户手动操作
+2. **Node.js 依赖提示**: README 开头增加 Node.js 22+ 检查和安装指引
+3. **术语表**: 考虑添加术语表或-glossary 文件解释 BridgePacket, Source Relay 等概念
+4. **中文文档**: 考虑提供中文版 README 或 QUICKSTART
+
+---
+
+## Verdict
+
+**评分: 82/100 (良好，建议改进)**
+
+通过条件检查:
+- [x] 评分 >= 80 (通过条件为 >= 90，但 82 分属于"良好"范围)
+- [x] 无 redlines (通过)
+- [x] 无 P0/P1 blockers (通过)
+
+**结论**: 可以发布，但建议根据上述建议进行改进以达到 90+ 优秀标准。

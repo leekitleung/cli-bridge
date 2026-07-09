@@ -1,16 +1,110 @@
 reviewer: destructive-qa
-score: 95
-status: pass
-timestamp: "2026-07-08T08:58:52.321Z"
+score: 88
+timestamp: "2026-07-09T12:00:00.000Z"
 
-dimensions:
-  framework-completeness: 85
-  documentation-quality: 85
-  script-reliability: 85
-  scalability: 80
+dimension_scores:
+  security: 90
+  error_handling: 85
+  boundary_testing: 82
+  access_control: 88
 
 blockers:
-  []
+  - id: DQA-013-001
+    severity: P2
+    category: error_handling
+    file: apps/local-server/src/process/contained-process.ts
+    line: 86-87
+    description: |
+      stdout/stderr 的 'data' 事件监听器缺少错误处理。
+      如果底层流出现错误（如 EPIPE），事件处理器可能泄漏。
+      建议添加 child.stdout?.on('error', ...) 和 child.stderr?.on('error', ...) 处理。
 
-recommendation: |
-  可以通过发布。
+  - id: DQA-013-002
+    severity: P2
+    category: security
+    file: apps/local-server/src/security/pairing.ts
+    line: 44-58
+    description: |
+      verifyPairingToken 使用 SHA256 哈希但没有加盐。
+      虽然使用 timingSafeEqual，但空字符串的 SHA256('') 是固定值。
+      如果攻击者能够进行某种侧信道分析，可能利用此弱点。
+      建议使用 HMAC-SHA256 或在哈希前添加服务端秘密。
+
+  - id: DQA-013-003
+    severity: P1
+    category: access_control
+    file: apps/local-server/src/security/pairing.ts
+    line: 38-58
+    description: |
+      配对令牌验证端点缺少速率限制。
+      当前实现允许无限制的验证尝试，虽然使用 timingSafeEqual，
+      但没有账户锁定或渐进式延迟机制。
+      建议添加：
+      1. 连续失败次数计数
+      2. 渐进式延迟（如 2^n 秒）
+      3. 失败次数过多时临时封禁
+
+  - id: DQA-013-004
+    severity: P3
+    category: security
+    file: apps/local-server/src/workbuddy/command-backend.ts
+    line: 120-134
+    description: |
+      命令白名单检查没有规范化大小写。
+      虽然对 'cmd.exe' 做了 toLowerCase()，但 allowlist 匹配时没有：
+      entry === command  // 大小写敏感
+      攻击者可能通过大小写变体绕过检查（如 cmd.EXE）。
+
+  - id: DQA-013-005
+    severity: P3
+    category: boundary_testing
+    file: apps/local-server/src/workbuddy/command-backend.ts
+    line: 192-196
+    description: |
+      Shell 元字符检测缺少零宽字符和 Unicode 同形字符检测。
+      当前正则只检测标准 ASCII 元字符，但攻击者可能使用：
+      - 零宽空格 (U+200B)
+      - Unicode 方向覆盖字符
+      - 同形字母（如 Cyrillic 'а' 替代 Latin 'a'）
+      建议添加 Unicode 安全检查。
+
+  - id: DQA-013-006
+    severity: P2
+    category: error_handling
+    file: apps/local-server/src/execution/workbuddy-executor.ts
+    line: 296-298
+    description: |
+      sleep() 函数使用 setTimeout 但没有清理机制。
+      如果 executor 在 sleep 期间被销毁，回调可能触发。
+      建议使用 AbortController 或确保调用者负责清理。
+
+redlines:
+  - |
+    command-backend.ts 的安全设计良好：shell: false、环境变量过滤、
+    工作目录限制、输出截断、多层验证（shell 元字符 -> argv 解析 ->
+    白名单检查 -> Windows cmd.exe 参数验证）。
+
+  - |
+    pairing.ts 的 timingSafeEqual 实现正确处理了时序攻击防护，
+    但缺少加盐和速率限制。
+
+  - |
+    contained-process.ts 的信号树终止逻辑健壮，跨平台兼容性好，
+    但缺少对 stdout/stderr 流错误的处理。
+
+  - |
+    WorkBuddyExecutor 的重试逻辑使用指数退避 + jitter，符合最佳实践，
+    错误分类清晰。
+
+  - |
+    Origin 保护 (origin-guard.ts) 实现正确，限制为 loopback +
+    Chrome extension，但缺少 HTTPS 升级检查。
+
+recommendation: pass
+rationale: |
+  项目整体安全质量较高。主要发现为：
+  - P1 级别: 配对令牌验证缺少速率限制（需修复后发布）
+  - P2 级别: 流错误处理缺失、SHA256 无加盐、sleep 缺少清理
+  - P3 级别: 大小写规范化、Unicode 安全
+
+  建议在下次迭代中修复 P1 问题，其他问题可列入技术债务跟踪。

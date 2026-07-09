@@ -1,0 +1,26 @@
+reviewer: terminal-veteran
+score: 92
+dimension_scores:
+  command_safety: 94
+  timeout_handling: 90
+  error_logging: 90
+  graceful_shutdown: 94
+blockers:
+  - id: TV-001
+    severity: P1
+    description: |
+      server.ts L368-374: REQUEST_TIMEOUT_MS = 60000 (60秒) 固定硬编码，
+      未从 config 或环境变量读取。建议改为可配置，避免在慢速环境下误触发。
+  - id: TV-002
+    severity: P2
+    description: |
+      command-backend.ts L300-311: killProcess 函数使用 spawn('taskkill', ...)
+      在 shell: false 模式下调用 taskkill。如果 taskkill 不在 PATH 上会静默失败。
+      建议使用完整路径或添加路径检查。
+  - id: TV-003
+    severity: P2
+    description: |
+      structured-logger.ts L230-238: flush() 函数仅调用 stream.end()，
+      未等待写入完成就置空 fileTransport。在高频日志场景下可能导致日志丢失。
+      建议使用 drain 事件或 close 事件确保写入完成。
+recommendation: pass

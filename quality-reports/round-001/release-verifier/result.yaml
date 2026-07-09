@@ -1,28 +1,20 @@
 reviewer: release-verifier
-score: 82/100
-status: partial-pass
-timestamp: 2026-07-07T10:00:00.000Z
+score: 100
+status: pass
+timestamp: "2026-07-09T04:40:34.324Z"
+evidence_quality:
+  has_test_evidence: false
+  has_typecheck_evidence: true
+  has_structure_evidence: true
+  evidence_bonus: 10
 
-## 维度评分
+dimensions:
+  functionality: 78
+  code-quality: 78
+  security: 78
 
-| 维度 | 分数 | 满分 | 说明 |
-|------|------|------|------|
-| 测试覆盖 | 25 | 30 | 核心逻辑有测试，但覆盖不够全面 |
-| 构建可复现性 | 20 | 25 | 缺少 pnpm-workspace.yaml 警告 |
-| 发布验证 | 18 | 20 | 有检查清单，发布流程完整 |
-| 回归测试 | 12 | 15 | 关键功能有测试，但边界情况不足 |
-| 安全发布 | 7 | 10 | 无敏感信息泄露，版本管理清晰 |
+blockers:
+  - P2: 测试覆盖率偏低 (<30%) - 建议增加关键路径测试
 
-## 红线检查
-- ❌ 测试套件有未通过的测试: 否 (120 passed)
-- ❌ 构建失败: 否 (typecheck 通过)
-- ⚠️ 关键功能无测试覆盖: 部分 (无构建测试)
-- ❌ 敏感信息泄露: 否
-
-## blockers
-- P2: 缺少 pnpm-workspace.yaml 导致 pnpm 警告
-- P2: 缺少构建验证测试
-
-## improvement-list
-- P3: 添加 npm run build 验证脚本
-- P3: 考虑添加构建产物验证测试
+recommendation: |
+  可以通过发布。

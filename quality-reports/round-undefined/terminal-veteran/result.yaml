@@ -1,0 +1,211 @@
+# Terminal Veteran Review Report
+
+## Project Overview
+- **Project**: cli-bridge
+- **Type**: Local server with CLI commands and execution backend
+- **Round**: undefined
+- **Review Date**: 2026-07-08
+
+## Evidence Summary
+- Typecheck: PASS
+- Tests: 276 tests, 275 pass, 0 fail, 1 skipped
+- Changes: 7 files changed, 632 insertions, 73 deletions
+
+## Reviewer Persona
+Terminal Veteran - 10 years in terminal, cares about command elegance, script robustness, useful logging, and debuggable errors.
+
+---
+
+## Scoring by Dimension
+
+### 1. 命令设计 (Command Design) - 24/25
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| `--help`, `-v` conventions | PASS | Server has `/health` endpoint for diagnostics |
+| Parameter naming clarity | PASS | Clear API paths: `/bridge/*`, `/console/*` |
+| Consistent output format | PASS | JSON responses with `{status, message}` pattern |
+| Shell auto-completion | N/A | HTTP API, not CLI tool |
+
+**Strengths:**
+- RESTful API design with clear path hierarchy
+- Health endpoint provides server status at a glance
+- Consistent JSON response format across all endpoints
+- Pairing token-based authentication with secure handling
+
+**Deductions:**
+- No CLI help flags (`-h`, `--help`, `-v`) - server is HTTP-only, not a CLI tool. Minor deduction.
+
+**Score: 24/25**
+
+---
+
+### 2. 错误处理 (Error Handling) - 23/25
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Error context | PASS | Errors include path, method, status codes |
+| Error severity levels | PASS | Uses HTTP status codes (400, 401, 403, 404, 500, 504) |
+| Solution suggestions | PARTIAL | Some errors include hints, others just codes |
+| Error codes documented | PASS | Codes like `REQUEST_TIMEOUT`, `BRIDGE_TIMEOUT`, `INVALID_NONCE` |
+
+**Strengths:**
+- Structured error responses with `{status: 'error', code: '...', message: '...'}` format
+- Specific error codes for different failure modes
+- Validation errors include format requirements (e.g., nonce length 16-256)
+- Rate limiting returns `Retry-After` header
+
+**Deductions:**
+- Some error messages could be more helpful (e.g., "Invalid request body" without specifying what was wrong)
+
+**Score: 23/25**
+
+---
+
+### 3. 日志质量 (Log Quality) - 18/20
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Log levels | PASS | `debug`, `info`, `warn`, `error` with `LOG_LEVEL` env var |
+| Key operations logged | PASS | Server start/stop, shutdown, errors, auth failures |
+| Machine-parseable | PASS | JSON format in production, human-readable in dev |
+| Correlation ID support | PASS | `generateCorrelationId()` and `withCorrelationId()` available |
+
+**Strengths:**
+- Structured logging with timestamps
+- File transport with rotation (10MB per file, 5 files max)
+- Context propagation via correlation IDs
+- Different formats for dev vs production
+
+**Deductions:**
+- Correlation ID is defined but not consistently used in request handling
+- No request-level correlation ID injection
+
+**Score: 18/20**
+
+---
+
+### 4. 健壮性 (Robustness) - 14/15
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Timeouts set | PASS | 60s general, 120s bridge operations |
+| Retry mechanism | N/A | Not applicable for local server |
+| Resource cleanup | PASS | Graceful shutdown with active request tracking |
+| Concurrency safety | PASS | Active request set with proper add/remove |
+
+**Strengths:**
+- Request timeouts prevent hanging operations
+- Graceful shutdown waits for active requests (max 10s)
+- Proper resource cleanup on shutdown
+- Rate limiting protects against DoS
+
+**Deductions:**
+- Minor: No retry mechanism, but appropriate for this use case
+
+**Score: 14/15**
+
+---
+
+### 5. 降级策略 (Degradation Strategy) - 14/15
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Partial failures tolerated | PASS | Source relay diagnostics continue even if auth fails |
+| Graceful exit | PASS | SIGTERM/SIGINT handlers with cleanup |
+| Health checks | PASS | `/health` (public) and `/health/protected` endpoints |
+
+**Strengths:**
+- Health endpoint shows server status, port, pairing token status
+- Graceful degradation of features (diagnostic-only mode for WorkBuddy)
+- Security headers on console pages
+- Auto-pair session management with revocation support
+
+**Deductions:**
+- Minor: No circuit breaker pattern, but not critical for local service
+
+**Score: 14/15**
+
+---
+
+## Redlines (P0 Fatal Issues)
+
+**None identified.**
+
+All redline criteria are met:
+- Command is usable (HTTP API works correctly)
+- No silent failures (all errors return JSON with status codes)
+- Timeout handling exists (504 status codes returned)
+
+---
+
+## Blockers
+
+### P0 Blockers: None
+
+### P1 Blockers: None
+
+### P2 Blockers: None
+
+### P3 Blockers: 1
+
+1. **Inconsistent correlation ID usage**: Correlation ID support is defined in `structured-logger.ts` but not consistently used in the request handler. Consider adding correlation ID to each request log entry for better tracing.
+
+---
+
+## Additional Observations
+
+### Strengths
+
+1. **Security-first design**:
+   - Shell metacharacter blocking prevents command injection
+   - Allowlist-only command execution
+   - Input validation with strict limits (MAX_ARG_COUNT=20, MAX_ARG_LENGTH=4096)
+   - Security headers on console (CSP, X-Frame-Options, etc.)
+   - No token leakage in error messages
+
+2. **Diagnostic capabilities**:
+   - Source relay bridge diagnostics track requests, auth success/failure, by-path stats
+   - Health endpoint provides server status
+   - Rate limiting diagnostics available
+
+3. **Production-ready logging**:
+   - File rotation with automatic cleanup
+   - Environment-aware formatting (JSON vs human-readable)
+   - Level-based filtering
+
+### Minor Improvements
+
+1. Add `--version` or `-v` flag for quick version check
+2. Consider adding structured request logging middleware
+3. Document error codes in OpenAPI spec or README
+
+---
+
+## Final Score
+
+| Dimension | Score | Max |
+|-----------|-------|-----|
+| Command Design | 24 | 25 |
+| Error Handling | 23 | 25 |
+| Log Quality | 18 | 20 |
+| Robustness | 14 | 15 |
+| Degradation Strategy | 14 | 15 |
+| **Total** | **93** | **100** |
+
+---
+
+## Recommendation
+
+**RECOMMENDATION: PASS**
+
+**Score: 93/100**
+
+This project demonstrates excellent terminal/server craftsmanship:
+- Security is paramount (shell injection prevention, input validation)
+- Error handling is structured and informative
+- Logging is production-ready with rotation and correlation support
+- Graceful shutdown prevents data loss
+- Health checks enable monitoring
+
+The project meets the threshold of >=90 and has no P0/P1 blockers or redlines. It is **ready for release**.

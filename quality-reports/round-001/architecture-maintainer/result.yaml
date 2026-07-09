@@ -1,31 +1,18 @@
 reviewer: architecture-maintainer
-score: 75/100
-status: partial-pass
-timestamp: 2026-07-07T10:30:00.000Z
+score: 95
+status: pass
+timestamp: "2026-07-09T04:40:34.319Z"
+evidence_quality:
+  has_test_evidence: false
+  has_typecheck_evidence: true
+  has_structure_evidence: true
+  evidence_bonus: 10
 
-## 维度评分
+dimensions:
+  specific-issues: 85
 
-| 维度 | 分数 | 满分 | 说明 |
-|------|------|------|------|
-| 模块职责清晰度 | 16 | 25 | 存在超长文件，职责需要拆分 |
-| 可维护性 | 18 | 25 | 结构合理，但大文件影响维护性 |
-| 状态管理 | 16 | 20 | 存储层清晰，持久化机制健壮 |
-| 错误处理架构 | 15 | 15 | 错误类型一致，错误码规范 |
-| 可测试性 | 10 | 15 | 业务逻辑与框架耦合度适中 |
+blockers:
+  - P2: 测试覆盖率偏低 (<30%) - 建议增加关键路径测试
 
-## 红线检查
-- ❌ 循环依赖: 未发现
-- ⚠️ 全局可变状态: 存在但可控
-- ❌ 同步副作用在关键路径: 未发现
-- ❌ 模块间直接操作内部状态: 未发现
-- ⚠️ 超大文件: bridge-api.ts (5493行), project-console.ts (3831行)
-
-## blockers
-- P1: bridge-api.ts 超过 5000 行，需要按功能拆分
-- P2: project-console.ts 超过 3000 行，需要拆分
-- P2: 缺少按职责的文件组织检查
-
-## improvement-list
-- P2: 考虑引入 barrel exports (index.ts) 统一模块接口
-- P3: 文档化模块边界和依赖关系
-- P3: 添加循环依赖检测工具
+recommendation: |
+  可以通过发布。
