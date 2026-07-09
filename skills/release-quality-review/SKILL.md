@@ -97,6 +97,48 @@ node skills/release-quality-review/scripts/review-gate.mjs --reviewer destructiv
 - 变更由 AI Agent 执行
 - `--profile agentic-release-gate` 显式指定
 
+## Goal 指令生成器
+
+> 将用户需求转换为合规的 `/goal` 指令，只描述最终状态，不描述实现步骤
+
+### 核心结构
+
+```
+/goal <最终状态>。完成仅在以下条件全部成立时成立：<验证标准>。边界：<禁止改动范围>。证据：<最终输出必须展示的验证结果>。停止条件：<停止条件>。
+```
+
+### 生成规则
+
+| 必须包含 | 禁止包含 |
+|----------|----------|
+| 最终状态描述 | 步骤编号（第一步、第二步） |
+| 可验证的完成标准（命令/测试/构建） | 流程词（首先、然后、接下来） |
+| 边界（禁止改动范围） | 阶段词（阶段一、milestone、TODO） |
+| 证据要求（最终输出展示内容） | 实施路线、阶段拆分 |
+| 停止条件（达成/阻塞） | 计划模式语言 |
+
+### 使用方式
+
+```bash
+# 生成 goal 指令
+node skills/release-quality-review/scripts/goal-instruction-gate.mjs --input "用户需求..."
+
+# 验证生成的 goal
+node skills/release-quality-review/scripts/goal-instruction-gate.mjs --file generated-goal.md
+
+# 集成到评审流程
+node skills/release-quality-review/scripts/review-runner.mjs --profile release-gate
+```
+
+### 验收标准
+
+- 必须以 `/goal` 开头
+- 包含至少一个可机器验证的完成标准
+- 包含明确边界（禁止改动范围）
+- 要求最终输出展示验证证据
+- 不含流程词、阶段词、计划语言
+- 分数 >= 90 才算合格
+
 ## 评分标准
 
 | 档位 | 分数 | 含义 | 行动 |
@@ -137,6 +179,7 @@ skills/release-quality-review/
 │   ├── adversarial-completion.md   # 对抗性完成度审查
 │   ├── evidence-integrity.md       # 证据完整性审查
 │   ├── goal-compliance.md         # Goal 合规性审查
+│   ├── goal-instruction-writer.md # Goal 指令生成器
 │   └── handoff-integrity.md       # 交接完整性审查
 ├── rubrics/
 │   ├── scoring.md                  # 评分标准
@@ -145,7 +188,8 @@ skills/release-quality-review/
 │   └── right-size-throttle.md      # 规模适配规则
 ├── scripts/
 │   ├── review-gate.mjs            # 门禁检查器 (含规模检测)
-│   └── review-runner.mjs          # 编排器 (含 Phase 持久化)
+│   ├── review-runner.mjs          # 编排器 (含 Phase 持久化)
+│   └── goal-instruction-gate.mjs  # Goal 指令验收器
 └── templates/
     └── result.yaml                # 结构化结果模板
 
@@ -160,6 +204,10 @@ quality-reports/                   # 评审输出
 ├── round-001/
 │   ├── summary.md
 │   ├── metadata.json
+│   ├── generated-goal.md            # 生成的 Goal 指令
+│   ├── goal-instruction-validation.md # Goal 指令验收结果
+│   ├── evidence-validation.md       # 证据来源验收结果
+│   ├── phase-boundary.json          # Phase 边界标记
 │   ├── product-flow/
 │   │   ├── result.yaml           # 机器可读结果
 │   │   ├── score.md

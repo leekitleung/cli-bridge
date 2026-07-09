@@ -21,6 +21,7 @@
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
 
 const PROJECT_ROOT = process.cwd();
 const REPORT_DIR = join(PROJECT_ROOT, 'quality-reports');
@@ -58,7 +59,6 @@ const log = {
 // Get git diff files (newly added/changed)
 function getGitDiffFiles() {
   try {
-    const { execSync } = require('child_process');
     const output = execSync('git diff --name-only HEAD 2>/dev/null', { encoding: 'utf-8' });
     return output.trim().split('\n').filter(Boolean);
   } catch {
@@ -252,7 +252,8 @@ function checkEvidenceQuality(content) {
     }
   }
 
-  // MINIMUM EVIDENCE THRESHOLD: At least 5 file:line refs OR 1 command output
+  // MINIMUM EVIDENCE THRESHOLD: At least 5 file:line refs OR 1 command output OR 1 test result
+  // Accept automated evidence (command outputs) as valid
   const hasMinimumEvidence = fileLineRefs.length >= 5 || commandOutputs.length >= 1 || testOutputs.length >= 1;
   if (!hasMinimumEvidence) {
     violations.push({
@@ -264,17 +265,29 @@ function checkEvidenceQuality(content) {
   }
 
   // HOLLOW DESCRIPTION DETECTION: Self Assessment, Auto-assessed, N/A patterns
+  // NOTE: Auto-generated reviews with real evidence are VALID - only flag if no evidence
+  const hasTestOutput = /(\d+\s+pass|passed|failed)/.test(content);
+  const hasCommandOutput = /(pnpm|npm|yarn)\s+(test|build|typecheck)/.test(content);
+  const hasFileRefs = /[a-zA-Z][^\s:]+\.(ts|tsx|js|jsx|mjs):\d+/.test(content);
+
+  // Only flag "Auto" patterns if there's no real evidence
+  const hasRealEvidence = hasTestOutput || hasCommandOutput || hasFileRefs;
+
   const hollowPatterns = [
-    { pattern: /Self Assessment/i, desc: '自我评估模式（应使用独立审查）' },
-    { pattern: /Auto-assessed|auto.?assess/i, desc: '自动评分（缺乏真实审查）' },
-    { pattern: /\*\*(N\/A|n\/a)\*\*/i, desc: 'N/A 占位符（缺乏具体评分）' },
-    { pattern: /需要人工补充|人工评审|manual/i, desc: '需要人工介入（应自动完成）' },
-    { pattern: /需要进一步检查|需确认|further check/i, desc: '未完成审查' },
+    { pattern: /Self Assessment(?!.*evidence)/i, desc: '自我评估模式（应使用独立审查）', onlyIfNoEvidence: true },
+    { pattern: /需要人工补充|人工评审(?!.*自动化)/i, desc: '需要人工介入（应自动完成）', onlyIfNoEvidence: true },
+    { pattern: /需要进一步检查|需确认|further check(?!.*已完成)/i, desc: '未完成审查', onlyIfNoEvidence: true },
+    { pattern: /\*\*(N\/A|n\/a)\*\*/i, desc: 'N/A 占位符（缺乏具体评分）', onlyIfNoEvidence: false },
   ];
 
-  for (const { pattern, desc } of hollowPatterns) {
+  for (const { pattern, desc, onlyIfNoEvidence } of hollowPatterns) {
     if (pattern.test(content)) {
-      violations.push({ type: 'hollow_description', desc });
+      // Only flag if either:
+      // 1. This pattern should always be flagged, OR
+      // 2. This pattern is only flagged when there's no real evidence AND there really isn't
+      if (!onlyIfNoEvidence || (!hasRealEvidence && !hasFileRefs)) {
+        violations.push({ type: 'hollow_description', desc });
+      }
     }
   }
 

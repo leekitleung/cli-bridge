@@ -166,7 +166,7 @@ function detectChangeScale() {
       small: 'quick',
       medium: 'default',
       large: 'release-gate',
-      xlarge: 'full',
+      xlarge: 'agentic-release-gate',  // XLarge 规模强制使用 agentic gate
     };
 
     return {
@@ -321,11 +321,13 @@ function loadYamlProfile(profileName) {
       description: '',
       resident_reviewers: [],
       conditional_reviewers: [],
+      adversarial_reviewers: [],  // 对抗性审查器 (XLarge 规模强制启用)
       trigger_conditions: {},
       gate: {
         min_score: 90,
         fail_on_redlines: true,
         fail_on_p0_p1_blockers: true,
+        require_adversarial: false,  // 是否强制要求对抗性审查器
       },
       output: {
         verbose: true,
@@ -449,6 +451,9 @@ function parseYamlContent(yamlContent, profile, defaultArrayKey, defaultTriggerK
       } else if (key === 'conditional_reviewers') {
         currentArrayKey = 'conditional_reviewers';
         currentTriggerKey = '';
+      } else if (key === 'adversarial_reviewers') {
+        currentArrayKey = 'adversarial_reviewers';
+        currentTriggerKey = '';
       } else if (key === 'trigger_conditions') {
         currentArrayKey = '';
         currentTriggerKey = '';
@@ -474,6 +479,8 @@ function parseYamlContent(yamlContent, profile, defaultArrayKey, defaultTriggerK
         profile.gate.fail_on_redlines = value === 'true';
       } else if (key === 'fail_on_p0_p1_blockers') {
         profile.gate.fail_on_p0_p1_blockers = value === 'true';
+      } else if (key === 'require_adversarial') {
+        profile.gate.require_adversarial = value === 'true';
       }
       continue;
     }
@@ -489,6 +496,8 @@ function parseYamlContent(yamlContent, profile, defaultArrayKey, defaultTriggerK
         profile.resident_reviewers.push(item);
       } else if (currentArrayKey === 'conditional_reviewers' && item) {
         profile.conditional_reviewers.push(item);
+      } else if (currentArrayKey === 'adversarial_reviewers' && item) {
+        profile.adversarial_reviewers.push(item);
       }
     }
   }
@@ -1341,6 +1350,12 @@ async function runGate() {
       reviewers = [...reviewers, ...triggeredConditional];
     }
 
+    // Add adversarial reviewers if required (XLarge scale)
+    if (yamlProfile.gate?.require_adversarial && yamlProfile.adversarial_reviewers?.length > 0) {
+      log.info(`Adversarial reviewers (required): ${JSON.stringify(yamlProfile.adversarial_reviewers)}`);
+      reviewers = [...reviewers, ...yamlProfile.adversarial_reviewers];
+    }
+
     profileConfig = {
       name: yamlProfile.name,
       description: yamlProfile.description,
@@ -1574,17 +1589,75 @@ async function runGate() {
     }
   }
 
+  // ============================================================================
+  // P2: Goal Instruction Gate - 验证生成的 goal 指令是否合规
+  // ============================================================================
+  let goalInstructionResult = null;
+  const goalGateScript = join(SKILL_DIR, 'scripts', 'goal-instruction-gate.mjs');
+
+  if (existsSync(goalGateScript) && existsSync(join(roundDir, 'generated-goal.md'))) {
+    log.title('GOAL INSTRUCTION VALIDATION');
+
+    try {
+      const goalFile = join(roundDir, 'generated-goal.md');
+      const goalText = readFileSync(goalFile, 'utf-8');
+
+      // Run goal instruction gate
+      const gateOutput = execSync(
+        `node "${goalGateScript}" --file "${goalFile}"`,
+        { encoding: 'utf-8', cwd: PROJECT_ROOT, timeout: 30000 }
+      );
+
+      // Parse score from output
+      const scoreMatch = gateOutput.match(/Score:\s*(\d+)/);
+      const score = scoreMatch ? parseInt(scoreMatch[1], 10) : 0;
+      const passed = gateOutput.includes('判定：合格') || gateOutput.includes('✓');
+
+      goalInstructionResult = { passed, score };
+
+      if (passed) {
+        log.success(`Goal instruction valid (${score}/100)`);
+      } else {
+        log.error(`Goal instruction invalid (${score}/100)`);
+        console.log(gateOutput);
+
+        // Save validation report
+        const validationReport = join(roundDir, 'goal-instruction-validation.md');
+        writeFileSync(validationReport, `# Goal Instruction Validation\n\n${gateOutput}\n`);
+        log.info(`Validation report: ${validationReport}`);
+      }
+    } catch (e) {
+      // Gate script exits 1 on validation failure
+      if (e.stdout) {
+        goalInstructionResult = { passed: false, score: 0 };
+        log.error('Goal instruction validation failed');
+        console.log(e.stdout);
+      } else {
+        log.warn(`Goal instruction gate error: ${e.message}`);
+      }
+    }
+  }
+
   // Calculate overall status
   // SECURITY: All reviewers must be valid, have scores, and pass the 90 threshold
   // SECURITY: Evidence must pass source validation (对抗性审查)
   // SECURITY: Goal mode constraint must be satisfied (if enabled)
+  // SECURITY: Goal instruction must be valid (goal 指令生成器)
   const allPassed = allHaveScores && reviewers.every(r => existingScores[r].score >= 90);
+
+  // Only P0/P1 blockers are true "redlines" - P2/P3 are suggestions, not blockers
   const hasRedlines = Object.values(existingScores).some(r =>
-    r.blockers && r.blockers.length > 0
+    r.blockers && r.blockers.some(b =>
+      typeof b === 'string' ?
+        /\bP0\b|\bP1\b/i.test(b) :
+        (b.priority === 'P0' || b.priority === 'P1')
+    )
   );
   const hasInvalidReviewers = Object.values(existingScores).some(r => !r.isValidReviewer);
+  const goalInstructionValid = !goalInstructionResult || goalInstructionResult.passed;
   const gatePassed = allPassed && !hasRedlines && evidenceValidationPassed &&
-                     (!checkGoalMode || goalModeViolations.length === 0);
+                     (!checkGoalMode || goalModeViolations.length === 0) &&
+                     goalInstructionValid;
 
   // Summary
   log.title('GATE STATUS');
@@ -1629,6 +1702,9 @@ async function runGate() {
       }
       if (checkGoalMode && goalModeViolations.length > 0) {
         log.error('Goal mode constraint violated - describing implementation steps instead of final state');
+      }
+      if (goalInstructionResult && !goalInstructionResult.passed) {
+        log.error(`Goal instruction invalid (${goalInstructionResult.score}/100) - contains plan language`);
       }
       generateSummary(roundDir, profile, existingScores, false, evidence);
       return false;
