@@ -5,8 +5,13 @@
  * Runs single-variable optimization experiments.
  * Each experiment: hypothesis → change → evaluate → decide (keep/revert)
  *
+ * Supports dual orchestrator ecosystems:
+ * - Claude: Opus 4.8 orchestrator, Claude Code executor
+ * - Codex: sol (GPT-5.6) orchestrator, Codex CLI executor
+ *
  * Usage:
  *   node experiment-runner.mjs --hypothesis improve-cli-help-text --profile project-quality
+ *   ORCHESTRATOR=codex node experiment-runner.mjs --hypothesis improve-cli-help-text
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, cpSync } from 'fs';
@@ -20,6 +25,85 @@ const toYaml = yamlDump;
 // Use process.cwd() as the reliable project root
 const PROJECT_ROOT = process.cwd();
 const EXPERIMENT_LOGS = join(PROJECT_ROOT, 'experiment-logs');
+
+// ============================================================
+// Orchestrator Environment Detection
+// ============================================================
+
+/**
+ * Detect which orchestrator ecosystem we're running in.
+ * Priority: explicit env var > detection from git remote > Claude default
+ */
+function detectOrchestrator() {
+  // 1. Explicit override
+  if (process.env.ORCHESTRATOR) {
+    return process.env.ORCHESTRATOR.toLowerCase();
+  }
+
+  // 2. Auto-detect from git remote
+  try {
+    const remote = execSync('git remote get-url origin 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+    if (remote.includes('github') || remote.includes('gitlab')) {
+      // Default to Claude ecosystem
+      return 'claude';
+    }
+  } catch {}
+
+  // 3. Check for Codex-specific files/commands
+  try {
+    execSync('codex --version 2>/dev/null', { stdio: 'pipe' });
+    return 'codex';
+  } catch {}
+
+  // 4. Default to Claude
+  return 'claude';
+}
+
+/**
+ * Get the orchestrator model for the current ecosystem.
+ */
+function getOrchestratorModel(orchestrator) {
+  // Explicit override takes precedence
+  if (process.env.ORCHESTRATOR_MODEL) {
+    return process.env.ORCHESTRATOR_MODEL;
+  }
+
+  const models = {
+    claude: 'opus-4-8',
+    codex: 'sol',  // GPT-5.6 flagship model
+  };
+
+  return models[orchestrator] || models.claude;
+}
+
+/**
+ * Get the executor ID for the current ecosystem.
+ * NOTE: Currently informational only - scripts don't route execution through executors.
+ */
+function getExecutorId(orchestrator) {
+  // Explicit override takes precedence
+  if (process.env.EXECUTOR_ID) {
+    return process.env.EXECUTOR_ID;
+  }
+
+  const executors = {
+    claude: 'claude-code',
+    codex: 'codex-cli',
+  };
+
+  return executors[orchestrator] || executors.claude;
+}
+
+// Detect environment
+const ORCHESTRATOR = detectOrchestrator();
+const ORCHESTRATOR_MODEL = getOrchestratorModel(ORCHESTRATOR);
+const EXECUTOR_ID = getExecutorId(ORCHESTRATOR);
+
+console.log('=== Dual Orchestrator Environment ===');
+console.log(`Orchestrator: ${ORCHESTRATOR}`);
+console.log(`Model: ${ORCHESTRATOR_MODEL}`);
+console.log(`Executor: ${EXECUTOR_ID}`);
+console.log('');
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -135,6 +219,9 @@ console.log(`Hypothesis: ${hypothesis}`);
 console.log(`Profile: ${profile}`);
 console.log(`Dry Run: ${dryRun}`);
 console.log('');
+console.log(`Orchestrator: ${ORCHESTRATOR} (${ORCHESTRATOR_MODEL})`);
+console.log(`Executor: ${EXECUTOR_ID}`);
+console.log('');
 
 // Save hypothesis
 writeFileSync(join(experimentDir, 'hypothesis.md'), `# Hypothesis: ${hypothesis}
@@ -246,6 +333,9 @@ writeFileSync(join(experimentDir, 'experiment-state.json'), JSON.stringify({
   hypothesisConfig,
   baseline,
   backupDir,
+  orchestrator: ORCHESTRATOR,
+  orchestratorModel: ORCHESTRATOR_MODEL,
+  executor: EXECUTOR_ID,
   createdAt: new Date().toISOString(),
 }, null, 2));
 

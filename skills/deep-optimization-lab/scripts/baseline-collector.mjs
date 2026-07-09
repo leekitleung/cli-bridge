@@ -5,16 +5,78 @@
  * Collects baseline metrics before running optimization experiments.
  * This establishes the "before" state to measure improvement against.
  *
+ * Supports dual orchestrator ecosystems:
+ * - Claude: Opus 4.8 orchestrator, Claude Code executor
+ * - Codex: sol (GPT-5.6) orchestrator, Codex CLI executor
+ *
  * Usage:
  *   node baseline-collector.mjs --profile project-quality [--output ./experiment-logs]
+ *   ORCHESTRATOR=codex node baseline-collector.mjs --profile codex-sol-orchestrated
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 // Use process.cwd() as the reliable project root
 const PROJECT_ROOT = process.cwd();
+
+// ============================================================
+// Orchestrator Environment Detection
+// ============================================================
+
+/**
+ * Detect which orchestrator ecosystem we're running in.
+ */
+function detectOrchestrator() {
+  // 1. Explicit override
+  if (process.env.ORCHESTRATOR) {
+    return process.env.ORCHESTRATOR.toLowerCase();
+  }
+
+  // 2. Auto-detect from git remote
+  try {
+    const remote = execSync('git remote get-url origin 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+    if (remote.includes('github') || remote.includes('gitlab')) {
+      return 'claude';
+    }
+  } catch {}
+
+  // 3. Check for Codex-specific files/commands
+  try {
+    execSync('codex --version 2>/dev/null', { stdio: 'pipe' });
+    return 'codex';
+  } catch {}
+
+  // 4. Default to Claude
+  return 'claude';
+}
+
+/**
+ * Get the orchestrator model for the current ecosystem.
+ */
+function getOrchestratorModel(orchestrator) {
+  if (process.env.ORCHESTRATOR_MODEL) {
+    return process.env.ORCHESTRATOR_MODEL;
+  }
+
+  const models = {
+    claude: 'opus-4-8',
+    codex: 'sol',  // GPT-5.6 flagship model
+  };
+
+  return models[orchestrator] || models.claude;
+}
+
+// Detect environment
+const ORCHESTRATOR = detectOrchestrator();
+const ORCHESTRATOR_MODEL = getOrchestratorModel(ORCHESTRATOR);
+
+console.log('=== Dual Orchestrator Environment ===');
+console.log(`Orchestrator: ${ORCHESTRATOR}`);
+console.log(`Model: ${ORCHESTRATOR_MODEL}`);
+console.log('');
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -31,6 +93,18 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+// Shared metrics/sources for project-quality base profile
+const PROJECT_QUALITY_METRICS = [
+  'test-coverage',
+  'lint-errors',
+  'type-errors',
+  'documentation-coverage',
+  'cli-usability',
+  'security-posture',
+  'architecture-score',
+];
+const PROJECT_QUALITY_SOURCES = ['"apps/*/src/**/*.ts"', '"packages/*/src/**/*.ts"', '"*.md"'];
+
 // Profiles define what metrics to collect
 const PROFILES = {
   'skill-quality': {
@@ -38,16 +112,20 @@ const PROFILES = {
     sources: ['"skills/*/SKILL.md"'],
   },
   'project-quality': {
-    metrics: [
-      'test-coverage',
-      'lint-errors',
-      'type-errors',
-      'documentation-coverage',
-      'cli-usability',
-      'security-posture',
-      'architecture-score',
-    ],
-    sources: ['"apps/*/src/**/*.ts"', '"packages/*/src/**/*.ts"', '"*.md"'],
+    metrics: PROJECT_QUALITY_METRICS,
+    sources: PROJECT_QUALITY_SOURCES,
+  },
+  'codex-sol-orchestrated': {
+    orchestrator: 'codex',
+    orchestratorModel: 'sol',
+    metrics: PROJECT_QUALITY_METRICS,
+    sources: PROJECT_QUALITY_SOURCES,
+  },
+  'claude-opus-orchestrated': {
+    orchestrator: 'claude',
+    orchestratorModel: 'opus-4-8',
+    metrics: PROJECT_QUALITY_METRICS,
+    sources: PROJECT_QUALITY_SOURCES,
   },
 };
 
@@ -60,11 +138,14 @@ async function collectBaseline() {
   console.log('=== Baseline Collector ===');
   console.log(`Profile: ${profile}`);
   console.log(`Output: ${outputDir}`);
+  console.log(`Orchestrator: ${ORCHESTRATOR} (${ORCHESTRATOR_MODEL})`);
   console.log('');
 
   const timestamp = new Date().toISOString();
   const baseline = {
     profile,
+    orchestrator: ORCHESTRATOR,
+    orchestratorModel: ORCHESTRATOR_MODEL,
     timestamp,
     metrics: {},
     sources: config.sources,
@@ -146,7 +227,6 @@ async function collectBaseline() {
 async function measureTestCoverage() {
   try {
     // Run tests with coverage
-    const { execSync } = await import('child_process');
     const result = execSync('npm test -- --coverage 2>&1 || true', { encoding: 'utf-8', timeout: 60000 });
 
     // Parse coverage from output (simplified)
@@ -168,7 +248,6 @@ async function measureTestCoverage() {
  */
 async function measureLintErrors() {
   try {
-    const { execSync } = await import('child_process');
     const result = execSync('npm run lint 2>&1 || true', { encoding: 'utf-8', timeout: 30000 });
 
     // Count error lines
@@ -184,7 +263,6 @@ async function measureLintErrors() {
  */
 async function measureTypeErrors() {
   try {
-    const { execSync } = await import('child_process');
     const result = execSync('npm run typecheck 2>&1 || true', { encoding: 'utf-8', timeout: 30000 });
 
     // Check for error count
@@ -209,8 +287,6 @@ async function measureTypeErrors() {
  */
 async function measureDocumentationCoverage() {
   try {
-    const { execSync } = await import('child_process');
-
     // Count README and doc files
     const readmeCount = execSync('find . -maxdepth 3 -name "README.md" -o -name "CHANGELOG.md" | wc -l', { encoding: 'utf-8', shell: 'bash' }).trim();
     const docsCount = execSync('find docs -name "*.md" 2>/dev/null | wc -l', { encoding: 'utf-8', shell: 'bash' }).trim();
@@ -233,8 +309,6 @@ async function measureDocumentationCoverage() {
  */
 async function measureCliUsability() {
   try {
-    const { execSync } = await import('child_process');
-
     // Test if --help works
     let helpWorks = false;
     try {
@@ -262,8 +336,6 @@ async function measureCliUsability() {
  */
 async function measureSecurityPosture() {
   try {
-    const { execSync } = await import('child_process');
-
     // Check for sensitive file patterns
     const hasEnvExample = existsSync('.env.example');
     const hasEnvGitignored = execSync('cat .gitignore 2>/dev/null | grep -c "\\.env" || echo 0', { encoding: 'utf-8', shell: 'bash' }).trim();
@@ -288,8 +360,6 @@ async function measureSecurityPosture() {
  */
 async function measureArchitectureScore() {
   try {
-    const { execSync } = await import('child_process');
-
     // Count files in proper directories
     const appsCount = execSync('find apps -type f -name "*.ts" | wc -l', { encoding: 'utf-8', shell: 'bash' }).trim();
     const packagesCount = execSync('find packages -type f -name "*.ts" | wc -l', { encoding: 'utf-8', shell: 'bash' }).trim();
@@ -350,7 +420,6 @@ async function measureInstructionClarity() {
  */
 async function measureExampleCoverage() {
   try {
-    const { execSync } = await import('child_process');
     const skillFiles = execSync('find skills -name "SKILL.md" 2>/dev/null', { encoding: 'utf-8', shell: 'bash' }).trim().split('\n').filter(Boolean);
 
     let withExamples = 0;
@@ -378,7 +447,6 @@ async function measureExampleCoverage() {
  */
 async function measureWorkflowCompleteness() {
   try {
-    const { execSync } = await import('child_process');
     const skillFiles = execSync('find skills -name "SKILL.md" 2>/dev/null', { encoding: 'utf-8', shell: 'bash' }).trim().split('\n').filter(Boolean);
 
     let complete = 0;
@@ -413,7 +481,6 @@ async function measureWorkflowCompleteness() {
  */
 async function measureScopeAccuracy() {
   try {
-    const { execSync } = await import('child_process');
     const skillFiles = execSync('find skills -name "SKILL.md" 2>/dev/null', { encoding: 'utf-8', shell: 'bash' }).trim().split('\n').filter(Boolean);
 
     let accurate = 0;

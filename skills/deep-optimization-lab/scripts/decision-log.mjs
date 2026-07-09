@@ -4,20 +4,57 @@
  *
  * Views and manages the experiment decision log.
  *
+ * Supports dual orchestrator ecosystems:
+ * - Claude: Opus 4.8 orchestrator
+ * - Codex: sol (GPT-5.6) orchestrator
+ *
  * Usage:
  *   node decision-log.mjs --show                    # Show all decisions
  *   node decision-log.mjs --add --experiment 001 --decision keep --evidence "Score improved by 15%"
  *   node decision-log.mjs --export                   # Export to CSV
+ *   ORCHESTRATOR=codex node decision-log.mjs --show  # Show Codex experiments
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 // Use process.cwd() as the reliable project root
 const PROJECT_ROOT = process.cwd();
 const EXPERIMENT_LOGS = join(PROJECT_ROOT, 'experiment-logs');
 const DECISION_LOG = join(EXPERIMENT_LOGS, 'decision-log.yaml');
+
+// ============================================================
+// Orchestrator Environment Detection
+// ============================================================
+
+function detectOrchestrator() {
+  if (process.env.ORCHESTRATOR) {
+    return process.env.ORCHESTRATOR.toLowerCase();
+  }
+  try {
+    const remote = execSync('git remote get-url origin 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+    if (remote.includes('github') || remote.includes('gitlab')) {
+      return 'claude';
+    }
+  } catch {}
+  return 'claude';
+}
+
+function getOrchestratorModel(orchestrator) {
+  if (process.env.ORCHESTRATOR_MODEL) {
+    return process.env.ORCHESTRATOR_MODEL;
+  }
+  const models = {
+    claude: 'opus-4-8',
+    codex: 'sol',
+  };
+  return models[orchestrator] || models.claude;
+}
+
+const ORCHESTRATOR = detectOrchestrator();
+const ORCHESTRATOR_MODEL = getOrchestratorModel(ORCHESTRATOR);
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -66,12 +103,15 @@ function showDecisions() {
 
   console.log('=== Experiment Decision Log ===');
   console.log('');
+  console.log(`Orchestrator: ${ORCHESTRATOR} (${ORCHESTRATOR_MODEL})`);
+  console.log('');
 
   if (log.decisions.length === 0) {
     console.log('No decisions recorded yet.');
     console.log('');
     console.log('Run experiments first:');
     console.log('  node skills/deep-optimization-lab/scripts/experiment-runner.mjs --hypothesis improve-cli-help-text');
+    console.log('  ORCHESTRATOR=codex node experiment-runner.mjs --hypothesis improve-cli-help-text');
     return;
   }
 
@@ -80,6 +120,20 @@ function showDecisions() {
   console.log('  Total experiments:', log.decisions.length);
   console.log('  Kept:', log.decisions.filter(d => d.decision === 'KEEP').length);
   console.log('  Reverted:', log.decisions.filter(d => d.decision === 'REVERT').length);
+
+  // Group by orchestrator (legacy entries without orchestrator field are counted separately)
+  const claudeDecisions = log.decisions.filter(d => d.orchestrator === 'claude');
+  const codexDecisions = log.decisions.filter(d => d.orchestrator === 'codex');
+  const legacyDecisions = log.decisions.filter(d => !d.orchestrator);
+  if (claudeDecisions.length > 0) {
+    console.log('  Claude (Opus):', claudeDecisions.length);
+  }
+  if (codexDecisions.length > 0) {
+    console.log('  Codex (sol):', codexDecisions.length);
+  }
+  if (legacyDecisions.length > 0) {
+    console.log('  Legacy (pre-orchestrator):', legacyDecisions.length);
+  }
   console.log('');
 
   // Decisions table
@@ -151,6 +205,8 @@ function addDecision() {
     experiment: parseInt(experiment),
     hypothesis: expData.hypothesis,
     dimension: expData.dimension,
+    orchestrator: ORCHESTRATOR,
+    orchestratorModel: ORCHESTRATOR_MODEL,
     decision,
     evidence: evidence || 'No evidence provided',
     timestamp: new Date().toISOString(),
