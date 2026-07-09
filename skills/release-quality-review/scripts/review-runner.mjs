@@ -64,7 +64,11 @@ let maxLoops = 10; // Maximum iterations before giving up
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--profile' && args[i + 1]) profile = args[++i];
-  else if (arg === '--round' && args[i + 1]) roundNumber = parseInt(args[++i], 10);
+  else if (arg === '--round' && args[i + 1]) {
+    const parsed = parseInt(args[++i], 10);
+    // Guard against NaN (e.g., "round-null" or invalid input)
+    roundNumber = isNaN(parsed) ? null : parsed;
+  }
   else if (arg === '--parallel') parallel = true;
   else if (arg === '--dry-run') dryRun = true;
   else if (arg === '--skip-evidence') skipEvidence = true;

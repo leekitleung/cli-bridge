@@ -8,6 +8,13 @@ import type { WorkBuddyExecutionAdapter } from '../adapters/workbuddy-execution-
 import { createWorkBuddyWorker, type WorkBuddyWorker } from '../workbuddy/workbuddy-worker.ts';
 import { PAIRING_TOKEN_HEADER } from '../../../../packages/shared/src/constants.ts';
 import { logger } from '../utils/structured-logger.ts';
+// Use shared retry module
+import { type RetryConfig, DEFAULT_RETRY_CONFIG, isRetryableError, calculateBackoff, sleep } from '../utils/retry.ts';
+
+// Re-export for backward compatibility
+export type { RetryConfig };
+
+export { DEFAULT_RETRY_CONFIG };
 
 export const WORKBUDDY_CAPABILITIES: ExecutorCapabilities = {
   id: 'workbuddy',
@@ -41,34 +48,7 @@ export interface WorkBuddyExecutorOptions {
   retry?: RetryConfig;
 }
 
-/** 重试配置接口 */
-export interface RetryConfig {
-  /** 最大重试次数 (默认: 3) */
-  maxRetries?: number;
-  /** 初始退避延迟 (ms, 默认: 1000) */
-  initialDelayMs?: number;
-  /** 最大退避延迟 (ms, 默认: 30000) */
-  maxDelayMs?: number;
-  /** 指数退避基数 (默认: 2) */
-  backoffBase?: number;
-  /** 可重试的错误类型 */
-  retryableErrors?: string[];
-}
-
-const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
-  maxRetries: 3,
-  initialDelayMs: 1000,
-  maxDelayMs: 30000,
-  backoffBase: 2,
-  retryableErrors: [
-    'workbuddy-timeout',
-    'network-error',
-    'connection-refused',
-    'ECONNREFUSED',
-    'ETIMEDOUT',
-    'ENOTFOUND',
-  ],
-};
+// RetryConfig is now imported from '../utils/retry.ts'
 
 /**
  * WorkBuddy 执行器 - 实现 ExecutorBackend 接口
@@ -268,34 +248,15 @@ export class WorkBuddyExecutor implements ExecutorBackend {
   }
 
   /**
-   * 检查错误是否可重试
+   * 检查错误是否可重试 (使用共享模块)
    */
   private isRetryableError(error?: string): boolean {
-    if (!error) return false;
-    const retryable = this.options.retry.retryableErrors;
-    return retryable.some(e => error.includes(e));
+    return isRetryableError(error, this.options.retry);
   }
 
-  /**
-   * 计算退避延迟（指数退避 + jitter）
-   */
-  private calculateBackoff(attempt: number): number {
-    const { initialDelayMs, maxDelayMs, backoffBase } = this.options.retry;
-    const baseDelay = Math.min(
-      initialDelayMs * Math.pow(backoffBase, attempt),
-      maxDelayMs
-    );
-    // 添加 0-25% 的随机 jitter 防止雷群效应
-    const jitter = baseDelay * (Math.random() * 0.25);
-    return Math.floor(baseDelay + jitter);
-  }
-
-  /**
-   * 异步等待
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  // 委托到共享模块
+  private calculateBackoff = (attempt: number): number => calculateBackoff(attempt, this.options.retry);
+  private sleep = (ms: number): Promise<void> => sleep(ms);
 
   /**
    * 健康检查

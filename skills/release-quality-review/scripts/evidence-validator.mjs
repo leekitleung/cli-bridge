@@ -122,6 +122,83 @@ function checkDiffFileReferences(content, diffFiles, reviewer) {
   return violations;
 }
 
+// === NEW: CROSS-FILE REFERENCE VERIFICATION ===
+// Check if file:line references actually exist in the codebase
+function verifyFileLineReferences(content, roundDir) {
+  const violations = [];
+  const warnings = [];
+
+  // Find all file:line references
+  const fileLinePattern = /([a-zA-Z][^\s:]+\.(ts|tsx|js|jsx|mjs)):(\d+)/g;
+  let match;
+  const refs = [];
+
+  while ((match = fileLinePattern.exec(content)) !== null) {
+    refs.push({
+      file: match[1],
+      line: parseInt(match[3], 10),
+      full: match[0]
+    });
+  }
+
+  // For each reference, check if the file exists
+  for (const ref of refs) {
+    // Normalize the file path relative to project root
+    const projectRoot = PROJECT_ROOT;
+    const possiblePaths = [
+      join(projectRoot, ref.file),
+      join(projectRoot, 'apps', ref.file),
+      join(projectRoot, 'packages', ref.file),
+      join(roundDir, '..', '..', ref.file),
+    ];
+
+    let fileExists = false;
+    let checkedPath = null;
+
+    for (const path of possiblePaths) {
+      if (existsSync(path)) {
+        fileExists = true;
+        checkedPath = path;
+        break;
+      }
+    }
+
+    // If file doesn't exist, flag as violation
+    if (!fileExists) {
+      violations.push({
+        type: 'invalid_file_reference',
+        desc: `引用了不存在的文件: ${ref.file}:${ref.line}`,
+        ref: ref.full
+      });
+    } else if (checkedPath && ref.line > 0) {
+      // Verify the line number is reasonable
+      try {
+        const fileContent = readFileSync(checkedPath, 'utf-8');
+        const lineCount = fileContent.split('\n').length;
+
+        if (ref.line > lineCount) {
+          violations.push({
+            type: 'invalid_line_reference',
+            desc: `引用了 ${ref.file}:${ref.line} 但文件仅有 ${lineCount} 行`,
+            ref: ref.full
+          });
+        } else if (ref.line > lineCount * 0.95) {
+          // Warning for near-end-of-file references
+          warnings.push({
+            type: 'suspicious_line_reference',
+            desc: `引用了 ${ref.file}:${ref.line}（接近文件末尾 ${lineCount} 行）`,
+            ref: ref.full
+          });
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+  }
+
+  return { violations, warnings, totalRefs: refs.length };
+}
+
 // Check for missing evidence output
 function checkMissingEvidenceOutput(content, reviewer) {
   const violations = [];
@@ -201,19 +278,66 @@ function checkEvidenceQuality(content) {
     }
   }
 
-  // === P1: GOAL MODE CONSTRAINT CHECK ===
+  // === P1: GOAL MODE CONSTRAINT CHECK (Contextual) ===
   // Detect implementation steps being described as goals
+  // Use context to reduce false positives
   const goalViolationPatterns = [
-    { pattern: /实现了|实现了.*功能|实现了.*模块/g, desc: '描述实现而非目标达成' },
-    { pattern: /按照.*步骤|分.*步骤|逐步/g, desc: '描述实现步骤而非最终状态' },
-    { pattern: /添加了.*代码|写了.*函数|创建了.*类/g, desc: '描述代码变更而非功能结果' },
-    { pattern: /修改了|改动|调整了/g, desc: '描述变更过程而非结果' },
+    { pattern: /实现了.*功能|实现了.*模块|实现了.*组件/g, desc: '描述实现而非目标达成', falsePositiveContext: ['目标', '验收', '需求'] },
+    { pattern: /按照.*步骤.*实现|分.*步骤.*实现|逐步.*实现/g, desc: '描述实现步骤而非最终状态' },
+    { pattern: /添加了.*代码|写了.*函数|创建了.*类/g, desc: '描述代码变更而非功能结果', falsePositiveContext: ['为了', '实现', '满足'] },
+    { pattern: /我们.*实现|我们.*添加|我.*写了/g, desc: '自我描述实现过程' },
   ];
 
-  for (const { pattern, desc } of goalViolationPatterns) {
+  for (const { pattern, desc, falsePositiveContext } of goalViolationPatterns) {
     const matches = content.match(pattern);
     if (matches) {
-      violations.push({ type: 'goal_mode_violation', desc, count: matches.length });
+      // Check if this is a false positive (mentioned in goal/requirement context)
+      let isFalsePositive = false;
+      if (falsePositiveContext) {
+        for (const ctx of falsePositiveContext) {
+          // Check surrounding context (±50 chars)
+          for (const match of matches) {
+            const matchIndex = content.indexOf(match);
+            const context = content.slice(Math.max(0, matchIndex - 50), matchIndex + match.length + 50);
+            if (context.includes('目标') || context.includes('验收条件') || context.includes('需求')) {
+              // This might be describing a goal requirement, not implementation
+              if (ctx === '目标' || ctx === '验收' || ctx === '需求') {
+                isFalsePositive = true;
+                break;
+              }
+            }
+          }
+          if (isFalsePositive) break;
+        }
+      }
+
+      if (!isFalsePositive) {
+        violations.push({ type: 'goal_mode_violation', desc, count: matches.length });
+      }
+    }
+  }
+
+  // === NEW: SCORE-EVIDENCE CONSISTENCY CHECK ===
+  // When a reviewer claims high score but has insufficient evidence, flag it
+  const scoreMatch = content.match(/(?:总分|Overall Score|Total Score|Score)[^0-9]*(\d+)[^0-9]*\/?\s*100/i);
+  if (scoreMatch) {
+    const claimedScore = parseInt(scoreMatch[1], 10);
+    const evidenceCount = fileLineRefs.length + commandOutputs.length * 2 + testOutputs.length * 2;
+
+    // High score + low evidence = suspicious
+    if (claimedScore >= 85 && evidenceCount < 3) {
+      violations.push({
+        type: 'score_evidence_inconsistency',
+        desc: `声称 ${claimedScore} 分但仅有 ${evidenceCount} 个证据（高分低证）`,
+        suggestedScore: Math.min(claimedScore, 60)
+      });
+    } else if (claimedScore >= 90 && evidenceCount < 5) {
+      // Even stricter for claiming pass
+      violations.push({
+        type: 'score_evidence_inconsistency',
+        desc: `声称 ${claimedScore} 分（通过）但仅有 ${evidenceCount} 个证据，不足 5 个`,
+        suggestedScore: Math.min(claimedScore, 55)
+      });
     }
   }
 
@@ -224,6 +348,8 @@ function checkEvidenceQuality(content) {
     issues,
     violations,
     hasMinimumEvidence,
+    claimedScore: scoreMatch ? parseInt(scoreMatch[1], 10) : null,
+    evidenceCount: fileLineRefs.length + commandOutputs.length + testOutputs.length,
   };
 }
 
@@ -233,16 +359,22 @@ function validateReviewer(roundDir, reviewer, diffFiles) {
   const scorePath = join(reviewerDir, 'score.md');
 
   if (!existsSync(scorePath)) {
-    return { reviewer, status: 'no_report', violations: [] };
+    return { reviewer, status: 'no_report', violations: [], warnings: [] };
   }
 
   const content = readFileSync(scorePath, 'utf-8');
   const allViolations = [];
+  const allWarnings = [];
 
   // Run all checks
   allViolations.push(...checkSelfReferencePatterns(content, reviewer));
   allViolations.push(...checkDiffFileReferences(content, diffFiles, reviewer));
   allViolations.push(...checkMissingEvidenceOutput(content, reviewer));
+
+  // === NEW: Cross-file reference verification ===
+  const fileRefCheck = verifyFileLineReferences(content, roundDir);
+  allViolations.push(...fileRefCheck.violations);
+  allWarnings.push(...fileRefCheck.warnings);
 
   const quality = checkEvidenceQuality(content);
 
@@ -253,8 +385,11 @@ function validateReviewer(roundDir, reviewer, diffFiles) {
     reviewer,
     status: allViolations.length > 0 ? 'violations' : 'pass',
     violations: allViolations,
+    warnings: allWarnings,
     quality,
     totalViolations: allViolations.length,
+    totalWarnings: allWarnings.length,
+    fileRefCheck,
   };
 }
 
@@ -266,6 +401,7 @@ function generateReport(results) {
   output += `${c.cyan}═══════════════════════════════════════════════════${c.reset}\n\n`;
 
   let totalViolations = 0;
+  let totalWarnings = 0;
   let passCount = 0;
 
   for (const result of results) {
@@ -287,11 +423,39 @@ function generateReport(results) {
       output += '\n';
       output += `    - Test results: ${result.quality.testOutputs}\n`;
 
+      // === NEW: Show score-evidence consistency ===
+      if (result.quality.claimedScore !== null) {
+        output += `    - Claimed Score: ${result.quality.claimedScore}/100\n`;
+        if (result.quality.claimedScore >= 85 && result.quality.evidenceCount < 5) {
+          output += `      ${c.red}⚠️ 高分低证: ${result.quality.claimedScore}分 仅 ${result.quality.evidenceCount} 个证据${c.reset}\n`;
+        }
+      }
+
       if (result.quality.issues.length > 0) {
         output += `  ${c.yellow}Vague Evidence:${c.reset}\n`;
         for (const issue of result.quality.issues) {
           output += `    - ${issue.desc}\n`;
         }
+      }
+    }
+
+    // === NEW: Show file reference verification ===
+    if (result.fileRefCheck && result.fileRefCheck.totalRefs > 0) {
+      output += `  File Reference Verification:\n`;
+      output += `    - Total refs: ${result.fileRefCheck.totalRefs}\n`;
+      if (result.fileRefCheck.violations.length > 0) {
+        output += `    - ${c.red}❌ ${result.fileRefCheck.violations.length} invalid refs${c.reset}\n`;
+      } else {
+        output += `    - ${c.green}✅ All refs valid${c.reset}\n`;
+      }
+    }
+
+    // Warnings
+    if (result.warnings && result.warnings.length > 0) {
+      totalWarnings += result.warnings.length;
+      output += `  ${c.yellow}⚠️ Warnings (${result.warnings.length}):${c.reset}\n`;
+      for (const w of result.warnings) {
+        output += `    - [${w.type}] ${w.desc}\n`;
       }
     }
 
@@ -319,6 +483,7 @@ function generateReport(results) {
   output += `  Reviewers: ${results.length}\n`;
   output += `  Passed: ${passCount}/${results.length}\n`;
   output += `  Total Violations: ${totalViolations}\n`;
+  output += `  Total Warnings: ${totalWarnings}\n`;
 
   if (totalViolations === 0) {
     output += `\n${c.green}✅ All reviewers passed adversarial check!${c.reset}\n`;
